@@ -87,9 +87,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/ruff-action@v3
         with:
+          version: "0.11.8"
           args: check ${{ needs.discover.outputs.python_paths }}
       - uses: astral-sh/ruff-action@v3
         with:
+          version: "0.11.8"
           args: format --check --diff ${{ needs.discover.outputs.python_paths }}
         continue-on-error: true
 
@@ -173,7 +175,6 @@ jobs:
           for f in requirements.txt requirements-dev.txt; do
             if [ -f "$f" ]; then pip install -r "$f"; fi
           done
-          if [ -f pyproject.toml ]; then pip install -e ".[dev]" || pip install -e .; fi
           pip install pytest pytest-asyncio
       - name: Run tests
         env:
@@ -244,13 +245,8 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.img.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.img.name }}
       - name: Trivy scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: churn-radar-${{ matrix.img.name }}:ci
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
-          format: table
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock             aquasec/trivy:0.62.1 image --severity CRITICAL --ignore-unfixed             --exit-code 1 --no-progress churn-radar-${{ matrix.img.name }}:ci
 
   helm:
     name: Helm lint and kubeconform

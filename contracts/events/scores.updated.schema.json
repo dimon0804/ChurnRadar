@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "churnradar/events/scores.updated",
+  "title": "Subject churn.scores.updated — пересчёт завершён",
+  "description": "Полезная нагрузка совпадает со схемой ScoresUpdatedEvent из openapi.yaml; notifier пересылает её в SSE как event: scores.updated",
+  "type": "object",
+  "required": ["model_version", "scored_at", "changed_customer_ids", "full", "summary"],
+  "properties": {
+    "model_version": {"type": "integer"},
+    "scored_at": {"type": "string", "format": "date-time"},
+    "changed_customer_ids": {"type": "array", "items": {"type": "integer"}},
+    "full": {"type": "boolean"},
+    "duration_ms": {"type": "number"},
+    "summary": {"type": "object"}
+  }
+}

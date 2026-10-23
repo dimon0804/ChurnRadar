@@ -1,0 +1,28 @@
+# локальные инструменты
+CLAUDE.md
+AGENTS.md
+.claude/
+.cursor/
+.playwright-mcp/
+.vscode/
+.idea/
+
+# окружение
+.env
+*.local
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+*.log
+.DS_Store

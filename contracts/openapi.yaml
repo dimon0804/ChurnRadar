@@ -1,0 +1,898 @@
+openapi: 3.1.0
+info:
+  title: ChurnRadar API
+  version: 1.0.0
+  description: |
+    Анализатор рисков оттока клиентов хостинга.
+
+    Все денежные поля передаются в **евроцентах** (целое число, €1 = 100).
+    Время — ISO 8601 в UTC.
+
+    Доступ: все методы, кроме `POST /api/v1/auth/login`, `GET /api/v1/auth/providers`
+    и OIDC-редиректов, требуют сессию (cookie `cr_session`) или `Authorization: Bearer`.
+    `GET /metrics` закрыт отдельным токеном сборщика метрик.
+servers:
+  - url: http://localhost:8080
+    description: Локальный запуск через Docker Compose
+tags:
+  - name: auth
+    description: Вход, сессия, OIDC
+  - name: customers
+    description: Клиенты и их оценки риска
+  - name: analytics
+    description: Сводные показатели и денежная оценка
+  - name: model
+    description: Настройки модели risk-score
+  - name: source
+    description: Загрузка исходных данных
+  - name: stream
+    description: Живые обновления (Server-Sent Events)
+  - name: simulator
+    description: Поток демонстрационных изменений данных
+  - name: ops
+    description: Метрики и служебные эндпоинты
+
+security:
+  - cookieAuth: []
+  - bearerAuth: []
+
+paths:
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Вход по логину и паролю
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Успешный вход. Сессия выставлена в httpOnly cookie `cr_session`.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/v1/auth/me:
+    get:
+      tags: [auth]
+      summary: Текущий пользователь
+      operationId: me
+      responses:
+        '200':
+          description: Пользователь текущей сессии
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Завершение текущей сессии
+      operationId: logout
+      responses:
+        '204': { description: Сессия завершена }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/auth/providers:
+    get:
+      tags: [auth]
+      summary: Доступные способы входа
+      operationId: authProviders
+      security: []
+      responses:
+        '200':
+          description: Список способов входа
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [password, oidc]
+                properties:
+                  password: { type: boolean }
+                  oidc:
+                    type: object
+                    required: [enabled]
+                    properties:
+                      enabled: { type: boolean }
+                      display_name: { type: string, examples: ['Войти через SSO'] }
+                      login_url: { type: string, examples: ['/api/v1/auth/oidc/login'] }
+
+  /api/v1/auth/oidc/login:
+    get:
+      tags: [auth]
+      summary: Начало входа через OIDC (Authorization Code + PKCE)
+      operationId: oidcLogin
+      security: []
+      parameters:
+        - name: next
+          in: query
+          schema: { type: string, default: / }
+      responses:
+        '302': { description: Редирект на провайдера OIDC }
+        '404': { description: OIDC не настроен }
+
+  /api/v1/auth/oidc/callback:
+    get:
+      tags: [auth]
+      summary: Возврат от провайдера OIDC
+      operationId: oidcCallback
+      security: []
+      parameters:
+        - { name: code, in: query, required: true, schema: { type: string } }
+        - { name: state, in: query, required: true, schema: { type: string } }
+      responses:
+        '302': { description: 'Сессия создана, редирект в панель' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/customers:
+    get:
+      tags: [customers]
+      summary: Список клиентов с оценками риска (рейтинг)
+      operationId: listCustomers
+      parameters:
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [id, email, balance, total_replenished, risk_score, expected_loss]
+            default: risk_score
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - name: level
+          in: query
+          description: Фильтр по уровням через запятую, например `high,medium`
+          schema: { type: string, examples: ['high,medium'] }
+        - name: search
+          in: query
+          description: Поиск по email (подстрока) или точному ID
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 25 }
+      responses:
+        '200':
+          description: Страница рейтинга
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/customers/{id}:
+    get:
+      tags: [customers]
+      summary: Подробная оценка клиента, его услуги, признаки и объяснения
+      operationId: getCustomer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: Карточка клиента
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/analytics/summary:
+    get:
+      tags: [analytics]
+      summary: Сводные показатели риска и денежная оценка потенциальных потерь
+      operationId: getSummary
+      responses:
+        '200':
+          description: Сводка
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Summary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/model/settings:
+    get:
+      tags: [model]
+      summary: Действующие настройки и коэффициенты модели
+      operationId: getModelSettings
+      responses:
+        '200':
+          description: Настройки
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      tags: [model]
+      summary: Изменение настроек модели с автоматическим пересчётом
+      description: |
+        Частичное обновление. Пересчёт запускается асинхронно; о завершении сообщает
+        событие `scores.updated` в `/api/v1/stream`. Требуется роль `admin`.
+      operationId: patchModelSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModelSettingsPatch' }
+      responses:
+        '200':
+          description: Новое состояние настроек (version увеличена)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/model/settings/reset:
+    post:
+      tags: [model]
+      summary: Сброс настроек к значениям по умолчанию
+      operationId: resetModelSettings
+      responses:
+        '200':
+          description: Настройки по умолчанию (version увеличена)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/model/settings/history:
+    get:
+      tags: [model]
+      summary: Журнал изменений настроек модели
+      operationId: modelSettingsHistory
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        '200':
+          description: Изменения от новых к старым
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/SettingsChange' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/source/snapshot:
+    put:
+      tags: [source]
+      summary: Загрузка или полная замена снимка исходных данных
+      description: |
+        Формат тела совпадает с `data.json` из комплекта кейса. Замена атомарная.
+        Пересчёт асинхронный, о завершении сообщает `scores.updated`. Требуется роль `admin`.
+      operationId: putSnapshot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SourceSnapshot' }
+      responses:
+        '202':
+          description: Снимок принят
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SnapshotAccepted' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { description: Тело слишком большое }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/source/events:
+    post:
+      tags: [source]
+      summary: Поток изменений отдельных записей (данные в реальном времени)
+      description: |
+        Пакет upsert-изменений аккаунтов, услуг и транзакций. Так источник шлёт изменения
+        в реальном времени, без полной замены снимка. Требуется роль `admin` или сервисный токен.
+      operationId: postSourceEvents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SourceChangeBatch' }
+      responses:
+        '202':
+          description: Изменения приняты
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted]
+                properties:
+                  accepted: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/stream:
+    get:
+      tags: [stream]
+      summary: Живые обновления (Server-Sent Events)
+      description: |
+        `text/event-stream`. События: `scores.updated`, `settings.updated`, `source.updated`
+        (схемы `ScoresUpdatedEvent`, `SettingsUpdatedEvent`, `SourceUpdatedEvent`).
+        Каждые 15 с приходит комментарий `: ping`. Поддерживается `Last-Event-ID`.
+      operationId: stream
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string }
+      responses:
+        '200':
+          description: Поток событий
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/simulator:
+    get:
+      tags: [simulator]
+      summary: Состояние демонстрационного потока изменений
+      operationId: getSimulator
+      responses:
+        '200':
+          description: Состояние
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SimulatorState' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [simulator]
+      summary: Включить/выключить поток или сгенерировать расширенный набор
+      operationId: putSimulator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SimulatorCommand' }
+      responses:
+        '200':
+          description: Новое состояние
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SimulatorState' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /metrics:
+    get:
+      tags: [ops]
+      summary: Агрегированные метрики в формате Prometheus
+      description: |
+        Обязательные метрики:
+        `churn_customers_by_risk_level{level="high|medium|low|unknown"}`,
+        `churn_expected_loss_eur`, `churn_exposure_eur`, `churn_services_at_risk`,
+        `churn_model_version`, `churn_last_scored_timestamp_seconds`.
+      operationId: metrics
+      security:
+        - metricsToken: []
+      responses:
+        '200':
+          description: Текстовый формат экспозиции Prometheus
+          content:
+            text/plain:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/docs:
+    get:
+      tags: [ops]
+      summary: Swagger UI с этой спецификацией
+      operationId: docs
+      responses:
+        '200':
+          description: HTML
+          content:
+            text/html:
+              schema: { type: string }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: cr_session
+    bearerAuth:
+      type: http
+      scheme: bearer
+    metricsToken:
+      type: http
+      scheme: bearer
+      description: Статический токен сборщика метрик (`METRICS_TOKEN`)
+
+  responses:
+    Unauthorized:
+      description: Нет сессии или неверные учётные данные
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Недостаточно прав (нужна роль admin)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Не найдено
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationError:
+      description: Ошибка валидации
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyRequests:
+      description: Слишком много попыток
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, examples: [invalid_credentials, not_found, validation_error] }
+            message: { type: string, description: Сообщение по-русски для пользователя }
+            details: { description: 'Детали, например поля с ошибками' }
+            request_id: { type: string }
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 128 }
+        password: { type: string, minLength: 1, maxLength: 256 }
+
+    User:
+      type: object
+      required: [id, username, display_name, roles, auth_method]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        display_name: { type: string }
+        roles:
+          type: array
+          items: { type: string, enum: [admin, analyst] }
+        auth_method: { type: string, enum: [password, oidc] }
+
+    RiskLevel:
+      type: string
+      enum: [high, medium, low, unknown]
+      description: '`unknown` — данных недостаточно, оценки нет'
+
+    PaymentTerm:
+      type: string
+      enum: [hour, week, month, quarter_year, half_year, year]
+
+    ServiceStatus:
+      type: string
+      enum: [active, suspended, prolong_wait, deleted, blocked]
+
+    Reason:
+      type: object
+      required: [code, title, contribution]
+      properties:
+        code: { type: string, description: Код признака из реестра модели, examples: [autoprolong_off_expiring] }
+        title: { type: string, description: Объяснение по-русски для маркетолога }
+        contribution: { type: number, description: 'Вклад в score, пунктов из 100' }
+        service_id: { type: [integer, 'null'], format: int64, description: 'К какой услуге относится, если относится' }
+
+    Money:
+      type: object
+      required: [monthly_revenue, exposure, expected_loss, explanation]
+      properties:
+        monthly_revenue: { type: integer, description: 'Выручка с живых услуг клиента, приведённая к месяцу, евроценты' }
+        exposure: { type: integer, description: 'Максимум, что можно потерять за горизонт, если уйдут все услуги под риском, евроценты' }
+        expected_loss: { type: integer, description: 'Ожидаемая потеря за горизонт с учётом вероятности и покрытия балансом, евроценты' }
+        balance_coverage_days: { type: [number, 'null'], description: 'На сколько дней хватит денег на балансе для текущих услуг' }
+        explanation: { type: string }
+
+    CustomerSummary:
+      type: object
+      required: [id, email, balance, bonus_balance, withdraw_balance, total_replenished, risk_score, risk_level, loyalty, reasons, services_total, services_at_risk, monthly_revenue, expected_loss, exposure]
+      properties:
+        id: { type: integer, format: int64 }
+        email: { type: string }
+        balance: { type: integer, description: евроценты }
+        bonus_balance: { type: integer, description: евроценты }
+        bonus_state: { type: string, enum: [locked, unlocked] }
+        withdraw_balance: { type: integer, description: евроценты }
+        total_replenished: { type: integer, description: евроценты }
+        risk_score: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        risk_level: { $ref: '#/components/schemas/RiskLevel' }
+        loyalty: { type: [number, 'null'], minimum: 0, maximum: 100, description: 'Обратная шкала: 100 − risk_score' }
+        reasons:
+          type: array
+          description: Причины по убыванию вклада. Для unknown — причина отсутствия оценки (contribution = 0).
+          items: { $ref: '#/components/schemas/Reason' }
+        services_total: { type: integer }
+        services_at_risk: { type: integer }
+        monthly_revenue: { type: integer, description: евроценты }
+        expected_loss: { type: integer, description: евроценты }
+        exposure: { type: integer, description: евроценты }
+
+    CustomerPage:
+      type: object
+      required: [items, total, page, page_size, scored_at, model_version]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CustomerSummary' }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+        scored_at: { type: [string, 'null'], format: date-time }
+        model_version: { type: integer }
+
+    ServiceRisk:
+      type: object
+      required: [id, name, status, payment_term, price, auto_prolong, created_at, expires_at, risk_score, risk_level, reasons, expected_loss, monthly_price]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        status: { $ref: '#/components/schemas/ServiceStatus' }
+        payment_term: { $ref: '#/components/schemas/PaymentTerm' }
+        price: { type: integer, description: 'Цена за период оплаты, евроценты' }
+        monthly_price: { type: integer, description: 'Цена, приведённая к месяцу, евроценты' }
+        auto_prolong: { type: boolean }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        days_to_expiry: { type: [number, 'null'], description: 'Отрицательное — уже истекла' }
+        risk_score: { type: [number, 'null'] }
+        risk_level: { $ref: '#/components/schemas/RiskLevel' }
+        reasons:
+          type: array
+          items: { $ref: '#/components/schemas/Reason' }
+        expected_loss: { type: integer, description: евроценты }
+
+    FeatureContribution:
+      type: object
+      required: [code, title, group, value, weight, contribution, explanation]
+      properties:
+        code: { type: string }
+        title: { type: string }
+        group: { type: string }
+        value: { type: number, minimum: 0, maximum: 1, description: 'Сила сигнала 0..1' }
+        weight: { type: number, description: 'Действующий коэффициент' }
+        contribution: { type: number, description: 'Вклад в итоговый score, пунктов' }
+        explanation: { type: string }
+
+    Transaction:
+      type: object
+      required: [id, type, status, amount, created_at, service_id]
+      properties:
+        id: { type: integer, format: int64 }
+        type: { type: string, enum: [prolong, order] }
+        status: { type: string, enum: [performed, not_performed] }
+        amount: { type: integer, description: евроценты }
+        created_at: { type: string, format: date-time }
+        performed_at: { type: [string, 'null'], format: date-time }
+        service_id: { type: integer, format: int64 }
+
+    CustomerDetail:
+      allOf:
+        - $ref: '#/components/schemas/CustomerSummary'
+        - type: object
+          required: [services, features, transactions, money, recommendations, scored_at, model_version]
+          properties:
+            services:
+              type: array
+              items: { $ref: '#/components/schemas/ServiceRisk' }
+            features:
+              type: array
+              description: Разложение score по признакам
+              items: { $ref: '#/components/schemas/FeatureContribution' }
+            transactions:
+              type: array
+              description: Последние транзакции (до 50), от новых к старым
+              items: { $ref: '#/components/schemas/Transaction' }
+            money: { $ref: '#/components/schemas/Money' }
+            recommendations:
+              type: array
+              description: Что предпринять маркетологу
+              items:
+                type: object
+                required: [code, title]
+                properties:
+                  code: { type: string }
+                  title: { type: string }
+                  detail: { type: string }
+            scored_at: { type: [string, 'null'], format: date-time }
+            model_version: { type: integer }
+
+    TimelinePoint:
+      type: object
+      required: [date, kind]
+      properties:
+        date: { type: string, format: date }
+        kind: { type: string, enum: [fact, forecast] }
+        deletions: { type: [integer, 'null'], description: 'Факт: удалённые услуги за день' }
+        at_risk_services: { type: [integer, 'null'], description: 'Услуги под риском (high+medium) на дату' }
+        expected_nonrenewals: { type: [number, 'null'], description: 'Прогноз: ожидаемое число непродлений за день' }
+        expected_loss: { type: [integer, 'null'], description: 'Прогноз: ожидаемая потеря за день, евроценты' }
+
+    Summary:
+      type: object
+      required: [customers_total, by_level, services_total, services_at_risk, expected_loss, exposure, monthly_revenue_total, horizon_days, money_explanation, top_reasons, timeline, scored_at, model_version]
+      properties:
+        customers_total: { type: integer }
+        by_level:
+          type: object
+          required: [high, medium, low, unknown]
+          properties:
+            high: { type: integer }
+            medium: { type: integer }
+            low: { type: integer }
+            unknown: { type: integer }
+        services_total: { type: integer }
+        services_at_risk: { type: integer }
+        expected_loss: { type: integer, description: евроценты }
+        exposure: { type: integer, description: евроценты }
+        monthly_revenue_total: { type: integer, description: евроценты }
+        revenue_at_risk_share: { type: number, minimum: 0, maximum: 1 }
+        horizon_days: { type: integer }
+        money_explanation: { type: string }
+        top_reasons:
+          type: array
+          items:
+            type: object
+            required: [code, title, customers]
+            properties:
+              code: { type: string }
+              title: { type: string }
+              customers: { type: integer }
+              expected_loss: { type: integer }
+        timeline:
+          type: array
+          items: { $ref: '#/components/schemas/TimelinePoint' }
+        scored_at: { type: [string, 'null'], format: date-time }
+        model_version: { type: integer }
+
+    FeatureWeight:
+      type: object
+      required: [code, title, description, group, weight, min, max, enabled]
+      properties:
+        code: { type: string }
+        title: { type: string }
+        description: { type: string }
+        group: { type: string, examples: [renewal, finance, behavior] }
+        level: { type: string, enum: [service, account] }
+        weight: { type: number }
+        default_weight: { type: number }
+        min: { type: number }
+        max: { type: number }
+        enabled: { type: boolean }
+
+    ModelSettings:
+      type: object
+      required: [version, updated_at, horizon_days, thresholds, weights]
+      properties:
+        version: { type: integer }
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: [string, 'null'] }
+        horizon_days: { type: integer, minimum: 1, maximum: 365 }
+        thresholds:
+          type: object
+          required: [medium, high]
+          description: 'score ≥ high → high; ≥ medium → medium; иначе low'
+          properties:
+            medium: { type: number, minimum: 0, maximum: 100 }
+            high: { type: number, minimum: 0, maximum: 100 }
+        weights:
+          type: array
+          items: { $ref: '#/components/schemas/FeatureWeight' }
+
+    ModelSettingsPatch:
+      type: object
+      minProperties: 1
+      properties:
+        horizon_days: { type: integer, minimum: 1, maximum: 365 }
+        thresholds:
+          type: object
+          properties:
+            medium: { type: number, minimum: 0, maximum: 100 }
+            high: { type: number, minimum: 0, maximum: 100 }
+        weights:
+          type: array
+          items:
+            type: object
+            required: [code]
+            properties:
+              code: { type: string }
+              weight: { type: number }
+              enabled: { type: boolean }
+
+    SettingsChange:
+      type: object
+      required: [version, changed_at, changed_by, changes]
+      properties:
+        version: { type: integer }
+        changed_at: { type: string, format: date-time }
+        changed_by: { type: [string, 'null'] }
+        changes:
+          type: array
+          items:
+            type: object
+            required: [path, old, new]
+            properties:
+              path: { type: string, examples: ['weights.autoprolong_off_expiring.weight'] }
+              old: {}
+              new: {}
+
+    SourceAccount:
+      type: object
+      required: [id, email, balance, withdrawBalance, totalReplenished, bonusBalance, bonusState]
+      properties:
+        id: { type: integer, format: int64 }
+        email: { type: string }
+        balance: { type: integer, minimum: 0 }
+        withdrawBalance: { type: integer, minimum: 0 }
+        totalReplenished: { type: integer, minimum: 0 }
+        bonusBalance: { type: integer, minimum: 0 }
+        bonusState: { type: string, enum: [locked, unlocked] }
+
+    SourceService:
+      type: object
+      required: [id, name, ownerId, paymentTerm, autoProlong, createdAt, expiresAt, status, price]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        ownerId: { type: integer, format: int64 }
+        paymentTerm: { $ref: '#/components/schemas/PaymentTerm' }
+        autoProlong: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        status: { $ref: '#/components/schemas/ServiceStatus' }
+        price: { type: integer, minimum: 0 }
+
+    SourceTransaction:
+      type: object
+      required: [id, amount, status, createdAt, type, serviceId]
+      properties:
+        id: { type: integer, format: int64 }
+        amount: { type: integer, minimum: 0 }
+        status: { type: string, enum: [performed, not_performed] }
+        performedAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: string, format: date-time }
+        type: { type: string, enum: [prolong, order] }
+        serviceId: { type: integer, format: int64 }
+
+    SourceSnapshot:
+      type: object
+      required: [accounts, services, transactions]
+      properties:
+        reference_time:
+          type: [string, 'null']
+          format: date-time
+          description: 'Момент, на который снят снимок. Если не задан — текущее время.'
+        accounts:
+          type: array
+          items: { $ref: '#/components/schemas/SourceAccount' }
+        services:
+          type: array
+          items: { $ref: '#/components/schemas/SourceService' }
+        transactions:
+          type: array
+          items: { $ref: '#/components/schemas/SourceTransaction' }
+
+    SourceChangeBatch:
+      type: object
+      properties:
+        accounts:
+          type: array
+          items: { $ref: '#/components/schemas/SourceAccount' }
+        services:
+          type: array
+          items: { $ref: '#/components/schemas/SourceService' }
+        transactions:
+          type: array
+          items: { $ref: '#/components/schemas/SourceTransaction' }
+
+    SnapshotAccepted:
+      type: object
+      required: [snapshot_id, counts]
+      properties:
+        snapshot_id: { type: string }
+        counts:
+          type: object
+          required: [accounts, services, transactions]
+          properties:
+            accounts: { type: integer }
+            services: { type: integer }
+            transactions: { type: integer }
+
+    SimulatorState:
+      type: object
+      required: [running, interval_ms, events_emitted]
+      properties:
+        running: { type: boolean }
+        interval_ms: { type: integer }
+        events_emitted: { type: integer }
+
+    SimulatorCommand:
+      type: object
+      properties:
+        running: { type: boolean }
+        interval_ms: { type: integer, minimum: 200, maximum: 60000 }
+        generate:
+          type: object
+          description: Сгенерировать и загрузить расширенный набор вместо текущего
+          properties:
+            accounts: { type: integer, minimum: 1, maximum: 200000 }
+            seed: { type: integer }
+
+    ScoresUpdatedEvent:
+      type: object
+      required: [model_version, scored_at, changed_customer_ids, summary]
+      properties:
+        model_version: { type: integer }
+        scored_at: { type: string, format: date-time }
+        changed_customer_ids:
+          type: array
+          description: 'Пустой массив с full=true — пересчитаны все'
+          items: { type: integer }
+        full: { type: boolean }
+        duration_ms: { type: number }
+        summary:
+          type: object
+          required: [customers_total, by_level, expected_loss, exposure]
+          properties:
+            customers_total: { type: integer }
+            by_level:
+              type: object
+              properties:
+                high: { type: integer }
+                medium: { type: integer }
+                low: { type: integer }
+                unknown: { type: integer }
+            expected_loss: { type: integer }
+            exposure: { type: integer }
+
+    SettingsUpdatedEvent:
+      type: object
+      required: [version, updated_by]
+      properties:
+        version: { type: integer }
+        updated_by: { type: [string, 'null'] }
+
+    SourceUpdatedEvent:
+      type: object
+      required: [kind, counts]
+      properties:
+        kind: { type: string, enum: [snapshot, changes] }
+        snapshot_id: { type: [string, 'null'] }
+        counts:
+          type: object
+          properties:
+            accounts: { type: integer }
+            services: { type: integer }
+            transactions: { type: integer }

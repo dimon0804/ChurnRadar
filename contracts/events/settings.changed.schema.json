@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "churnradar/events/settings.changed",
+  "title": "Subject churn.settings.changed — настройки модели изменились",
+  "type": "object",
+  "required": ["version", "updated_by"],
+  "properties": {
+    "version": {"type": "integer"},
+    "updated_by": {"type": ["string", "null"]}
+  }
+}

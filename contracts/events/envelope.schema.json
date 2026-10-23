@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "churnradar/events/envelope",
+  "title": "Конверт события шины NATS JetStream",
+  "type": "object",
+  "required": ["event_id", "type", "occurred_at", "schema_version", "payload"],
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid", "description": "Ключ идемпотентности"},
+    "type": {"type": "string", "enum": ["source.changed", "settings.changed", "scores.updated"]},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "schema_version": {"const": 1},
+    "producer": {"type": "string", "examples": ["ingest", "api", "scoring"]},
+    "payload": {"type": "object"}
+  }
+}

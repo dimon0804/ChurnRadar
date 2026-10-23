@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "churnradar/events/source.changed",
+  "title": "Subject churn.source.changed — исходные данные изменились",
+  "type": "object",
+  "required": ["kind", "counts", "account_ids"],
+  "properties": {
+    "kind": {"enum": ["snapshot", "changes"]},
+    "snapshot_id": {"type": ["string", "null"]},
+    "counts": {"type": "object", "properties": {"accounts": {"type": "integer"}, "services": {"type": "integer"}, "transactions": {"type": "integer"}}},
+    "account_ids": {"type": "array", "items": {"type": "integer"}, "description": "Затронутые аккаунты; пусто при kind=snapshot (полный пересчёт)"}
+  }
+}

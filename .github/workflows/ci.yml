@@ -88,11 +88,13 @@ jobs:
       - uses: astral-sh/ruff-action@v3
         with:
           version: "0.11.8"
-          args: check ${{ needs.discover.outputs.python_paths }}
+          src: ${{ needs.discover.outputs.python_paths }}
+          args: check
       - uses: astral-sh/ruff-action@v3
         with:
           version: "0.11.8"
-          args: format --check --diff ${{ needs.discover.outputs.python_paths }}
+          src: ${{ needs.discover.outputs.python_paths }}
+          args: format --check --diff
         continue-on-error: true
 
   lint-web:
@@ -246,7 +248,13 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.img.name }}
       - name: Trivy scan
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock             aquasec/trivy:0.62.1 image --severity CRITICAL --ignore-unfixed             --exit-code 1 --no-progress churn-radar-${{ matrix.img.name }}:ci
+          set -o pipefail
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock             aquasec/trivy:0.62.1 image --severity CRITICAL --ignore-unfixed --no-progress             --format json --output /dev/stdout churn-radar-${{ matrix.img.name }}:ci > trivy.json
+          jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]? |
+            "::error title=\(.VulnerabilityID)::\($t) \(.PkgName) \(.InstalledVersion) -> \(.FixedVersion // "-")"' trivy.json
+          count=$(jq '[.Results[]?.Vulnerabilities[]?] | length' trivy.json)
+          echo "CRITICAL: $count" >> "$GITHUB_STEP_SUMMARY"
+          test "$count" -eq 0
 
   helm:
     name: Helm lint and kubeconform

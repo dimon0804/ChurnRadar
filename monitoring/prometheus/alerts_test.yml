@@ -1,0 +1,33 @@
+rule_files: [alerts.yml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'churn_expected_loss_eur{job="api",service="api"}'
+        values: '1000x60 1500x20'
+      - series: 'notifier_connected_clients{instance="a"}'
+        values: '10x20 2x20'
+      - series: 'jetstream_consumer_num_pending{stream_name="CHURN",consumer_name="scoring"}'
+        values: '0 5x5'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: ChurnExpectedLossGrowth
+        exp_alerts:
+          - exp_labels: {severity: warning, team: marketing}
+            exp_annotations:
+              summary: "Ожидаемая потеря выросла на 50% за час"
+              description: "За последний час ожидаемая потеря выручки от оттока выросла больше чем на 20%. Откройте ChurnRadar, отсортируйте клиентов по «Ожидаемой потере» и посмотрите, кто недавно перешёл в высокий риск и почему — стоит связаться с ними первыми."
+      - eval_time: 24m
+        alertname: SSEClientsDrop
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Число SSE-клиентов упало больше чем вдвое за 5 минут"
+              description: "Сейчас подключено 2 клиентов живых обновлений. Возможны проблемы с notifier, шлюзом или NATS — панели перестанут обновляться сами."
+      - eval_time: 3m
+        alertname: ScoringLagHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, stream_name: CHURN, consumer_name: scoring}
+            exp_annotations:
+              summary: "Пересчёт отстаёт: в очереди 5 необработанных событий"
+              description: "Консьюмер scoring потока CHURN не успевает разбирать события больше 30 секунд. Панель показывает устаревшие оценки риска."

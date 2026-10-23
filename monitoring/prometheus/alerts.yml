@@ -1,0 +1,99 @@
+groups:
+  - name: churn-business
+    rules:
+      - alert: ChurnExpectedLossGrowth
+        expr: |
+          (
+            max(churn_expected_loss_eur)
+            - max(churn_expected_loss_eur offset 1h)
+          ) / max(churn_expected_loss_eur offset 1h) > 0.2
+          and max(churn_expected_loss_eur offset 1h) > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: marketing
+        annotations:
+          summary: "Ожидаемая потеря выросла на {{ $value | humanizePercentage }} за час"
+          description: >-
+            За последний час ожидаемая потеря выручки от оттока выросла больше чем на 20%.
+            Откройте ChurnRadar, отсортируйте клиентов по «Ожидаемой потере» и посмотрите,
+            кто недавно перешёл в высокий риск и почему — стоит связаться с ними первыми.
+
+      - alert: ChurnHighRiskCustomersGrowth
+        expr: |
+          sum(churn_customers_by_risk_level{level="high"})
+          - sum(churn_customers_by_risk_level{level="high"} offset 1h) > 0
+          and
+          sum(churn_customers_by_risk_level{level="high"})
+          > 1.2 * sum(churn_customers_by_risk_level{level="high"} offset 1h)
+        for: 5m
+        labels:
+          severity: info
+          team: marketing
+        annotations:
+          summary: "Клиентов под высоким риском стало больше на 20%+ за час"
+          description: >-
+            Число клиентов в группе высокого риска за час выросло больше чем на 20%.
+            Проверьте в ChurnRadar раздел «Клиенты под риском» и причины в карточках.
+
+  - name: churn-platform
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Сервис {{ $labels.service }} недоступен"
+          description: "Prometheus не может собрать метрики с {{ $labels.instance }} (job {{ $labels.job }}) больше минуты."
+
+      - alert: ScoringLagHigh
+        expr: |
+          sum by (stream_name, consumer_name) (jetstream_consumer_num_pending{stream_name="CHURN"}) > 0
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Пересчёт отстаёт: в очереди {{ $value }} необработанных событий"
+          description: >-
+            Консьюмер {{ $labels.consumer_name }} потока {{ $labels.stream_name }} не успевает
+            разбирать события больше 30 секунд. Панель показывает устаревшие оценки риска.
+
+      - alert: ScoringStale
+        expr: |
+          (time() - max(churn_last_scored_timestamp_seconds)) > 30
+          and on ()
+          sum(increase(http_requests_total{service="ingest", method=~"POST|PUT", status=~"2.."}[5m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Данные источника менялись, но пересчёта не было {{ $value | humanizeDuration }}"
+          description: >-
+            Ingest принимал изменения за последние 5 минут, а последний пересчёт оценок был
+            больше 30 секунд назад. Проверьте воркеры scoring и NATS.
+
+      - alert: HighErrorRate
+        expr: |
+          sum by (service) (rate(traefik_service_requests_total{code=~"5.."}[5m]))
+          / sum by (service) (rate(traefik_service_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Больше 5% ошибок 5xx у {{ $labels.service }}"
+          description: "Доля ответов 5xx через шлюз за 5 минут: {{ $value | humanizePercentage }}."
+
+      - alert: SSEClientsDrop
+        expr: |
+          sum(notifier_connected_clients) < 0.5 * sum(notifier_connected_clients offset 5m)
+          and
+          sum(notifier_connected_clients offset 5m) >= 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Число SSE-клиентов упало больше чем вдвое за 5 минут"
+          description: >-
+            Сейчас подключено {{ $value }} клиентов живых обновлений. Возможны проблемы
+            с notifier, шлюзом или NATS — панели перестанут обновляться сами.

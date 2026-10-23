@@ -1,0 +1,118 @@
+# Prometheus для docker compose.
+#
+# В dev-сборке хосты api, ingest и simulator — сетевые алиасы контейнера mock-core,
+# поэтому этот же конфиг работает и с заглушкой, и с настоящими сервисами.
+#
+# /metrics у api закрыт Bearer-токеном (METRICS_TOKEN). Токен лежит в файле
+# /run/secrets/metrics_token, compose монтирует его как secret/volume.
+# Альтернатива без файла: заменить credentials_file на
+#   credentials: churn-metrics-demo-token
+# (только для демо, токен попадёт в конфиг) или ходить через шлюз
+# traefik:8080/metrics, где тот же токен проверяет auth через ForwardAuth.
+#
+# С mock-core алиасы ingest и simulator указывают на тот же процесс, поэтому
+# метрики churn_* приходят в трёх job; дашборды и алерты берут max().
+# Токен шлём и в ingest/scoring/simulator: mock-core закрывает /metrics на любом
+# хосте, а настоящим сервисам лишний заголовок не мешает.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    project: churn-radar
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: prometheus
+
+  - job_name: api
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/metrics_token
+    static_configs:
+      - targets: ["api:8000"]
+        labels:
+          service: api
+
+  - job_name: auth
+    static_configs:
+      - targets: ["auth:8000"]
+        labels:
+          service: auth
+
+  # notifier тоже в нескольких репликах: у каждой свои SSE-клиенты
+  - job_name: notifier
+    dns_sd_configs:
+      - names: ["notifier"]
+        type: A
+        port: 8000
+        refresh_interval: 15s
+    relabel_configs:
+      - target_label: service
+        replacement: notifier
+
+  - job_name: ingest
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/metrics_token
+    static_configs:
+      - targets: ["ingest:8000"]
+        labels:
+          service: ingest
+
+  # scoring масштабируется (docker compose up --scale scoring=N), Docker DNS
+  # отдаёт A-запись на каждую реплику — так собираем все.
+  - job_name: scoring
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/metrics_token
+    dns_sd_configs:
+      - names: ["scoring"]
+        type: A
+        port: 8000
+        refresh_interval: 15s
+    relabel_configs:
+      - target_label: service
+        replacement: scoring
+
+  - job_name: simulator
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/metrics_token
+    static_configs:
+      - targets: ["simulator:8000"]
+        labels:
+          service: simulator
+
+  # entrypoint "metrics" в traefik (--metrics.prometheus.entryPoint=metrics)
+  - job_name: traefik
+    static_configs:
+      - targets: ["traefik:8082"]
+        labels:
+          service: traefik
+
+  # prometheus-nats-exporter запускается с -varz -connz -jsz=all
+  - job_name: nats
+    static_configs:
+      - targets: ["nats-exporter:7777"]
+        labels:
+          service: nats
+
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+        labels:
+          service: postgres
+
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+        labels:
+          service: redis

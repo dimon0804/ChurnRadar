@@ -1,0 +1,17 @@
+.git
+**/node_modules
+**/dist
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.venv
+**/playwright-report
+**/test-results
+deploy/helm
+deploy/kind
+monitoring
+docs
+tests/e2e
+tests/load
+*.md
+!contracts/**

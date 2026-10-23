@@ -1,0 +1,40 @@
+# Stand-in for services/api, ingest, scoring and simulator while they are not merged.
+# docker compose -f docker-compose.yml -f deploy/compose/docker-compose.mock.yml up -d
+# One mock-core container answers under the api, ingest and simulator hostnames and
+# publishes the same NATS events, so gateway, notifier and the panel run unchanged.
+
+services:
+  api:
+    profiles: [core]
+  ingest:
+    profiles: [core]
+  scoring:
+    profiles: [core]
+  simulator:
+    profiles: [core]
+
+  mock-core:
+    restart: unless-stopped
+    image: churn-radar-mock-core:dev
+    build: {context: ., dockerfile: tests/mock-core/Dockerfile}
+    environment:
+      NATS_URL: nats://nats:4222
+      METRICS_TOKEN: ${METRICS_TOKEN:-churn-metrics-demo-token}
+      SETTINGS_PATH: /data/settings.json
+    volumes:
+      - mockdata:/data
+    read_only: true
+    tmpfs: ["/tmp:size=32m"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      default:
+        aliases: [api, ingest, simulator]
+    depends_on:
+      nats-init: {condition: service_completed_successfully}
+    deploy:
+      resources:
+        limits: {cpus: "1", memory: 256M}
+
+volumes:
+  mockdata:

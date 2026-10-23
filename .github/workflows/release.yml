@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_PREFIX: ghcr.io/dimon0804/churn-radar
+
+jobs:
+  discover:
+    name: Discover images
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.scan.outputs.images }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: scan
+        run: |
+          set -euo pipefail
+          images='[]'
+          while IFS= read -r df; do
+            dir=$(dirname "$df")
+            name=$(basename "$dir")
+            if grep -Eq '^\s*COPY\s+(--[^ ]+\s+)*(libs|services|contracts|data|web|tests|deploy)/' "$df"; then
+              context=.
+            else
+              context="$dir"
+            fi
+            images=$(jq -c --arg n "$name" --arg f "$df" --arg c "$context" '. + [{name: $n, dockerfile: $f, context: $c}]' <<<"$images")
+          done < <(find services web tests/mock-core -maxdepth 2 -name Dockerfile -type f 2>/dev/null | sort)
+          echo "images=$images" >> "$GITHUB_OUTPUT"
+          echo "$images" | jq .
+
+  publish:
+    name: Publish ${{ matrix.img.name }}
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        img: ${{ fromJSON(needs.discover.outputs.images) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}-${{ matrix.img.name }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=tag
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=churn-radar-${{ matrix.img.name }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.img.context }}
+          file: ${{ matrix.img.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.img.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.img.name }}
+          provenance: false

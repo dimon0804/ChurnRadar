@@ -95,6 +95,10 @@ log "nginx"
 sed "s/churnradar.clv-digital.tech/$DOMAIN/" deploy/prod/nginx.conf > /etc/nginx/sites-available/churnradar
 ln -sf /etc/nginx/sites-available/churnradar /etc/nginx/sites-enabled/churnradar
 rm -f /etc/nginx/sites-enabled/default
+# конфиг берётся из репозитория заново, поэтому уже выпущенный сертификат подключаем сразу, без простоя
+if [[ -d "/etc/letsencrypt/live/$DOMAIN" ]]; then
+  certbot install --nginx --cert-name "$DOMAIN" --redirect --non-interactive
+fi
 nginx -t && systemctl reload nginx
 
 log "Стенд"
@@ -104,10 +108,10 @@ COMPOSE=(docker compose -f docker-compose.yml -f deploy/prod/compose.prod.yml)
 
 log "HTTPS"
 if [[ ! -d "/etc/letsencrypt/live/$DOMAIN" ]]; then
-  certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --redirect \
-    ${EMAIL:+-m "$EMAIL"} ${EMAIL:---register-unsafely-without-email}
+  if [[ -n "$EMAIL" ]]; then contact=(-m "$EMAIL"); else contact=(--register-unsafely-without-email); fi
+  certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --redirect "${contact[@]}"
+  nginx -t && systemctl reload nginx
 fi
-systemctl reload nginx
 
 log "Готово: https://$DOMAIN"
 grep -E '^(ADMIN_PASSWORD|MARKETER_PASSWORD|ANALYST_PASSWORD|GRAFANA_ADMIN_PASSWORD|MAILPIT_PASSWORD|AUTHENTIK_ADMIN_PASSWORD|SSO_DEMO_[A-Z]+_PASSWORD)=' .env \

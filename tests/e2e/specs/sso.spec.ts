@@ -8,6 +8,7 @@ test.skip(process.env.SSO_E2E !== '1', 'SSO-профиль не поднят (SS
 const SSO_USERS = {
   marketer: process.env.SSO_MARKETER_PASSWORD ?? 'marketer',
   admin: process.env.SSO_ADMIN_PASSWORD ?? 'admin',
+  analyst: process.env.SSO_ANALYST_PASSWORD ?? 'analyst',
   outsider: process.env.SSO_OUTSIDER_PASSWORD ?? 'outsider',
 }
 
@@ -34,12 +35,12 @@ test('кнопки обоих способов видны на странице 
   await expect(page.getByRole('link', { name: 'Войти через Authentik (SAML)' })).toBeVisible()
 })
 
-test('OIDC: маркетолог входит аналитиком', async ({ page }) => {
+test('OIDC: маркетолог входит маркетологом', async ({ page }) => {
   await ssoLogin(page, 'OIDC', 'marketer')
   await expect(page).toHaveURL(/localhost:8080\/(?!login)/, { timeout: 30_000 })
   const me = await (await page.request.get('/api/v1/auth/me')).json()
-  expect(me).toMatchObject({ username: 'marketer', roles: ['analyst'], auth_method: 'oidc' })
-  // роль применяется: админских разделов нет, менять модель сервер не даёт
+  expect(me).toMatchObject({ username: 'marketer', roles: ['marketer'], auth_method: 'oidc' })
+  // роль применяется: админских разделов нет, менять модель сервер не даёт, а писать клиентам можно
   await expect(page.getByRole('navigation', { name: 'Разделы' }).getByRole('link', { name: 'Клиенты' })).toBeVisible()
   await expect(page.getByRole('navigation', { name: 'Разделы' }).getByRole('link', { name: 'Модель' })).toHaveCount(0)
   const patch = await page.request.patch('/api/v1/model/settings', { data: {}, headers: originHeaders })
@@ -53,6 +54,15 @@ test('SAML: admin из группы churn-admins входит администр
   expect(me).toMatchObject({ roles: ['admin'], auth_method: 'saml' })
   await expect(page.getByRole('navigation', { name: 'Разделы' }).getByRole('link', { name: 'Модель' })).toBeVisible()
   await expect(page.getByRole('navigation', { name: 'Разделы' }).getByRole('link', { name: 'Пользователи' })).toBeVisible()
+})
+
+test('SAML: analyst из группы churn-analysts входит аналитиком и клиентам не пишет', async ({ page }) => {
+  await ssoLogin(page, 'SAML', 'analyst')
+  await expect(page).toHaveURL(/localhost:8080\/(?!login)/, { timeout: 30_000 })
+  const me = await (await page.request.get('/api/v1/auth/me')).json()
+  expect(me).toMatchObject({ roles: ['analyst'], auth_method: 'saml' })
+  const send = await page.request.post('/api/v1/customers/5/email', { data: { subject: 's', text: 't' }, headers: originHeaders })
+  expect(send.status()).toBe(403)
 })
 
 test('пользователь без группы ChurnRadar получает отказ', async ({ page }) => {

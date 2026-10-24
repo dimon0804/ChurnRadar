@@ -7,9 +7,9 @@ test.describe.configure({ mode: 'serial' })
 
 const MAILPIT = process.env.MAILPIT_URL ?? 'http://localhost:8025'
 const CUSTOMER = 9
-const ANALYST = {
-  username: process.env.ANALYST_USERNAME ?? 'analyst',
-  password: process.env.ANALYST_PASSWORD ?? 'analyst',
+const MARKETER = {
+  username: process.env.MARKETER_USERNAME ?? 'marketer',
+  password: process.env.MARKETER_PASSWORD ?? 'marketer',
 }
 
 type Action = { status: 'emailed' | 'resolved' | 'snoozed'; until: string | null; note: string | null } | null
@@ -26,12 +26,12 @@ async function actionOf(request: APIRequestContext): Promise<Action> {
 }
 
 test.beforeAll(async ({ request }) => {
-  await loginApi(request, ANALYST)
+  await loginApi(request, MARKETER)
   previous = await actionOf(request)
 })
 
 test.afterAll(async ({ request, playwright }) => {
-  await loginApi(request, ANALYST)
+  await loginApi(request, MARKETER)
   if (previous === null) {
     await request.delete(`/api/v1/customers/${CUSTOMER}/action`, { headers: originHeaders })
   } else {
@@ -48,7 +48,7 @@ test.afterAll(async ({ request, playwright }) => {
 })
 
 test('черновик берёт шаблон по главной причине и подставляет данные клиента', async ({ request }) => {
-  await loginApi(request, ANALYST)
+  await loginApi(request, MARKETER)
   const res = await request.post(`/api/v1/customers/${CUSTOMER}/email/draft`, { data: {}, headers: originHeaders })
   expect(res.status()).toBe(200)
   const draft = (await res.json()) as { to: string; template_code: string; subject: string; text: string; enabled: boolean }
@@ -64,7 +64,7 @@ test('черновик берёт шаблон по главной причин�
 
 test('письмо из карточки уходит в Mailpit, клиент получает статус «Письмо отправлено»', async ({ page, playwright }) => {
   const startedAt = Date.now()
-  await loginUi(page, ANALYST)
+  await loginUi(page, MARKETER)
   await page.goto(`/customers/${CUSTOMER}`)
   const panel = page.getByTestId('customer-action')
   await panel.getByRole('button', { name: 'Написать письмо' }).click()
@@ -107,7 +107,7 @@ test('письмо из карточки уходит в Mailpit, клиент �
 })
 
 test('клиент с письмом ушёл из очереди и попадает под защиту от повторов', async ({ request }) => {
-  await loginApi(request, ANALYST)
+  await loginApi(request, MARKETER)
   const queue = await request.get('/api/v1/contact-today', { params: { limit: '100' } })
   const ids = ((await queue.json()) as { items: { id: number }[] }).items.map((i) => i.id)
   expect(ids).not.toContain(CUSTOMER)
@@ -125,7 +125,7 @@ test('клиент с письмом ушёл из очереди и попад�
 })
 
 test('рассылка выбранным: предпросмотр количества и примера, без отправки', async ({ page }) => {
-  await loginUi(page, ANALYST)
+  await loginUi(page, MARKETER)
   await page.goto('/customers?level=high&sort=expected_loss&order=desc')
   await expect(page.getByRole('checkbox', { name: /^Выбрать клиента/ })).toHaveCount(4)
   await page.getByRole('checkbox', { name: 'Выбрать всех на странице' }).check()

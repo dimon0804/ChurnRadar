@@ -683,6 +683,10 @@ paths:
         `churn_risk_score_bucket{le="10|20|…|100|+Inf"}` — снимок распределения на момент
         последнего пересчёта (gauge, накопленные корзины), а также доля выручки под риском
         `churn_revenue_at_risk_ratio`.
+
+        Маркетинговые (те же числа, что в `/api/v1/analytics/marketing`, LTV уже с маржой):
+        `churn_mrr_eur`, `churn_arpu_eur`, `churn_ltv_eur`, `churn_customer_churn_rate`,
+        `churn_revenue_churn_rate` (прогноз на 30 дней, доли 0..1).
       operationId: metrics
       security:
         - metricsToken: []

@@ -189,6 +189,7 @@ export function AppShell() {
                 key={item.to}
                 to={item.to}
                 end={item.end}
+                title={item.label}
                 className={({ isActive }) =>
                   cn(
                     'inline-flex h-8 shrink-0 items-center gap-2 rounded-md px-2 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-2.5 [&_svg]:size-4',
@@ -201,7 +202,7 @@ export function AppShell() {
                 <span className="opacity-80" aria-hidden>
                   {item.icon}
                 </span>
-                <span className="max-md:sr-only">{item.label}</span>
+                <span className="max-lg:sr-only">{item.label}</span>
               </NavLink>
             ))}
           </nav>

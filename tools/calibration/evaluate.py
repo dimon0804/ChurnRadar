@@ -17,6 +17,9 @@ from .future import GONE, LIVE
 LEVELS = ("low", "medium", "high")
 SEGMENT_ORDER = {"loyal": 0, "newcomer": 1, "risky": 2, "churning": 3}
 TOP_SHARES = (0.05, 0.10)
+ROC_GRID = np.linspace(0.0, 1.0, 101)
+# методы, для которых сохраняем саму ROC-кривую; случайный порядок — диагональ, её рисует панель
+ROC_METHODS = ("model", "autoprolong_off", "prolong_wait", "segment_oracle")
 
 
 @dataclass(slots=True)
@@ -148,6 +151,42 @@ def ranking(table: Accounts, target: str, rng: np.random.Generator, bootstrap: i
     return out
 
 
+def roc_points(table: Accounts, target: str) -> dict[str, Any]:
+    """ROC-кривые на общей сетке FPR (101 точка): компактно для JSON и панели."""
+    y = getattr(table, target).astype(bool)
+    scores = {
+        "model": table.score,
+        "autoprolong_off": table.autoprolong_off_share,
+        "prolong_wait": table.waiting_share,
+        "segment_oracle": np.array([SEGMENT_ORDER[s] for s in table.segment], dtype=float),
+    }
+    return {
+        "target": target,
+        "fpr": [round(float(v), 4) for v in ROC_GRID],
+        "tpr": {
+            name: [round(float(v), 4) for v in metrics.roc_on_grid(y, scores[name], ROC_GRID)]
+            for name in ROC_METHODS
+        },
+    }
+
+
+def threshold_metrics(table: Accounts) -> dict[str, dict[str, Any]]:
+    """Точность и полнота, если звонить всем с уровнем high (или medium и выше)."""
+    out: dict[str, dict[str, Any]] = {}
+    for name, flagged_levels in (("high", ("high",)), ("medium_plus", ("medium", "high"))):
+        flagged = np.isin(table.level, flagged_levels)
+        row: dict[str, Any] = {"flagged": int(flagged.sum()), "flagged_share": float(flagged.mean())}
+        for target in ("churned", "lost_any"):
+            y = getattr(table, target).astype(bool)
+            hit = int((y & flagged).sum())
+            row[target] = {
+                "precision": hit / int(flagged.sum()) if flagged.any() else math.nan,
+                "recall": hit / int(y.sum()) if y.any() else math.nan,
+            }
+        out[name] = row
+    return out
+
+
 def by_level(table: Accounts) -> list[dict[str, Any]]:
     base_churn = float(table.churned.mean())
     base_any = float(table.lost_any.mean())
@@ -226,4 +265,6 @@ def evaluate(table: Accounts, services: Services, rng: np.random.Generator, boot
             },
             "levels": by_level(hard),
         },
+        "roc": roc_points(table, "churned"),
+        "thresholds": threshold_metrics(table),
     }

@@ -16,6 +16,14 @@ x-app-env: &app-env
   NATS_URL: nats://nats:4222
   METRICS_TOKEN: ${METRICS_TOKEN:-churn-metrics-demo-token}
   LOG_LEVEL: ${LOG_LEVEL:-info}
+  # почта: по умолчанию Mailpit — письма никуда не уходят, их видно на http://localhost:8025
+  SMTP_HOST: ${SMTP_HOST:-mailpit}
+  SMTP_PORT: ${SMTP_PORT:-1025}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_SECURITY: ${SMTP_SECURITY:-none}
+  SMTP_FROM: ${SMTP_FROM:-care@churnradar.example}
+  SMTP_FROM_NAME: ${SMTP_FROM_NAME:-ChurnRadar}
 
 x-app-hardening: &app-hardening
   read_only: true
@@ -273,6 +281,29 @@ services:
       replicas: ${ALERTS_REPLICAS:-2}
       resources:
         limits: {cpus: "0.5", memory: 192M}
+
+  # ---------------------------------------------------------------- mail
+  # тестовый почтовый ящик: ловит все письма стенда, веб-интерфейс на :8025
+  mailpit:
+    <<: *restart
+    image: axllent/mailpit:v1.27
+    ports:
+      - "${MAILPIT_PORT:-8025}:8025"
+    environment:
+      MP_MAX_MESSAGES: "5000"
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    read_only: true
+    tmpfs: ["/tmp:size=64m"]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 64M}
 
   # ---------------------------------------------------------------- observability
   prometheus:

@@ -72,7 +72,8 @@
           "expr": "max by (service) (up)",
           "legendFormat": "{{service}}",
           "refId": "A",
-          "range": true
+          "range": false,
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -159,7 +160,8 @@
           "expr": "count(up{job=\"scoring\"} == 1) or vector(0)",
           "legendFormat": "__auto",
           "refId": "A",
-          "range": true
+          "range": false,
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -223,7 +225,8 @@
           "expr": "sum(notifier_connected_clients)",
           "legendFormat": "__auto",
           "refId": "A",
-          "range": true
+          "range": false,
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -255,7 +258,7 @@
           "values": false
         },
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "textMode": "auto",
         "orientation": "auto",

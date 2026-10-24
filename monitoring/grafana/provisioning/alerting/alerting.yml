@@ -1,0 +1,3 @@
+# Алерты Grafana не используем: правила живут в Prometheus (monitoring/prometheus/alerts.yml).
+# Файл нужен, чтобы Grafana нашла каталог провижининга и не писала ошибку при старте.
+apiVersion: 1

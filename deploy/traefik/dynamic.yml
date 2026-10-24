@@ -114,7 +114,9 @@ http:
       middlewares: [strip-identity, metrics-auth]
 
     web-public:
-      rule: "Path(`/login`) || PathPrefix(`/assets/`) || PathPrefix(`/fonts/`) || Path(`/favicon.svg`) || Path(`/robots.txt`)"
+      # the login page and everything it loads before sign-in: index.html pulls /theme-init.js and
+      # /favicon.svg, the bundle (js, css, fonts) lives under /assets/
+      rule: "Path(`/login`) || Path(`/theme-init.js`) || PathPrefix(`/assets/`) || PathPrefix(`/fonts/`) || Path(`/favicon.svg`) || Path(`/robots.txt`)"
       entryPoints: [web]
       priority: 50
       service: web

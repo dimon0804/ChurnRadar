@@ -144,7 +144,7 @@ spec:
           port: 8000
     {{- if .Values.web.enabled }}
     - kind: Rule
-      match: {{ printf "%s(Path(`/login`) || PathPrefix(`/assets/`) || Path(`/favicon.svg`))" $hostPrefix | quote }}
+      match: {{ printf "%s(Path(`/login`) || Path(`/theme-init.js`) || PathPrefix(`/assets/`) || PathPrefix(`/fonts/`) || Path(`/favicon.svg`) || Path(`/robots.txt`))" $hostPrefix | quote }}
       priority: 120
       {{- if .Values.gateway.securityHeaders }}
       middlewares:

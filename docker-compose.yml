@@ -279,6 +279,12 @@ services:
       GF_USERS_DEFAULT_LANGUAGE: ru-RU
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      # Grafana 11 сама ставит при старте grafana-lokiexplore-app и grafana-pyroscope-app: Loki и
+      # Pyroscope у нас нет, плагины только тянутся из сети и сыплют ошибки в консоль браузера.
+      # PREINSTALL_DISABLED отключает установку, DISABLE_PLUGINS не даёт загрузиться уже
+      # установленным в volume grafanadata.
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PLUGINS_DISABLE_PLUGINS: grafana-lokiexplore-app,grafana-pyroscope-app
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/churn.json
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro

@@ -83,8 +83,8 @@ const TABLE_TARGET: Target = { selector: 'table[aria-label="Клиенты по�
 const LIVE_TARGET: Target = { selector: 'header [role="status"]' }
 const PROFILE_TARGET: Target = { selector: 'header button[aria-label^="Профиль"]' }
 const ALERTS_TARGET: Target = { selector: 'header button[aria-label^="Оповещения"]' }
-const CALL_TODAY_TARGET: Target = { selector: '[data-testid="call-today"]' }
-const CALL_TODAY_CSV_TARGET: Target = { selector: '[data-testid="call-today-csv"]' }
+const CONTACT_TODAY_TARGET: Target = { selector: '[data-testid="contact-today"]' }
+const CONTACT_TODAY_MASS_TARGET: Target = { selector: '[data-testid="contact-today-mass"]' }
 const QUALITY_LIFT_TARGET: Target = { selector: '[data-testid="quality-lift"]' }
 const QUALITY_AUC_TARGET: Target = { selector: '[data-testid="quality-auc"]' }
 export const WHAT_IF_SWITCH: Target = { selector: 'label:has(button[role="switch"])', text: 'Что если' }
@@ -182,15 +182,15 @@ export const DEMO_STEPS: DemoStep[] = [
     },
   },
   {
-    id: 'call-today',
-    title: 'Кому позвонить сегодня',
+    id: 'contact-today',
+    title: 'С кем связаться сегодня',
     say:
-      'С этого маркетолог начинает день: список, кому звонить, и отсортирован он по деньгам, которые можно спасти, сверху тот, на ком мы потеряем больше всего. Позвонил, нажал «Сделано» или отложил на пару дней, и клиент уходит из списка, а весь список одной кнопкой выгружается в CSV для рассылки.',
-    show: 'Блок «Кому позвонить сегодня» на обзоре: у каждого клиента кнопки «Сделано» и «Отложить», справа сверху «Выгрузить CSV».',
+      'С этого маркетолог начинает день: список, кому написать, отсортирован по деньгам, которые можно спасти, сверху тот, на ком мы потеряем больше всего. Нажимаем «Написать», и письмо уже готово под причину риска, с датой и суммой клиента, а кнопкой «Написать всем» уходит рассылка по всей очереди, причём тем, кому писали на этой неделе, второй раз письмо не придёт.',
+    show: 'Блок «С кем связаться сегодня» на обзоре: у каждого клиента кнопка «Написать», сверху «Написать всем».',
     run: async (ctx) => {
       ctx.navigate('/')
-      await ctx.waitFor(CALL_TODAY_TARGET)
-      ctx.spotlight([CALL_TODAY_TARGET, CALL_TODAY_CSV_TARGET])
+      await ctx.waitFor(CONTACT_TODAY_TARGET)
+      ctx.spotlight([CONTACT_TODAY_TARGET, CONTACT_TODAY_MASS_TARGET])
     },
   },
   {
@@ -224,7 +224,7 @@ export const DEMO_STEPS: DemoStep[] = [
     id: 'customer',
     title: 'Карточка клиента высокого риска',
     say:
-      'Открываем самого рискованного клиента: видно, какие признаки сколько добавили к оценке, сколько денег на кону и что конкретно сделать. Тут же блок «Работа с клиентом», где можно отметить звонок, и клиент пропадёт из списка на обзоре.',
+      'Открываем самого рискованного клиента: видно, какие признаки сколько добавили к оценке, сколько денег на кону и что конкретно сделать. Тут же блок «Связь с клиентом»: кнопка «Написать письмо» с готовым текстом, и после отправки клиент пропадёт из списка на обзоре.',
     show: 'Блоки «Почему» и «Что сделать», ниже вклад признаков, деньги и «Работа с клиентом».',
     run: async (ctx) => {
       const top = await ctx.api.topHighRisk()

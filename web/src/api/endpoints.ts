@@ -1,11 +1,21 @@
 import { request } from './client'
 import type {
   AuthProviders,
-  CallToday,
+  Campaign,
+  CampaignPreview,
+  CampaignRequest,
+  ContactToday,
   CustomerActionState,
   CustomerActionUpdate,
   CustomerDetail,
   CustomerPage,
+  EmailDraft,
+  EmailSendRequest,
+  EmailSent,
+  MailStats,
+  MailTemplate,
+  MailTemplatePatch,
+  MailTemplates,
   LoginRequest,
   ModelQuality,
   ModelSettings,
@@ -32,14 +42,35 @@ export const api = {
   customer: (id: number, signal?: AbortSignal) => request<CustomerDetail>(`/api/v1/customers/${id}`, { signal }),
   summary: (signal?: AbortSignal) => request<Summary>('/api/v1/analytics/summary', { signal }),
 
-  callToday: (query: { limit?: number; marked?: boolean }, signal?: AbortSignal) =>
-    request<CallToday>('/api/v1/call-today', { query, signal }),
+  contactToday: (query: { limit?: number; marked?: boolean }, signal?: AbortSignal) =>
+    request<ContactToday>('/api/v1/contact-today', { query, signal }),
   customerAction: (id: number, signal?: AbortSignal) =>
     request<CustomerActionState>(`/api/v1/customers/${id}/action`, { signal }),
   putCustomerAction: (id: number, body: CustomerActionUpdate) =>
     request<CustomerActionState>(`/api/v1/customers/${id}/action`, { method: 'PUT', body }),
   deleteCustomerAction: (id: number) =>
     request<CustomerActionState>(`/api/v1/customers/${id}/action`, { method: 'DELETE' }),
+
+  emailDraft: (id: number, templateCode: string | null, signal?: AbortSignal) =>
+    request<EmailDraft>(`/api/v1/customers/${id}/email/draft`, {
+      method: 'POST',
+      body: { template_code: templateCode },
+      signal,
+    }),
+  sendEmail: (id: number, body: EmailSendRequest) =>
+    request<EmailSent>(`/api/v1/customers/${id}/email`, { method: 'POST', body }),
+  mailTemplates: (signal?: AbortSignal) => request<MailTemplates>('/api/v1/mail/templates', { signal }),
+  putMailTemplate: (code: string, body: MailTemplatePatch) =>
+    request<MailTemplate>(`/api/v1/mail/templates/${encodeURIComponent(code)}`, { method: 'PUT', body }),
+  resetMailTemplate: (code: string) =>
+    request<MailTemplate>(`/api/v1/mail/templates/${encodeURIComponent(code)}/reset`, { method: 'POST' }),
+  previewCampaign: (body: CampaignRequest, signal?: AbortSignal) =>
+    request<CampaignPreview>('/api/v1/mail/campaigns/preview', { method: 'POST', body, signal }),
+  createCampaign: (body: CampaignRequest) =>
+    request<Campaign>('/api/v1/mail/campaigns', { method: 'POST', body }),
+  campaign: (id: number, signal?: AbortSignal) => request<Campaign>(`/api/v1/mail/campaigns/${id}`, { signal }),
+  campaigns: (signal?: AbortSignal) => request<{ items: Campaign[] }>('/api/v1/mail/campaigns', { signal }),
+  mailStats: (signal?: AbortSignal) => request<MailStats>('/api/v1/mail/stats', { signal }),
 
   settings: (signal?: AbortSignal) => request<ModelSettings>('/api/v1/model/settings', { signal }),
   patchSettings: (body: ModelSettingsPatch) =>
@@ -66,8 +97,15 @@ export const queryKeys = {
   customer: (id: number) => ['customer', id] as const,
   customerAll: ['customer'] as const,
   // под префиксами customers/customer: после пересчёта они обновляются вместе со списком и карточкой
-  callToday: (marked: boolean) => ['customers', 'call-today', { marked }] as const,
+  contactToday: (marked: boolean) => ['customers', 'contact-today', { marked }] as const,
   customerAction: (id: number) => ['customer', id, 'action'] as const,
+  // не под префиксом customer: пересчёт не должен перезаписывать текст, который сотрудник правит
+  emailDraft: (id: number, template: string | null) => ['email-draft', id, template] as const,
+  // письма меняют очередь и статистику; после пересчёта «помогло» тоже может измениться
+  mailStats: ['customers', 'mail-stats'] as const,
+  mailTemplates: ['mail-templates'] as const,
+  campaigns: ['mail-campaigns'] as const,
+  campaign: (id: number) => ['mail-campaigns', id] as const,
   summary: ['summary'] as const,
   settings: ['settings'] as const,
   history: ['settings-history'] as const,

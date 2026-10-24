@@ -16,7 +16,7 @@ export function useCustomerAction() {
       update ? api.putCustomerAction(id, update) : api.deleteCustomerAction(id),
     onSuccess: (state, { id }) => {
       queryClient.setQueryData(queryKeys.customerAction(id), state)
-      // очередь «Кому позвонить» лежит под префиксом customers
+      // очередь «С кем связаться» лежит под префиксом customers
       void queryClient.invalidateQueries({ queryKey: queryKeys.customers })
     },
   })

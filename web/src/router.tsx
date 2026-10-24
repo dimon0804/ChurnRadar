@@ -14,6 +14,7 @@ const CustomersPage = lazy(() => import('@/pages/customers'))
 const CustomerSheet = lazy(() => import('@/pages/customer-detail'))
 const ModelPage = lazy(() => import('@/pages/model'))
 const DataPage = lazy(() => import('@/pages/data'))
+const MailPage = lazy(() => import('@/pages/mail'))
 const ModelQualityPage = lazy(() => import('@/pages/model-quality'))
 
 function PageFallback() {
@@ -111,6 +112,14 @@ export const router = createBrowserRouter([
         element: (
           <Lazy>
             <ModelQualityPage />
+          </Lazy>
+        ),
+      },
+      {
+        path: 'mail',
+        element: (
+          <Lazy>
+            <MailPage />
           </Lazy>
         ),
       },

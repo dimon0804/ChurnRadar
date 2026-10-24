@@ -520,7 +520,7 @@ export function ThresholdCard({ sc, q }: { sc: QualityScenario; q: ModelQuality 
   return (
     <Card data-testid="quality-threshold">
       <CardHeader>
-        <CardTitle>Если звонить всем с высоким риском</CardTitle>
+        <CardTitle>Если писать всем с высоким риском</CardTitle>
         <CardDescription>
           Порог «высокий» — score от {formatDecimal(t.high, 0)}. Точность и полнота для цели «ушёл полностью за{' '}
           {q.params.horizon_days} дней»
@@ -900,7 +900,7 @@ export function MethodCard({ q }: { q: ModelQuality }) {
               оплаченную дальше горизонта. Для модели этот сценарий скорее пессимистичен.
             </li>
             <li>
-              <span className="text-foreground">Нет обратной связи.</span> В симуляции никто не звонит клиентам. В жизни по
+              <span className="text-foreground">Нет обратной связи.</span> В симуляции клиентам никто не пишет. В жизни по
               высокому риску будут работать, и доля ушедших среди них снизится.
             </li>
           </ul>

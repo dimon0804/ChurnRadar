@@ -531,7 +531,7 @@ export default function CustomerSheet() {
               <Hero c={c} />
             </div>
             <NextAction c={c} />
-            <CustomerActionPanel id={c.id} atRisk={riskLevelOf(c.risk_level) !== 'unknown' && c.expected_loss > 0} />
+            <CustomerActionPanel id={c.id} email={c.email} atRisk={riskLevelOf(c.risk_level) !== 'unknown' && c.expected_loss > 0} />
             <Reasons c={c} services={services} />
             {riskLevelOf(c.risk_level) !== 'unknown' && <Features features={c.features ?? []} level={riskLevelOf(c.risk_level)} />}
             <Money c={c} />

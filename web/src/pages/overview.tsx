@@ -5,7 +5,7 @@ import { Link } from 'react-router'
 import { api, queryKeys } from '@/api/endpoints'
 import type { RiskLevel, Summary } from '@/api/types'
 import { AnimatedNumber } from '@/components/animated-number'
-import { CallTodayCard } from '@/components/call-today'
+import { ContactTodayCard } from '@/components/contact-today'
 import { ChurnChart } from '@/components/churn-chart'
 import { DataClockBadge, useDataClock } from '@/components/data-clock'
 import { FlashOverlay } from '@/components/flash'
@@ -316,7 +316,7 @@ export default function OverviewPage() {
       ) : s ? (
         <div className="space-y-4">
           <KpiRow s={s} />
-          <CallTodayCard />
+          <ContactTodayCard />
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-2">
               <CardHeader>

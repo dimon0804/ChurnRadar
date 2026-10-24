@@ -812,7 +812,7 @@ export default function PlaybooksPage() {
                     <span className="mt-2 flex flex-wrap items-center justify-between gap-2">
                       <StatusPills p={p} />
                       <span className="num text-xs text-subtle-foreground">
-                        {formatInt(p.stats.treated)} / {formatInt(p.stats.control)}
+                        действие {formatInt(p.stats.treated)} · контроль {formatInt(p.stats.control)}
                       </span>
                     </span>
                   </button>

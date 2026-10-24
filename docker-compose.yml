@@ -62,10 +62,10 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
-    shm_size: 128m
+    shm_size: 256m
     deploy:
       resources:
-        limits: {cpus: "1", memory: 512M}
+        limits: {cpus: "2", memory: 1G}
 
   redis:
     <<: *restart
@@ -209,7 +209,7 @@ services:
       nats-init: {condition: service_completed_successfully}
     deploy:
       resources:
-        limits: {cpus: "1", memory: 1G}
+        limits: {cpus: "1", memory: 3G}
 
   scoring:
     <<: [*restart, *app-hardening]
@@ -224,7 +224,7 @@ services:
     deploy:
       replicas: ${SCORING_REPLICAS:-2}
       resources:
-        limits: {cpus: "2", memory: 1536M}
+        limits: {cpus: "2", memory: 3G}
 
   simulator:
     <<: [*restart, *app-hardening]
@@ -238,7 +238,7 @@ services:
       ingest: {condition: service_healthy}
     deploy:
       resources:
-        limits: {cpus: "1", memory: 512M}
+        limits: {cpus: "1", memory: 2G}
 
   # ---------------------------------------------------------------- observability
   prometheus:

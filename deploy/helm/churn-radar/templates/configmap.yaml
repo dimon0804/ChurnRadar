@@ -1,0 +1,24 @@
+{{- range $key := splitList " " (include "cr.appKeys" .) }}
+{{- if include "cr.appEnabled" (dict "root" $ "key" $key) }}
+{{- $app := include "cr.appConfig" (dict "root" $ "key" $key) | fromYaml }}
+{{- $component := kebabcase $key }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cr.componentName" (dict "root" $ "component" $component) }}
+  labels:
+    {{- include "cr.labels" $ | nindent 4 }}
+    {{- include "cr.selectorLabels" (dict "root" $ "component" $component) | nindent 4 }}
+data:
+  LOG_LEVEL: {{ $.Values.global.logLevel | quote }}
+  NATS_URL: {{ include "cr.natsUrl" $ | quote }}
+  PORT: {{ $app.port | quote }}
+  {{- range $k, $v := $.Values.commonEnv }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+  {{- range $k, $v := $app.env }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}

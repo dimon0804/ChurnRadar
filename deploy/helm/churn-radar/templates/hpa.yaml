@@ -1,0 +1,35 @@
+{{- range $key := list "api" "scoring" "mockCore" "auth" "notifier" "web" "ingest" "simulator" }}
+{{- if include "cr.appEnabled" (dict "root" $ "key" $key) }}
+{{- $app := include "cr.appConfig" (dict "root" $ "key" $key) | fromYaml }}
+{{- if and $app.autoscaling.enabled (not (and (eq $key "scoring") $.Values.keda.enabled)) }}
+{{- $component := kebabcase $key }}
+{{- $name := include "cr.componentName" (dict "root" $ "component" $component) }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cr.labels" $ | nindent 4 }}
+    {{- include "cr.selectorLabels" (dict "root" $ "component" $component) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $name }}
+  minReplicas: {{ $app.autoscaling.minReplicas }}
+  maxReplicas: {{ $app.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $app.autoscaling.targetCPUUtilizationPercentage }}
+  {{- with $app.autoscaling.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

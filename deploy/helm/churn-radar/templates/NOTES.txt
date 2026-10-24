@@ -1,0 +1,22 @@
+ChurnRadar установлен в namespace {{ .Release.Namespace }}.
+
+Сервисы:
+{{- range $key := splitList " " (include "cr.appKeys" .) }}
+{{- if include "cr.appEnabled" (dict "root" $ "key" $key) }}
+  - {{ include "cr.componentName" (dict "root" $ "component" (kebabcase $key)) }}
+{{- end }}
+{{- end }}
+{{- if .Values.mockCore.enabled }}
+
+Внимание: включён mockCore — маршруты api/ingest/simulator обслуживает заглушка.
+{{- end }}
+
+Проверка:
+  kubectl -n {{ .Release.Namespace }} get pods,hpa,pdb
+{{- if .Values.gateway.enabled }}
+  curl -i http://<адрес-traefik>/api/v1/customers   # ожидается 401 без сессии
+{{- end }}
+{{- if or (eq .Values.secrets.adminPassword "admin") (eq .Values.secrets.metricsToken "churn-metrics-demo-token") }}
+
+Используются демо-секреты. Для production задайте secrets.* или secrets.existingSecret.
+{{- end }}

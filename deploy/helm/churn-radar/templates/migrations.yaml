@@ -1,0 +1,114 @@
+{{- /*
+Миграции запускаются хуком pre-install,pre-upgrade. Исключение — первая установка
+со встроенным Postgres: на этапе pre-install базы ещё нет, поэтому Job создаётся как
+обычный ресурс вместе с остальными и ждёт готовности БД в init-контейнере.
+*/ -}}
+{{- if .Values.migrations }}
+{{- $asHook := or (not .Values.postgresql.enabled) .Release.IsUpgrade }}
+{{- $suffix := ternary "" "-install" $asHook }}
+{{- $secretName := include "cr.secretName" . }}
+{{- if and $asHook (not .Values.secrets.existingSecret) }}
+{{- $secretName = printf "%s-migrations" (include "cr.fullname" .) }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation
+type: Opaque
+stringData:
+  DATABASE_URL: {{ include "cr.databaseUrl" . | quote }}
+{{- end }}
+{{- range $i, $m := .Values.migrations }}
+{{- $app := dict }}
+{{- if $m.app }}
+{{- $app = include "cr.appConfig" (dict "root" $ "key" $m.app) | fromYaml }}
+{{- end }}
+{{- $image := default $app.image $m.image }}
+{{- $name := printf "%s-migrate-%s%s" (include "cr.fullname" $) $m.name $suffix | trunc 63 | trimSuffix "-" }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cr.labels" $ | nindent 4 }}
+    {{- include "cr.selectorLabels" (dict "root" $ "component" (printf "migrate-%s" $m.name)) | nindent 4 }}
+  {{- if $asHook }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: {{ $i | quote }}
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  {{- end }}
+spec:
+  backoffLimit: {{ $.Values.migrationJob.backoffLimit }}
+  activeDeadlineSeconds: {{ $.Values.migrationJob.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ $.Values.migrationJob.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "cr.selectorLabels" (dict "root" $ "component" (printf "migrate-%s" $m.name)) | nindent 8 }}
+        {{- include "cr.appTierLabel" $ | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "cr.serviceAccountName" $ }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with $.Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "cr.podSecurityContext" (dict "uid" 10001) | nindent 8 }}
+      {{- if $.Values.postgresql.enabled }}
+      initContainers:
+        - name: wait-for-db
+          image: "{{ $.Values.postgresql.image.repository }}:{{ $.Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ $.Values.postgresql.image.pullPolicy }}
+          command: ["sh", "-c", "until pg_isready -h {{ include "cr.postgresHost" $ }} -p 5432 -U {{ $.Values.postgresql.username }} -d {{ $.Values.postgresql.database }} -t 2; do sleep 2; done"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            {{- include "cr.containerSecurityContext" (dict "uid" 10001) | nindent 12 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "cr.image" (dict "root" $ "image" $image) }}
+          imagePullPolicy: {{ default $.Values.global.image.pullPolicy $image.pullPolicy }}
+          command:
+            {{- toYaml $m.command | nindent 12 }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: DATABASE_URL
+            - name: LOG_LEVEL
+              value: {{ $.Values.global.logLevel | quote }}
+            {{- range $k, $v := $m.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml $.Values.migrationJob.resources | nindent 12 }}
+          securityContext:
+            {{- include "cr.containerSecurityContext" (dict "uid" 10001) | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+{{- end }}
+{{- end }}

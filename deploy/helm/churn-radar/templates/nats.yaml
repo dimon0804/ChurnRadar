@@ -1,0 +1,163 @@
+{{- if .Values.nats.enabled }}
+{{- $n := .Values.nats }}
+{{- $name := include "cr.componentName" (dict "root" . "component" "nats") }}
+{{- $selector := include "cr.selectorLabels" (dict "root" . "component" "nats") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cr.labels" . | nindent 4 }}
+    {{- $selector | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- $selector | nindent 4 }}
+  ports:
+    - name: client
+      port: 4222
+      targetPort: client
+    - name: monitor
+      port: 8222
+      targetPort: monitor
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cr.labels" . | nindent 4 }}
+    {{- $selector | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- $selector | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cr.labels" . | nindent 8 }}
+        {{- $selector | nindent 8 }}
+        churn-radar/tier: data
+    spec:
+      serviceAccountName: {{ include "cr.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        {{- include "cr.podSecurityContext" (dict "uid" 10001) | nindent 8 }}
+      containers:
+        - name: nats
+          image: "{{ $n.image.repository }}:{{ $n.image.tag }}"
+          imagePullPolicy: {{ $n.image.pullPolicy }}
+          args:
+            - --name={{ $name }}
+            - --jetstream
+            - --store_dir=/data
+            - --http_port=8222
+            - --port=4222
+          ports:
+            - name: client
+              containerPort: 4222
+            - name: monitor
+              containerPort: 8222
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz?js-enabled-only=true
+              port: monitor
+            periodSeconds: 10
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz?js-server-only=true
+              port: monitor
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml $n.resources | nindent 12 }}
+          securityContext:
+            {{- include "cr.containerSecurityContext" (dict "uid" 10001) | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      {{- if not $n.persistence.enabled }}
+      volumes:
+        - name: data
+          emptyDir: {}
+      {{- end }}
+  {{- if $n.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- $selector | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- include "cr.storageClass" $n.persistence.storageClass | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ $n.persistence.size }}
+  {{- end }}
+{{- if $n.streams.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}-streams
+  labels:
+    {{- include "cr.labels" . | nindent 4 }}
+    {{- include "cr.selectorLabels" (dict "root" . "component" "nats-streams") | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        {{- include "cr.selectorLabels" (dict "root" . "component" "nats-streams") | nindent 8 }}
+        {{- include "cr.appTierLabel" . | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "cr.podSecurityContext" (dict "uid" 10001) | nindent 8 }}
+      containers:
+        - name: streams
+          image: "{{ $n.streams.image.repository }}:{{ $n.streams.image.tag }}"
+          workingDir: /tmp
+          env:
+            - name: NATS_URL
+              value: {{ include "cr.natsUrl" . | quote }}
+            - name: HOME
+              value: /tmp
+          command: ["sh", "-ec"]
+          args:
+            - |
+              {{- range $n.streams.items }}
+              nats stream info {{ .name }} >/dev/null 2>&1 || nats stream add {{ .name }} --subjects {{ join "," .subjects | quote }} --storage file --retention limits --max-age {{ .maxAge }} --replicas 1 --discard old --defaults
+              {{- end }}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            {{- include "cr.containerSecurityContext" (dict "uid" 10001) | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}
+{{- end }}

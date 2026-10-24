@@ -1,0 +1,39 @@
+# Значения для официального чарта traefik/traefik в kind
+deployment:
+  replicas: 2
+service:
+  spec:
+    type: NodePort
+ports:
+  web:
+    port: 8000
+    exposedPort: 80
+    nodePort: 30080
+    transport:
+      respondingTimeouts:
+        # SSE-соединения живут долго
+        writeTimeout: 0
+        idleTimeout: 600s
+  websecure:
+    expose:
+      default: false
+ingressRoute:
+  dashboard:
+    enabled: false
+providers:
+  kubernetesCRD:
+    enabled: true
+  kubernetesIngress:
+    enabled: false
+accessLog:
+  enabled: true
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi

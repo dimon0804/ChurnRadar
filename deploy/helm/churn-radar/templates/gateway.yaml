@@ -1,0 +1,172 @@
+{{- if .Values.gateway.enabled }}
+{{- $fullname := include "cr.fullname" . }}
+{{- $authSvc := include "cr.componentName" (dict "root" . "component" "auth") }}
+{{- $authBase := printf "http://%s:8000" (include "cr.svcFqdn" (dict "root" . "name" $authSvc)) }}
+{{- $userHeaders := list "X-User-Id" "X-User-Name" "X-User-Roles" }}
+{{- $hostPrefix := "" }}
+{{- if .Values.gateway.host }}
+{{- $hostPrefix = printf "Host(`%s`) && " .Values.gateway.host }}
+{{- end }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-forward-auth
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  forwardAuth:
+    address: {{ printf "%s/internal/verify" $authBase | quote }}
+    trustForwardHeader: false
+    authResponseHeaders:
+      {{- toYaml $userHeaders | nindent 6 }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-forward-auth-redirect
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  forwardAuth:
+    address: {{ printf "%s/internal/verify?redirect=1" $authBase | quote }}
+    trustForwardHeader: false
+    authResponseHeaders:
+      {{- toYaml $userHeaders | nindent 6 }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-forward-auth-metrics
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  forwardAuth:
+    address: {{ printf "%s/internal/verify-metrics" $authBase | quote }}
+    trustForwardHeader: false
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-strip-user-headers
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  headers:
+    customRequestHeaders:
+      X-User-Id: ""
+      X-User-Name: ""
+      X-User-Roles: ""
+{{- if .Values.gateway.securityHeaders }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $fullname }}-security-headers
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  headers:
+    contentTypeNosniff: true
+    frameDeny: true
+    referrerPolicy: same-origin
+{{- end }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  entryPoints:
+    {{- toYaml .Values.gateway.entryPoints | nindent 4 }}
+  routes:
+    {{- /* public auth endpoints */}}
+    - kind: Rule
+      match: {{ printf "%s(Path(`/api/v1/auth/login`) || Path(`/api/v1/auth/providers`) || PathPrefix(`/api/v1/auth/oidc/`))" $hostPrefix | quote }}
+      priority: 200
+      middlewares:
+        - name: {{ $fullname }}-strip-user-headers
+      services:
+        - name: {{ $authSvc }}
+          port: 8000
+    - kind: Rule
+      match: {{ printf "%sPathPrefix(`/api/v1/auth`)" $hostPrefix | quote }}
+      priority: 150
+      middlewares:
+        - name: {{ $fullname }}-forward-auth
+      services:
+        - name: {{ $authSvc }}
+          port: 8000
+    {{- if .Values.notifier.enabled }}
+    - kind: Rule
+      match: {{ printf "%sPathPrefix(`/api/v1/stream`)" $hostPrefix | quote }}
+      priority: 150
+      middlewares:
+        - name: {{ $fullname }}-forward-auth
+      services:
+        - name: {{ include "cr.componentName" (dict "root" . "component" "notifier") }}
+          port: 8000
+          responseForwarding:
+            flushInterval: 1ms
+    {{- end }}
+    - kind: Rule
+      match: {{ printf "%sPathPrefix(`/api/v1/source`)" $hostPrefix | quote }}
+      priority: 150
+      middlewares:
+        - name: {{ $fullname }}-forward-auth
+      services:
+        - name: {{ include "cr.backend" (dict "root" . "key" "ingest") }}
+          port: 8000
+    - kind: Rule
+      match: {{ printf "%sPathPrefix(`/api/v1/simulator`)" $hostPrefix | quote }}
+      priority: 150
+      middlewares:
+        - name: {{ $fullname }}-forward-auth
+      services:
+        - name: {{ include "cr.backend" (dict "root" . "key" "simulator") }}
+          port: 8000
+    - kind: Rule
+      match: {{ printf "%sPathPrefix(`/api/v1`)" $hostPrefix | quote }}
+      priority: 100
+      middlewares:
+        - name: {{ $fullname }}-forward-auth
+      services:
+        - name: {{ include "cr.backend" (dict "root" . "key" "api") }}
+          port: 8000
+    - kind: Rule
+      match: {{ printf "%sPath(`/metrics`)" $hostPrefix | quote }}
+      priority: 150
+      middlewares:
+        - name: {{ $fullname }}-forward-auth-metrics
+      services:
+        - name: {{ include "cr.backend" (dict "root" . "key" "api") }}
+          port: 8000
+    {{- if .Values.web.enabled }}
+    - kind: Rule
+      match: {{ printf "%s(Path(`/login`) || PathPrefix(`/assets/`) || Path(`/favicon.svg`))" $hostPrefix | quote }}
+      priority: 120
+      {{- if .Values.gateway.securityHeaders }}
+      middlewares:
+        - name: {{ $fullname }}-security-headers
+      {{- end }}
+      services:
+        - name: {{ include "cr.componentName" (dict "root" . "component" "web") }}
+          port: {{ .Values.web.port }}
+    - kind: Rule
+      match: {{ printf "%sPathPrefix(`/`)" $hostPrefix | quote }}
+      priority: 1
+      middlewares:
+        - name: {{ $fullname }}-forward-auth-redirect
+        {{- if .Values.gateway.securityHeaders }}
+        - name: {{ $fullname }}-security-headers
+        {{- end }}
+      services:
+        - name: {{ include "cr.componentName" (dict "root" . "component" "web") }}
+          port: {{ .Values.web.port }}
+    {{- end }}
+  {{- if .Values.gateway.tls.enabled }}
+  tls:
+    secretName: {{ required "gateway.tls.secretName is required" .Values.gateway.tls.secretName }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,42 @@
+# Локальный kind-кластер: образы собраны локально и загружены через `kind load docker-image`.
+global:
+  image:
+    registry: ""
+    tag: dev
+    pullPolicy: IfNotPresent
+  logLevel: info
+
+# в kind сервисы работают без TLS
+auth:
+  env:
+    COOKIE_SECURE: "false"
+
+api:
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 60
+
+mockCore:
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 60
+
+scoring:
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 4
+
+postgresql:
+  persistence:
+    size: 512Mi
+nats:
+  persistence:
+    size: 512Mi
+redis:
+  persistence:
+    size: 256Mi
+
+gateway:
+  traefikNamespace: traefik

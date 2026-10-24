@@ -1,0 +1,17 @@
+apiVersion: v2
+name: churn-radar
+description: ChurnRadar — платформа прогнозирования оттока клиентов (все сервисы, Postgres, Redis, NATS JetStream, маршруты Traefik)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+keywords:
+  - churn
+  - fastapi
+  - nats
+  - traefik
+home: https://github.com/dimon0804/churn-radar
+sources:
+  - https://github.com/dimon0804/churn-radar
+maintainers:
+  - name: ChurnRadar team

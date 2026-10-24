@@ -60,6 +60,8 @@ async def _current_settings(conn: asyncpg.Connection) -> tuple[int, dict[str, An
 
 async def _load(conn: asyncpg.Connection, proposed: Mapping[str, Any], sample_size: int) -> _Input:
     async with conn.transaction(isolation="repeatable_read", readonly=True):
+        # до первого SELECT: иначе во время замены снимка в ingest увидим пустые таблицы
+        await repo.lock_source(conn)
         version, data = await _current_settings(conn)
         as_of, _ = await repo.resolve_as_of(conn)
         total = int(await conn.fetchval("SELECT count(*) FROM source.accounts"))

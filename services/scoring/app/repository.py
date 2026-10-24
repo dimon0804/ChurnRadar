@@ -207,6 +207,22 @@ async def iter_source_chunks(conn: asyncpg.Connection, chunk_size: int) -> Async
         )
 
 
+# Порядок как у TRUNCATE в ingest.replace_snapshot (status_history, затем transactions, services,
+# accounts): при обратном порядке ожидания замкнулись бы во взаимоблокировку.
+_SOURCE_TABLES = "source.status_history, source.transactions, source.services, source.accounts"
+
+
+async def lock_source(conn: asyncpg.Connection) -> None:
+    """Первая команда транзакции REPEATABLE READ, до любого SELECT.
+
+    TRUNCATE в ingest не MVCC-безопасен: снимок, взятый до его коммита, видит таблицы пустыми.
+    LOCK TABLE снимок не берёт, поэтому ждёт коммита замены, и первый SELECT уже видит новые
+    данные. ACCESS SHARE не мешает читателям и потоку изменений (ROW EXCLUSIVE), а TRUNCATE
+    дождётся конца нашей транзакции — как и без этой строки, когда блокировку брал первый SELECT.
+    """
+    await conn.execute(f"LOCK TABLE {_SOURCE_TABLES} IN ACCESS SHARE MODE")
+
+
 async def load_status_history(conn: asyncpg.Connection, as_of: datetime, days: int = 31) -> list[StatusChange]:
     rows = await conn.fetch(
         "SELECT service_id, owner_id, old_status, new_status, changed_at, estimated "

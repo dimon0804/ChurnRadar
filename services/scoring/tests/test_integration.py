@@ -416,3 +416,82 @@ async def test_cancel_mid_rescore_returns_messages_at_once(db_pool, sample_data,
     finally:
         worker.stop()
         await worker.close()
+
+
+# --- гонка с заменой снимка в ingest --------------------------------------------------------
+
+
+async def _wait_blocked(pool: Any, timeout: float = 10) -> None:
+    """Ждём, пока кто-то встанет в очередь за блокировкой таблицы source.*."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        waiting = await _count(
+            pool,
+            "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation "
+            "WHERE NOT l.granted AND c.relnamespace = 'source'::regnamespace",
+        )
+        if waiting:
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("никто не ждёт блокировку source.*")
+
+
+@contextlib.asynccontextmanager
+async def _replacing_snapshot(data: dict[str, Any], *, truncate_history: bool):  # type: ignore[no-untyped-def]
+    """Как replace_snapshot в ingest: TRUNCATE и COPY в открытой транзакции, коммит — на выходе."""
+    import asyncpg
+
+    conn = await asyncpg.connect(TEST_DATABASE_URL)
+    tx = conn.transaction()
+    await tx.start()
+    try:
+        await load_snapshot(conn, data, REFERENCE, truncate_history=truncate_history)
+        yield
+        await tx.commit()
+    except BaseException:
+        await tx.rollback()
+        raise
+    finally:
+        await conn.close()
+
+
+@pytest.mark.parametrize("truncate_history", [False, True])
+async def test_full_rescore_during_snapshot_replace_sees_new_data(  # type: ignore[no-untyped-def]
+    db_pool, sample_data, truncate_history
+) -> None:
+    """TRUNCATE не MVCC-безопасен: снимок REPEATABLE READ, взятый до коммита ingest, видит таблицы пустыми.
+    Пересчёт, начатый во время замены, должен дождаться её и посчитать новый снимок, а не 0 клиентов."""
+    async with db_pool.acquire() as conn:
+        await load_snapshot(conn, sample_data, REFERENCE)
+    scorer = Scorer(db_pool, lock_key=LOCK_KEY)
+    await scorer.run(full=True)
+
+    async with _replacing_snapshot(sample_data, truncate_history=truncate_history):
+        running = asyncio.create_task(scorer.run(full=True))
+        await _wait_blocked(db_pool)
+    result = await asyncio.wait_for(running, timeout=30)
+
+    assert result is not None
+    assert result.customers == 10
+    assert result.summary["customers_total"] == 10
+    assert await _count(db_pool, "SELECT count(*) FROM scoring.customer_scores") == 10
+
+
+async def test_preview_during_snapshot_replace_sees_new_data(db_pool, sample_data) -> None:  # type: ignore[no-untyped-def]
+    import riskcore
+
+    from app.preview import Previewer
+
+    async with db_pool.acquire() as conn:
+        await load_snapshot(conn, sample_data, REFERENCE)
+    await Scorer(db_pool, lock_key=LOCK_KEY).run(full=True)
+    proposed = riskcore.default_settings().to_storage()
+
+    async with _replacing_snapshot(sample_data, truncate_history=False):
+        running = asyncio.create_task(Previewer(db_pool).preview(proposed))
+        await _wait_blocked(db_pool)
+    result = await asyncio.wait_for(running, timeout=30)
+
+    assert result["customers_total"] == 10
+    assert result["sample_size"] == 10

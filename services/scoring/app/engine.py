@@ -279,6 +279,9 @@ class Scorer:
 
         async with self._pool.acquire() as writer:  # noqa: SIM117
             async with conn.transaction(isolation="repeatable_read"), writer.transaction():
+                await repo.lock_source(conn)
+                # опорное время ingest меняет вместе со снимком — берём его из того же снимка, что и данные
+                as_of, _ = await repo.resolve_as_of(conn)
                 history = await repo.load_status_history(conn, as_of)
                 await repo.replace_all_scores_begin(writer)
                 producer = asyncio.create_task(produce())

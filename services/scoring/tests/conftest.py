@@ -36,12 +36,14 @@ def _parse(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-async def load_snapshot(conn: Any, data: dict[str, Any], reference_time: datetime | None) -> None:
+async def load_snapshot(
+    conn: Any, data: dict[str, Any], reference_time: datetime | None, *, truncate_history: bool = True
+) -> None:
     """Загрузка снимка в source.* напрямую (как это делает ingest), через COPY."""
     async with conn.transaction():
-        await conn.execute(
-            "TRUNCATE source.transactions, source.services, source.accounts, source.status_history"
-        )
+        if truncate_history:
+            await conn.execute("TRUNCATE source.status_history")
+        await conn.execute("TRUNCATE source.transactions, source.services, source.accounts")
         await conn.copy_records_to_table(
             "accounts",
             schema_name="source",

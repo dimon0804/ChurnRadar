@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import asyncpg
 
 from .stream import World
@@ -52,5 +54,33 @@ def make_loader(dsn: str):  # type: ignore[no-untyped-def]
             ],
             int(max_tx),
         )
+
+    return load
+
+
+def make_ids_loader(dsn: str, limit: int):  # type: ignore[no-untyped-def]
+    """id клиентов для фейковой Метрики (первые limit по id)."""
+
+    async def load() -> list[int]:
+        conn = await asyncpg.connect(dsn, timeout=10)
+        try:
+            rows = await conn.fetch("SELECT id FROM source.accounts ORDER BY id LIMIT $1", limit)
+        finally:
+            await conn.close()
+        return [int(r["id"]) for r in rows]
+
+    return load
+
+
+def make_anchor_loader(dsn: str):  # type: ignore[no-untyped-def]
+    """Опорное время данных: source.clock, а если время не заморожено — сейчас."""
+
+    async def load() -> datetime:
+        conn = await asyncpg.connect(dsn, timeout=10)
+        try:
+            reference = await conn.fetchval("SELECT reference_time FROM source.clock WHERE id = 1")
+        finally:
+            await conn.close()
+        return reference.astimezone(UTC) if reference is not None else datetime.now(UTC)
 
     return load

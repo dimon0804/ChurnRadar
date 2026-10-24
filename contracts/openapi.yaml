@@ -348,6 +348,11 @@ paths:
         `text/event-stream`. События: `scores.updated`, `settings.updated`, `source.updated`
         (схемы `ScoresUpdatedEvent`, `SettingsUpdatedEvent`, `SourceUpdatedEvent`).
         Каждые 15 с приходит комментарий `: ping`. Поддерживается `Last-Event-ID`.
+        Служебное событие `resync` (без `id`, `data: {"reason": "..."}`) означает, что часть
+        событий могла потеряться: после восстановления связи notifier с NATS
+        (`nats_connected`, `nats_reconnected`) или если реплика не может воспроизвести поток
+        с переданного `Last-Event-ID` (`unknown_last_event_id`). Получив его, клиент
+        перечитывает все данные.
       operationId: stream
       parameters:
         - name: Last-Event-ID

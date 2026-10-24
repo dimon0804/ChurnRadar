@@ -4,6 +4,9 @@ from prometheus_client import Counter, Gauge, Histogram
 
 CHANGES = Counter("simulator_changes_total", "Сгенерированные изменения", ["kind"])
 BATCHES = Counter("simulator_batches_total", "Пакеты, отправленные в ingest")
+WORLD_RESETS = Counter(
+    "simulator_world_resets_total", "Пакет не принят ingest, мир будет перечитан из БД"
+)
 RUNNING = Gauge("simulator_running", "Поток изменений включён")
 GENERATE_SECONDS = Histogram(
     "simulator_generate_seconds",

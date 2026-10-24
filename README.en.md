@@ -128,8 +128,17 @@ after such an upload differ a little from the October 19 calculation.
 
 The screenshots below were taken on the 2000-customer set (seed 42) with the stream on.
 
+**Who to call today.** A block on the overview: the five customers where the most money can
+be saved. They are ordered by expected loss, not by score, so a high-risk customer worth €6
+ends up below one worth €1,385. Each row has the ready action from the customer card and how
+much it would save. "Done" hides the customer until their risk grows again, "Snooze" hides
+them until the chosen date. Analysts can mark customers too; who marked whom and when is shown
+in the card. "Export CSV" downloads the whole call queue for a mailing.
+
 **Customer ranking.** Sorting by ID, email, balance, total top-ups, risk and expected loss,
-filter by risk level, search by email or ID.
+filter by risk level, search by email or ID. "Export CSV" saves the table with the same filters
+and sorting: UTF-8 with BOM and `;` as the separator, so it opens straight away in Excel with
+Russian locale.
 
 ![Customer table](docs/img/screens/customers.png)
 
@@ -506,6 +515,9 @@ types are generated from it. Main resources:
 | `POST /api/v1/auth/login` | password login, sets the `cr_session` cookie |
 | `GET /api/v1/customers` | ranking with sorting, level filter, search and pagination |
 | `GET /api/v1/customers/{id}` | card: reasons, score breakdown, money, recommendations, services |
+| `GET /api/v1/customers/export.csv` | the same ranking as an Excel-friendly file; `worklist=true` exports only the call queue |
+| `GET /api/v1/call-today` | who to call today: at-risk customers by expected loss, highest first |
+| `GET/PUT/DELETE /api/v1/customers/{id}/action` | the "done" or "snoozed" mark and its log |
 | `GET /api/v1/analytics/summary` | base summary, actual and forecast chart, top reasons |
 | `GET/PATCH /api/v1/model/settings` | weights, thresholds and horizon (PATCH changes only the fields you send); next to it `POST …/reset` and `GET …/history` |
 | `GET /api/v1/model/quality` | model check results on a synthetic future: lift, ROC, baselines, calibration, robustness |

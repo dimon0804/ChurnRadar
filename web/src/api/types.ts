@@ -33,6 +33,13 @@ export type ModelQuality = Schemas['ModelQuality']
 export type QualityScenario = Schemas['QualityScenario']
 export type QualityRanking = Schemas['QualityRanking']
 export type QualityLevel = Schemas['QualityLevel']
+export type Recommendation = Schemas['Recommendation']
+export type CustomerAction = Schemas['CustomerAction']
+export type CustomerActionUpdate = Schemas['CustomerActionUpdate']
+export type CustomerActionState = Schemas['CustomerActionState']
+export type CustomerActionLogEntry = Schemas['CustomerActionLogEntry']
+export type CallToday = Schemas['CallToday']
+export type CallTodayItem = Schemas['CallTodayItem']
 
 export type AuthProviders =
   operations['authProviders']['responses']['200']['content']['application/json']

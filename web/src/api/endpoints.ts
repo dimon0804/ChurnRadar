@@ -1,6 +1,9 @@
 import { request } from './client'
 import type {
   AuthProviders,
+  CallToday,
+  CustomerActionState,
+  CustomerActionUpdate,
   CustomerDetail,
   CustomerPage,
   LoginRequest,
@@ -28,6 +31,15 @@ export const api = {
   customer: (id: number, signal?: AbortSignal) => request<CustomerDetail>(`/api/v1/customers/${id}`, { signal }),
   summary: (signal?: AbortSignal) => request<Summary>('/api/v1/analytics/summary', { signal }),
 
+  callToday: (query: { limit?: number; marked?: boolean }, signal?: AbortSignal) =>
+    request<CallToday>('/api/v1/call-today', { query, signal }),
+  customerAction: (id: number, signal?: AbortSignal) =>
+    request<CustomerActionState>(`/api/v1/customers/${id}/action`, { signal }),
+  putCustomerAction: (id: number, body: CustomerActionUpdate) =>
+    request<CustomerActionState>(`/api/v1/customers/${id}/action`, { method: 'PUT', body }),
+  deleteCustomerAction: (id: number) =>
+    request<CustomerActionState>(`/api/v1/customers/${id}/action`, { method: 'DELETE' }),
+
   settings: (signal?: AbortSignal) => request<ModelSettings>('/api/v1/model/settings', { signal }),
   patchSettings: (body: ModelSettingsPatch) =>
     request<ModelSettings>('/api/v1/model/settings', { method: 'PATCH', body }),
@@ -50,6 +62,9 @@ export const queryKeys = {
   customerList: (query: Record<string, unknown>) => ['customers', query] as const,
   customer: (id: number) => ['customer', id] as const,
   customerAll: ['customer'] as const,
+  // под префиксами customers/customer: после пересчёта они обновляются вместе со списком и карточкой
+  callToday: (marked: boolean) => ['customers', 'call-today', { marked }] as const,
+  customerAction: (id: number) => ['customer', id, 'action'] as const,
   summary: ['summary'] as const,
   settings: ['settings'] as const,
   history: ['settings-history'] as const,

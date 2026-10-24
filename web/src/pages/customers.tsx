@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { createColumnHelper, flexRender, getCoreRowModel, useReactTable, type SortingState } from '@tanstack/react-table'
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsUpDown, Search, Users, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsUpDown, Download, Search, Users, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { Link, Outlet, useNavigate, useSearchParams } from 'react-router'
 import { api, queryKeys } from '@/api/endpoints'
@@ -30,6 +30,7 @@ import {
   toggleLevel,
   type CustomersState,
 } from '@/lib/url-state'
+import { exportUrlFromState } from '@/lib/call-today'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/providers/auth'
 import { useLive } from '@/providers/live'
@@ -359,27 +360,40 @@ export default function CustomersPage() {
           onToggle={(l) => update(toggleLevel(state, l))}
           onClear={() => update({ ...state, levels: [], page: 1 })}
         />
-        <div className="relative w-full sm:w-72">
-          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-subtle-foreground" />
-          <Input
-            type="search"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="Email или ID клиента"
-            aria-label="Поиск по email или ID"
-            className="pr-8 pl-9 [&::-webkit-search-cancel-button]:hidden"
-            maxLength={200}
-          />
-          {draft && (
-            <button
-              type="button"
-              onClick={() => setDraft('')}
-              className="absolute top-1/2 right-1.5 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-              aria-label="Очистить поиск"
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <div className="relative w-full sm:w-72">
+            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-subtle-foreground" />
+            <Input
+              type="search"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="Email или ID клиента"
+              aria-label="Поиск по email или ID"
+              className="pr-8 pl-9 [&::-webkit-search-cancel-button]:hidden"
+              maxLength={200}
+            />
+            {draft && (
+              <button
+                type="button"
+                onClick={() => setDraft('')}
+                className="absolute top-1/2 right-1.5 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                aria-label="Очистить поиск"
+              >
+                <X className="size-3.5" />
+              </button>
+            )}
+          </div>
+          <Button asChild variant="outline" className="shrink-0">
+            <a
+              href={exportUrlFromState(state)}
+              download
+              title={filtered ? 'Выгрузить клиентов с текущими фильтрами и сортировкой' : 'Выгрузить всех клиентов в текущей сортировке'}
+              data-testid="customers-csv"
             >
-              <X className="size-3.5" />
-            </button>
-          )}
+              <Download />
+              Выгрузить CSV
+            </a>
+          </Button>
         </div>
       </div>
 

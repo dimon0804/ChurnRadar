@@ -5,6 +5,7 @@ import { useLocation, useNavigate, useParams } from 'react-router'
 import { isApiError } from '@/api/client'
 import { api, queryKeys } from '@/api/endpoints'
 import type { CustomerDetail, FeatureContribution, ServiceRisk, Transaction } from '@/api/types'
+import { CustomerActionPanel } from '@/components/customer-action'
 import { DataClockBadge, referenceOf, useDataClock } from '@/components/data-clock'
 import { RiskBadge, RISK_BAR, RISK_TEXT, riskLevelOf } from '@/components/risk'
 import { EmptyState, ErrorState } from '@/components/states'
@@ -530,6 +531,7 @@ export default function CustomerSheet() {
               <Hero c={c} />
             </div>
             <NextAction c={c} />
+            <CustomerActionPanel id={c.id} atRisk={riskLevelOf(c.risk_level) !== 'unknown' && c.expected_loss > 0} />
             <Reasons c={c} services={services} />
             {riskLevelOf(c.risk_level) !== 'unknown' && <Features features={c.features ?? []} level={riskLevelOf(c.risk_level)} />}
             <Money c={c} />

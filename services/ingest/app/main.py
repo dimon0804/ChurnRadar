@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import ctypes
 import ctypes.util
@@ -12,6 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
+import asyncpg
 import structlog
 from fastapi import Depends, FastAPI, Request
 from svckit.auth import User, make_current_user, make_require_admin
@@ -109,18 +111,41 @@ async def seed_if_empty(app: FastAPI) -> WriteResult | None:
     return result
 
 
+async def seed_when_schema_ready(app: FastAPI, attempts: int = 150, pause_s: float = 2.0) -> None:
+    """Сид ждёт миграций: в Kubernetes job миграции и ingest стартуют одновременно."""
+    for attempt in range(1, attempts + 1):
+        try:
+            await seed_if_empty(app)
+            return
+        except asyncpg.UndefinedTableError:
+            if attempt == 1:
+                log.info("seed_waiting_for_schema")
+            await asyncio.sleep(pause_s)
+        except Exception:
+            log.exception("seed_failed")
+            return
+    log.error("seed_gave_up", reason="схема source не появилась")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging(settings.log_level, "ingest")
     app.state.pool = await create_pool(settings.database_url, settings.db_pool_min, settings.db_pool_max)
     app.state.bus = EventBus(settings.nats_url, producer="ingest")
     await app.state.bus.start(wait_s=settings.nats_wait_on_start_s)
+    seeding: asyncio.Task[None] | None = None
     try:
         await seed_if_empty(app)
+    except asyncpg.UndefinedTableError:
+        seeding = asyncio.create_task(seed_when_schema_ready(app))
     except Exception:
         log.exception("seed_failed")
     log.info("ingest_started")
     yield
+    if seeding is not None:
+        seeding.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await seeding
     await app.state.bus.close()
     await app.state.pool.close()
 

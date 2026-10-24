@@ -241,3 +241,30 @@ async def test_events_email_taken(running, sample):
     resp = await client.post("/api/v1/source/events", json={"accounts": [acc]}, headers=ADMIN)
     assert resp.status_code == 422
     assert resp.json()["error"]["code"] == "validation_error"
+
+
+async def test_seed_waits_for_schema(env):
+    import asyncio
+
+    from app.main import seed_when_schema_ready
+
+    calls = []
+
+    class Fake:
+        pass
+
+    import app.main as main_mod
+
+    async def flaky(app):
+        calls.append(1)
+        if len(calls) < 3:
+            raise asyncpg.UndefinedTableError("relation \"source.accounts\" does not exist")
+        return None
+
+    original = main_mod.seed_if_empty
+    main_mod.seed_if_empty = flaky
+    try:
+        await asyncio.wait_for(seed_when_schema_ready(Fake(), attempts=5, pause_s=0.01), timeout=5)
+    finally:
+        main_mod.seed_if_empty = original
+    assert len(calls) == 3

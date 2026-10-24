@@ -29,6 +29,10 @@ export type SettingsUpdatedEvent = Schemas['SettingsUpdatedEvent']
 export type SourceUpdatedEvent = Schemas['SourceUpdatedEvent']
 export type ApiErrorBody = Schemas['Error']
 export type LoginRequest = Schemas['LoginRequest']
+export type ModelQuality = Schemas['ModelQuality']
+export type QualityScenario = Schemas['QualityScenario']
+export type QualityRanking = Schemas['QualityRanking']
+export type QualityLevel = Schemas['QualityLevel']
 
 export type AuthProviders =
   operations['authProviders']['responses']['200']['content']['application/json']

@@ -45,6 +45,9 @@
   --chart-grid: #e7e6e0;
   --chart-axis: #807f78;
   --chart-forecast-zone: rgba(235, 104, 52, 0.06);
+  /* сравнение с простыми правилами на странице «Качество модели» */
+  --chart-rule-a: #eb6834;
+  --chart-rule-b: #1baf7a;
 
   --flash: rgba(42, 120, 214, 0.16);
   --shadow-color: 30 30 25;
@@ -92,6 +95,8 @@
   --chart-grid: #2a2a27;
   --chart-axis: #8f8e87;
   --chart-forecast-zone: rgba(240, 122, 69, 0.07);
+  --chart-rule-a: #d95926;
+  --chart-rule-b: #199e70;
 
   --flash: rgba(91, 155, 234, 0.2);
   --shadow-color: 0 0 0;

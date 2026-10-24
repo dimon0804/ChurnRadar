@@ -12,7 +12,7 @@ from nats.js.errors import NotFoundError
 
 from app.config import settings
 from app.main import create_app
-from tests.conftest import ADMIN, ANALYST, MARKETER
+from tests.conftest import ADMIN, MARKETER
 from tests.fake_smtp import FakeSMTP
 from tests.test_integration import DB_URL, NATS_URL, insert_scores, reset_database
 
@@ -64,7 +64,7 @@ async def _sql(query: str, *args):
 
 async def test_templates_are_editable_by_admin(env):
     client, _, _ = env
-    body = (await client.get("/api/v1/mail/templates", headers=ANALYST)).json()
+    body = (await client.get("/api/v1/mail/templates", headers=MARKETER)).json()
     codes = [t["code"] for t in body["items"]]
     assert codes[0] == "insufficient_funds" and "general" in codes
     assert all(t["is_default"] for t in body["items"])
@@ -156,13 +156,13 @@ async def test_send_one_email_marks_customer(env):
     )  # подстановки в правленом тексте тоже заполняются
 
     # «Письмо отправлено» убирает клиента из очереди, ждём ответа
-    queue = (await client.get("/api/v1/contact-today?limit=10", headers=ANALYST)).json()
+    queue = (await client.get("/api/v1/contact-today?limit=10", headers=MARKETER)).json()
     assert 1 not in [i["id"] for i in queue["items"]] and queue["marked_total"] == 1
     # ответа нет за срок ожидания — клиент возвращается с пометкой
     await _sql(
         "UPDATE scoring.customer_actions SET snoozed_until = now() - interval '1 second' WHERE customer_id = 1"
     )
-    queue = (await client.get("/api/v1/contact-today?limit=10", headers=ANALYST)).json()
+    queue = (await client.get("/api/v1/contact-today?limit=10", headers=MARKETER)).json()
     first = queue["items"][0]
     assert first["id"] == 1 and first["action"]["return_reason"] == "no_reply"
     assert (
@@ -181,7 +181,7 @@ async def test_send_one_email_marks_customer(env):
         "SELECT status, error FROM scoring.customer_emails WHERE customer_id = 3"
     )
     assert rows[0]["status"] == "failed" and rows[0]["error"]
-    assert (await client.get("/api/v1/customers/3/action", headers=ANALYST)).json()[
+    assert (await client.get("/api/v1/customers/3/action", headers=MARKETER)).json()[
         "action"
     ] is None
 
@@ -189,7 +189,7 @@ async def test_send_one_email_marks_customer(env):
 async def _wait_done(client, campaign_id: int) -> dict:
     for _ in range(100):
         body = (
-            await client.get(f"/api/v1/mail/campaigns/{campaign_id}", headers=ANALYST)
+            await client.get(f"/api/v1/mail/campaigns/{campaign_id}", headers=MARKETER)
         ).json()
         if body["status"] == "done":
             return body
@@ -257,7 +257,7 @@ async def test_campaign_in_background_with_dedup_and_stats(env):
             "eva_x@example.test",
         ]
     )
-    queue = (await client.get("/api/v1/contact-today", headers=ANALYST)).json()
+    queue = (await client.get("/api/v1/contact-today", headers=MARKETER)).json()
     assert queue["items"] == [] and queue["marked_total"] == 5
 
     again = await client.post(
@@ -273,12 +273,12 @@ async def test_campaign_in_background_with_dedup_and_stats(env):
     )
     assert forced.status_code == 202
     await _wait_done(client, forced.json()["id"])
-    listed = (await client.get("/api/v1/mail/campaigns", headers=ANALYST)).json()[
+    listed = (await client.get("/api/v1/mail/campaigns", headers=MARKETER)).json()[
         "items"
     ]
     assert [c["id"] for c in listed] == [forced.json()["id"], created.json()["id"]]
 
-    stats = (await client.get("/api/v1/mail/stats", headers=ANALYST)).json()
+    stats = (await client.get("/api/v1/mail/stats", headers=MARKETER)).json()
     assert stats["sent"] == 6 and stats["customers"] == 5 and stats["helped"] == 0
     # после писем клиент 3 пополнил баланс, у клиента 4 снизился риск
     await _sql(
@@ -287,7 +287,7 @@ async def test_campaign_in_background_with_dedup_and_stats(env):
     await _sql(
         "UPDATE scoring.customer_scores SET risk_score = risk_score - 20 WHERE customer_id = 4"
     )
-    stats = (await client.get("/api/v1/mail/stats", headers=ANALYST)).json()
+    stats = (await client.get("/api/v1/mail/stats", headers=MARKETER)).json()
     assert (stats["helped"], stats["topped_up"], stats["risk_down"]) == (2, 1, 1)
     assert stats["helped_share"] == 0.4
 
@@ -303,9 +303,9 @@ async def test_campaign_in_background_with_dedup_and_stats(env):
 async def test_company_setting_and_template_preview_on_real_customer(env):
     """Превью шаблона — на настоящем клиенте и той же функцией, что отправка; подпись — из настроек."""
     client, _, _ = env
-    settings_body = (await client.get("/api/v1/mail/settings", headers=ANALYST)).json()
+    settings_body = (await client.get("/api/v1/mail/settings", headers=MARKETER)).json()
     assert settings_body["company"] == "ChurnRadar"
-    denied = await client.put("/api/v1/mail/settings", json={"company": "Хостинг Плюс"}, headers=ANALYST)
+    denied = await client.put("/api/v1/mail/settings", json={"company": "Хостинг Плюс"}, headers=MARKETER)
     assert denied.status_code == 403
     empty = await client.put("/api/v1/mail/settings", json={"company": "   "}, headers=ADMIN)
     assert empty.status_code == 422
@@ -314,7 +314,7 @@ async def test_company_setting_and_template_preview_on_real_customer(env):
 
     draft = {"subject": "{{service}} ждёт оплаты", "body": "Баланс {{balance}}\n\nкоманда {{company}}"}
     preview = (
-        await client.post("/api/v1/mail/preview/prolong_wait", json=draft, headers=ANALYST)
+        await client.post("/api/v1/mail/preview/prolong_wait", json=draft, headers=MARKETER)
     ).json()
     # у клиента 1 наибольшая потеря и главная причина «ждёт оплаты» — ему этот шаблон и уйдёт
     assert preview["customer_id"] == 1 and preview["to"] == "anna@example.test"
@@ -323,23 +323,23 @@ async def test_company_setting_and_template_preview_on_real_customer(env):
     assert preview["text"] == "Баланс €5,00\n\nкоманда Хостинг Плюс"
 
     # черновик письма из карточки — те же подстановки
-    letter = (await client.post("/api/v1/customers/1/email/draft", json={}, headers=ANALYST)).json()
+    letter = (await client.post("/api/v1/customers/1/email/draft", json={}, headers=MARKETER)).json()
     assert letter["text"].endswith("команда Хостинг Плюс")
 
     # причины «не хватит денег» нет ни у кого — пример не выдумываем
     nobody = (
-        await client.post("/api/v1/mail/preview/insufficient_funds", json=draft, headers=ANALYST)
+        await client.post("/api/v1/mail/preview/insufficient_funds", json=draft, headers=MARKETER)
     ).json()
     assert nobody["customer_id"] is None and nobody["applicable"] is False
 
     chosen = (
         await client.post(
-            "/api/v1/mail/preview/insufficient_funds", json={**draft, "customer_id": 3}, headers=ANALYST
+            "/api/v1/mail/preview/insufficient_funds", json={**draft, "customer_id": 3}, headers=MARKETER
         )
     ).json()
     assert chosen["customer_id"] == 3 and chosen["applicable"] is False
     bad = await client.post(
-        "/api/v1/mail/preview/general", json={**draft, "body": "{{nope}}"}, headers=ANALYST
+        "/api/v1/mail/preview/general", json={**draft, "body": "{{nope}}"}, headers=MARKETER
     )
     assert bad.status_code == 422
 
@@ -352,13 +352,13 @@ async def test_urgent_customer_goes_first_in_queue(env):
         "UPDATE scoring.customer_scores SET detail = jsonb_set(detail, '{services}', $1::jsonb) WHERE customer_id = 3",
         services,
     )
-    queue = (await client.get("/api/v1/contact-today", headers=ANALYST)).json()
+    queue = (await client.get("/api/v1/contact-today", headers=MARKETER)).json()
     first = queue["items"][0]
     assert first["id"] == 3 and first["risk_level"] == "medium"
     assert first["urgent"] is True and first["deadline_days"] == 1.0
     assert queue["urgent_total"] == 1
     assert all(item["urgent"] is False for item in queue["items"][1:])
 
-    page = (await client.get("/api/v1/customers?level=medium", headers=ANALYST)).json()
+    page = (await client.get("/api/v1/customers?level=medium", headers=MARKETER)).json()
     row = next(i for i in page["items"] if i["id"] == 3)
     assert row["urgent"] is True and row["next_action"]["code"] == "prolong_wait"

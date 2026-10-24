@@ -94,10 +94,10 @@ export const FEATURES: Feature[] = [
   },
   {
     id: 'alerts',
-    title: 'Сервис оповещений',
+    title: 'Персональные уведомления',
     extra: true,
-    detail: 'Новый микросервис подписан на события и встал без правок в остальных. Лента под колокольчиком, массовые изменения сворачиваются в одну запись.',
-    target: { kind: 'route', to: '/', targets: [{ selector: 'header button[aria-label^="Оповещения"]' }] },
+    detail: 'Отдельный сервис подписан на события и встал без правок в остальных. Только критические события, пороги и каналы (панель, почта, Telegram-бот) каждый настраивает сам.',
+    target: { kind: 'route', to: '/notifications', targets: [{ selector: '[data-testid="event-loss_growth"]' }] },
   },
   {
     id: 'call-today',

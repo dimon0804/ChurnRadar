@@ -119,8 +119,20 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Оповещения не доходят в {{ $labels.channel }}"
+          summary: "Уведомления не доходят в {{ $labels.channel }}"
           description: >-
-            За 15 минут ни одна попытка отправить оповещение в {{ $labels.channel }} не прошла.
-            Лента в панели работает, внешний канал — нет. Проверьте адрес webhook или токен
-            и chat id Telegram, логи alerts (delivery_failed) и таблицу alerts.deliveries.
+            За 15 минут ни одна попытка отправить уведомление в {{ $labels.channel }} не прошла.
+            В панели всё видно, внешний канал — нет. Проверьте настройки канала (адрес webhook,
+            SMTP_*, токен бота), логи alerts (delivery_failed) и таблицу alerts.deliveries.
+
+      - alert: AlertsTelegramBotPollFailing
+        expr: sum(increase(alerts_bot_poll_errors_total[10m])) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Telegram-бот не получает сообщения"
+          description: >-
+            Реплика alerts, которая ведёт опрос getUpdates, за 10 минут получила {{ $value }} ошибок.
+            Бот не отвечает на команды и не привязывает новые чаты; уведомления в Telegram
+            при этом продолжают уходить. Проверьте TELEGRAM_BOT_TOKEN и доступ к api.telegram.org.

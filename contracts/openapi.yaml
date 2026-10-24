@@ -32,7 +32,7 @@ tags:
   - name: simulator
     description: Поток демонстрационных изменений данных
   - name: alerts
-    description: Оповещения о росте риска (сервис alerts)
+    description: Критические события и персональные уведомления (сервис alerts)
   - name: ops
     description: Метрики и служебные эндпоинты
 
@@ -562,13 +562,13 @@ paths:
   /api/v1/alerts:
     get:
       tags: [alerts]
-      summary: Лента оповещений
+      summary: Журнал критических событий
       description: |
-        Отдаёт сервис alerts. Новые записи сверху. Оповещение появляется, когда клиент перешёл
-        в высокий риск, его ожидаемая потеря выросла больше порога или выросла общая ожидаемая
-        потеря. Массовое изменение (снимок, больше `ALERTS_BULK_THRESHOLD` клиентов за пересчёт)
-        приходит одной сводной записью `bulk`. `latest_id` — id самой свежей записи, по нему
-        панель считает новые.
+        Отдаёт сервис alerts. Общий для всех журнал критических событий базы по порогам по
+        умолчанию: рост ожидаемой потери, крупный клиент в высоком риске, доля выручки под риском,
+        рост числа клиентов высокого риска, данные без пересчёта. Поклиентских записей
+        «перешёл в высокий риск» больше нет; `high_risk`, `loss_jump`, `total_loss_jump`, `bulk`
+        остаются только у старых записей. Личные уведомления — `/api/v1/alerts/notifications`.
       operationId: listAlerts
       parameters:
         - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
@@ -576,7 +576,7 @@ paths:
         - { name: customer_id, in: query, schema: { type: integer, minimum: 1 } }
         - name: kind
           in: query
-          schema: { type: string, enum: [high_risk, loss_jump, total_loss_jump, bulk] }
+          schema: { type: string, enum: [loss_growth, big_customer_high, risk_share, high_count_growth, stale_data, high_risk, loss_jump, total_loss_jump, bulk] }
       responses:
         '200':
           description: Страница ленты
@@ -585,6 +585,163 @@ paths:
               schema: { $ref: '#/components/schemas/AlertPage' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/alerts/preferences:
+    get:
+      tags: [alerts]
+      summary: Мои настройки уведомлений
+      description: |
+        Настройки текущего пользователя (по `X-User-Name`), каталог событий с порогами по умолчанию
+        и состояние каналов. При первом обращении заводятся настройки по умолчанию: все критические
+        события, кроме `stale_data`, только в панели.
+      operationId: getAlertPreferences
+      responses:
+        '200':
+          description: Настройки
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertPreferencesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [alerts]
+      summary: Сохранить мои настройки уведомлений
+      description: Не переданные события получают значения по умолчанию. Для писем нужен `email`.
+      operationId: putAlertPreferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlertPreferencesInput' }
+      responses:
+        '200':
+          description: Сохранённые настройки
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertPreferencesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/alerts/preferences/test:
+    post:
+      tags: [alerts]
+      summary: Отправить тестовое уведомление
+      description: Во все каналы, которые у пользователя есть (панель, почта, Telegram), без тихих часов и паузы.
+      operationId: sendTestNotification
+      responses:
+        '200':
+          description: Что ушло и что нет
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      required: [channel, ok]
+                      properties:
+                        channel: { type: string, enum: [panel, email, telegram] }
+                        ok: { type: boolean }
+                        reason: { type: [string, 'null'] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/alerts/preferences/users:
+    get:
+      tags: [alerts]
+      summary: Настройки уведомлений всех пользователей (администратор)
+      operationId: listAlertPreferences
+      responses:
+        '200':
+          description: Кто что настроил
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AlertSubscriber' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/alerts/preferences/users/{username}:
+    parameters:
+      - { name: username, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [alerts]
+      summary: Настройки пользователя (администратор)
+      operationId: getUserAlertPreferences
+      responses:
+        '200':
+          description: Настройки
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertPreferencesResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [alerts]
+      summary: Сбросить настройки пользователя к значениям по умолчанию (администратор)
+      operationId: resetUserAlertPreferences
+      responses:
+        '204': { description: Сброшено }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/alerts/telegram/link:
+    post:
+      tags: [alerts]
+      summary: Ссылка для привязки Telegram
+      description: |
+        Одноразовая deep link `https://t.me/<бот>?start=<код>`, код живёт 10 минут. Пользователь
+        открывает её и нажимает Start — бот привязывает чат к аккаунту. 409, если бот не настроен.
+      operationId: createTelegramLink
+      responses:
+        '200':
+          description: Ссылка
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, expires_in_s]
+                properties:
+                  url: { type: string }
+                  expires_in_s: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: 'Бот не настроен (нет TELEGRAM_BOT_TOKEN)' }
+    delete:
+      tags: [alerts]
+      summary: Отвязать Telegram
+      operationId: deleteTelegramLink
+      responses:
+        '204': { description: Отвязано }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/alerts/notifications:
+    get:
+      tags: [alerts]
+      summary: Мои уведомления (канал «в панели»)
+      operationId: listMyNotifications
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+      responses:
+        '200':
+          description: Последние уведомления и сколько непрочитанных
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationInbox' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/alerts/notifications/read:
+    post:
+      tags: [alerts]
+      summary: Отметить мои уведомления прочитанными
+      operationId: readMyNotifications
+      responses:
+        '204': { description: Готово }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /api/v1/simulator:
     get:
@@ -1578,7 +1735,7 @@ components:
       required: [id, kind, message, link]
       properties:
         id: { type: integer }
-        kind: { type: string, enum: [high_risk, loss_jump, total_loss_jump, bulk] }
+        kind: { type: string, enum: [loss_growth, big_customer_high, risk_share, high_count_growth, stale_data, high_risk, loss_jump, total_loss_jump, bulk] }
         customer_id: { type: [integer, 'null'], description: 'null у total_loss_jump и bulk' }
         email: { type: [string, 'null'] }
         risk_level: { type: [string, 'null'] }
@@ -1605,3 +1762,115 @@ components:
             feed: { type: boolean }
             webhook: { type: boolean }
             telegram: { type: boolean }
+
+    AlertEventCode:
+      type: string
+      enum: [loss_growth, big_customer_high, risk_share, high_count_growth, stale_data]
+
+    AlertChannel:
+      type: string
+      enum: [panel, email, telegram]
+
+    AlertEventPreference:
+      type: object
+      required: [enabled, threshold, channels]
+      properties:
+        enabled: { type: boolean }
+        threshold: { type: number, description: 'В единицах события: %, € (не центы), штуки или минуты' }
+        period_h: { type: [integer, 'null'], enum: [1, 6, 24, 72, 168, null], description: 'Окно «рост за период»' }
+        channels: { type: array, items: { $ref: '#/components/schemas/AlertChannel' } }
+
+    AlertPreferencesInput:
+      type: object
+      properties:
+        email: { type: [string, 'null'] }
+        timezone: { type: string, examples: [Europe/Moscow] }
+        quiet_from: { type: [string, 'null'], description: 'ЧЧ:ММ; почта и Telegram ждут конца тихих часов' }
+        quiet_to: { type: [string, 'null'] }
+        digest_enabled: { type: boolean }
+        digest_time: { type: string, description: ЧЧ:ММ по часовому поясу пользователя }
+        digest_channels: { type: array, items: { type: string, enum: [email, telegram] } }
+        events:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/AlertEventPreference' }
+
+    AlertPreferences:
+      allOf:
+        - $ref: '#/components/schemas/AlertPreferencesInput'
+        - type: object
+          required: [username, timezone, digest_enabled, digest_time, digest_channels, events]
+          properties:
+            username: { type: string }
+            mute_until: { type: [string, 'null'], format: date-time, description: 'Пауза из Telegram (/mute)' }
+
+    AlertEventDefinition:
+      type: object
+      required: [code, title, description, unit, default_threshold, min_threshold, max_threshold, default_enabled]
+      properties:
+        code: { $ref: '#/components/schemas/AlertEventCode' }
+        title: { type: string }
+        description: { type: string }
+        unit: { type: string, enum: [pct, eur, count, min] }
+        default_threshold: { type: number }
+        min_threshold: { type: number }
+        max_threshold: { type: number }
+        default_period_h: { type: [integer, 'null'] }
+        default_enabled: { type: boolean }
+
+    AlertChannelState:
+      type: object
+      required: [available]
+      properties:
+        available: { type: boolean }
+        reason: { type: [string, 'null'] }
+        bot_username: { type: [string, 'null'] }
+        linked: { type: boolean }
+        tg_username: { type: [string, 'null'] }
+
+    AlertPreferencesResponse:
+      type: object
+      required: [preferences, catalog, periods_h, channels]
+      properties:
+        preferences: { $ref: '#/components/schemas/AlertPreferences' }
+        catalog: { type: array, items: { $ref: '#/components/schemas/AlertEventDefinition' } }
+        periods_h: { type: array, items: { type: integer } }
+        channels:
+          type: object
+          required: [panel, email, telegram]
+          properties:
+            panel: { $ref: '#/components/schemas/AlertChannelState' }
+            email: { $ref: '#/components/schemas/AlertChannelState' }
+            telegram: { $ref: '#/components/schemas/AlertChannelState' }
+
+    AlertSubscriber:
+      type: object
+      required: [username, enabled_events, channels, digest_enabled, telegram_linked]
+      properties:
+        username: { type: string }
+        email: { type: [string, 'null'] }
+        enabled_events: { type: array, items: { $ref: '#/components/schemas/AlertEventCode' } }
+        channels: { type: array, items: { $ref: '#/components/schemas/AlertChannel' } }
+        digest_enabled: { type: boolean }
+        telegram_linked: { type: boolean }
+        tg_username: { type: [string, 'null'] }
+        updated_at: { type: [string, 'null'], format: date-time }
+        updated_by: { type: [string, 'null'] }
+
+    NotificationItem:
+      type: object
+      required: [id, event_type, title, message, link, read]
+      properties:
+        id: { type: integer }
+        event_type: { type: string, description: 'Код события, digest или test' }
+        title: { type: string }
+        message: { type: string }
+        link: { type: string, description: Путь в панели }
+        created_at: { type: [string, 'null'], format: date-time }
+        read: { type: boolean }
+
+    NotificationInbox:
+      type: object
+      required: [items, unread]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/NotificationItem' } }
+        unread: { type: integer }

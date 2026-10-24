@@ -1290,7 +1290,7 @@
     {
       "id": 24,
       "type": "row",
-      "title": "Оповещения (alerts)",
+      "title": "Уведомления (alerts)",
       "collapsed": false,
       "gridPos": {
         "x": 0,
@@ -1302,8 +1302,8 @@
     },
     {
       "type": "timeseries",
-      "title": "Оповещения: доставка по каналам",
-      "description": "Сколько сообщений с оповещениями ушло в ленту, webhook и Telegram и сколько попыток не удалось. Если по каналу 15 минут идут одни ошибки, срабатывает алерт AlertsDeliveryFailing.",
+      "title": "Уведомления: доставка по каналам",
+      "description": "Сколько сообщений ушло в журнал, почту, Telegram и webhook и сколько попыток не удалось. Если по каналу 15 минут идут одни ошибки, срабатывает алерт AlertsDeliveryFailing.",
       "targets": [
         {
           "datasource": {
@@ -1380,8 +1380,8 @@
     },
     {
       "type": "timeseries",
-      "title": "Оповещения: созданные и очередь",
-      "description": "Новые оповещения по видам за 5 минут, придержанные анти-спамом и доставки, которые ждут отправки во внешние каналы. Очередь растёт, если webhook или Telegram недоступны.",
+      "title": "Уведомления: события и подписчики",
+      "description": "Сработавшие критические события по видам, личные уведомления по каналам, придержанные анти-спамом, очередь доставки и число пользователей с настройками.",
       "targets": [
         {
           "datasource": {
@@ -1389,8 +1389,18 @@
             "uid": "prometheus"
           },
           "expr": "sum by (kind) (increase(alerts_raised_total[5m]))",
-          "legendFormat": "создано: {{kind}}",
+          "legendFormat": "событие: {{kind}}",
           "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (channel) (increase(alerts_notifications_total[5m]))",
+          "legendFormat": "личные: {{channel}}",
+          "refId": "B",
           "range": true
         },
         {
@@ -1400,7 +1410,7 @@
           },
           "expr": "sum(increase(alerts_suppressed_total[5m]))",
           "legendFormat": "анти-спам",
-          "refId": "B",
+          "refId": "C",
           "range": true
         },
         {
@@ -1410,7 +1420,17 @@
           },
           "expr": "max(alerts_delivery_pending)",
           "legendFormat": "в очереди доставки",
-          "refId": "C",
+          "refId": "D",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(alerts_subscribers)",
+          "legendFormat": "пользователей с настройками",
+          "refId": "E",
           "range": true
         }
       ],

@@ -258,14 +258,14 @@ services:
     environment:
       <<: *app-env
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
-      ALERT_LOSS_JUMP_EUR: ${ALERT_LOSS_JUMP_EUR:-50}
-      ALERT_TOTAL_LOSS_JUMP_PCT: ${ALERT_TOTAL_LOSS_JUMP_PCT:-10}
+      # анти-спам: одно событие одному пользователю не чаще раза в N минут
       ALERT_COOLDOWN_MIN: ${ALERT_COOLDOWN_MIN:-60}
-      ALERTS_BULK_THRESHOLD: ${ALERTS_BULK_THRESHOLD:-20}
-      # пусто — канал выключен, лента в панели работает всегда
+      # письма уходят через SMTP_* из x-app-env (на стенде — Mailpit, http://localhost:8025)
+      # токен бота: без него бот выключен, в настройках честно «бот не настроен»
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      # общий канал команды для журнала событий; пусто — выключен
       WEBHOOK_URL: ${ALERTS_WEBHOOK_URL:-}
       WEBHOOK_SECRET: ${ALERTS_WEBHOOK_SECRET:-}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=2).status == 200 else 1)"]

@@ -1,4 +1,4 @@
-import { Activity, Database, FileCode2, LayoutDashboard, LogOut, Moon, ShieldCheck, SlidersHorizontal, Sun, Users } from 'lucide-react'
+import { Activity, Bell, Database, FileCode2, LayoutDashboard, LogOut, Moon, ShieldCheck, SlidersHorizontal, Sun, Users } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { NavLink, Outlet } from 'react-router'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -144,6 +144,12 @@ function UserMenu() {
           </p>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <NavLink to="/notifications">
+            <Bell />
+            Уведомления
+          </NavLink>
+        </DropdownMenuItem>
         <DropdownMenuItem asChild>
           <a href={SWAGGER_PATH} target="_blank" rel="noopener noreferrer">
             <FileCode2 />

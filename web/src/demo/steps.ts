@@ -82,7 +82,7 @@ const FILTER_TARGET: Target = { selector: '[aria-label="Фильтр по уро
 const TABLE_TARGET: Target = { selector: 'table[aria-label="Клиенты под риском"]', closest: '.rounded-xl' }
 const LIVE_TARGET: Target = { selector: 'header [role="status"]' }
 const PROFILE_TARGET: Target = { selector: 'header button[aria-label^="Профиль"]' }
-const ALERTS_TARGET: Target = { selector: 'header button[aria-label^="Оповещения"]' }
+const ALERTS_TARGET: Target = { selector: 'header button[aria-label^="Уведомления"]' }
 const CALL_TODAY_TARGET: Target = { selector: '[data-testid="call-today"]' }
 const CALL_TODAY_CSV_TARGET: Target = { selector: '[data-testid="call-today-csv"]' }
 const QUALITY_LIFT_TARGET: Target = { selector: '[data-testid="quality-lift"]' }
@@ -278,10 +278,10 @@ export const DEMO_STEPS: DemoStep[] = [
   },
   {
     id: 'live',
-    title: 'Живые данные и оповещения',
+    title: 'Живые данные и уведомления',
     say:
-      'Загружаем 5 000 синтетических клиентов и включаем поток изменений: первый пересчёт около 20 секунд, дальше цифры и строки таблицы меняются на глазах. Колокольчик в шапке это отдельный сервис оповещений, он подписан на события и добавлен без единой правки в других сервисах, а массовые изменения сворачивает в одну запись, чтобы не завалить ленту.',
-    show: 'Карточки сверху и колокольчик в шапке: когда пойдут изменения, откройте его и покажите ленту.',
+      'Загружаем 5 000 синтетических клиентов и включаем поток изменений: первый пересчёт около 20 секунд, дальше цифры и строки таблицы меняются на глазах. Колокольчик в шапке — личные уведомления от отдельного сервиса, только о критическом (выросла ожидаемая потеря, крупный клиент ушёл в высокий риск), а пороги и каналы — панель, почта или Telegram-бот — каждый выбирает сам.',
+    show: 'Колокольчик в шапке, затем «Настроить»: страница «Уведомления» с порогами, каналами, тихими часами и кнопкой тестового уведомления.',
     adminOnly: true,
     readout: 'simulator',
     run: async (ctx) => {

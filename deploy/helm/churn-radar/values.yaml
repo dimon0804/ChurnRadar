@@ -32,9 +32,13 @@ secrets:
   # WEBHOOK_URL, WEBHOOK_SECRET, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (любые можно опустить).
   alerts:
     existingSecret: ""
+    # токен Telegram-бота: без него бот выключен, в панели — «бот не настроен»
+    telegramBotToken: ""
+    # пароль SMTP для писем-уведомлений (адрес сервера — alerts.env.SMTP_HOST)
+    smtpPassword: ""
+    # общий канал команды для журнала событий
     webhookUrl: ""
     webhookSecret: ""
-    telegramBotToken: ""
     telegramChatId: ""
 
 # Общие переменные окружения всех приложений (попадают в ConfigMap каждого сервиса)
@@ -295,11 +299,16 @@ alerts:
     SERVICE_NAME: alerts
     # ссылки на карточку клиента в сообщениях
     PUBLIC_URL: http://localhost:8080
-    ALERT_LOSS_JUMP_EUR: "50"
-    ALERT_TOTAL_LOSS_JUMP_PCT: "10"
+    # анти-спам: одно событие одному пользователю не чаще раза в N минут;
+    # события, пороги и каналы каждый пользователь настраивает в панели
     ALERT_COOLDOWN_MIN: "60"
-    # больше стольких оповещений за пересчёт — одна сводная запись
-    ALERTS_BULK_THRESHOLD: "20"
+    # почта: пусто — письма выключены, в настройках так и написано
+    SMTP_HOST: ""
+    SMTP_PORT: "587"
+    SMTP_SECURITY: starttls
+    SMTP_USERNAME: ""
+    SMTP_FROM: churnradar@example.com
+    SMTP_FROM_NAME: ChurnRadar
   resources:
     requests:
       cpu: 25m
@@ -492,7 +501,7 @@ networkPolicy:
         k8s-app: kube-dns
   # дополнительные egress-правила для приложений (OIDC-провайдер, внешние БД и т.п.)
   extraAppEgress: []
-  # исходящие alerts наружу: Telegram Bot API и внешний webhook по HTTPS.
+  # исходящие alerts наружу: Telegram Bot API и внешний webhook по HTTPS, почта по SMTP (587, 465).
   # Webhook внутри кластера или на другом порту — добавьте сюда своё правило.
   alertsEgress:
     - to:
@@ -501,6 +510,10 @@ networkPolicy:
             except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16]
       ports:
         - port: 443
+          protocol: TCP
+        - port: 587
+          protocol: TCP
+        - port: 465
           protocol: TCP
   #  - to:
   #      - ipBlock:

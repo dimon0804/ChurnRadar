@@ -180,7 +180,7 @@ describe('scenario', () => {
     const { ctx } = makeCtx()
     await step('live').run?.(ctx)
     const targets = vi.mocked(ctx.spotlight).mock.calls[0]?.[0] ?? []
-    expect(targets.some((t) => t.selector.includes('Оповещения'))).toBe(true)
+    expect(targets.some((t) => t.selector.includes('Уведомления'))).toBe(true)
   })
 
   it('applies the prolong_wait weight after closing the what-if draft', async () => {

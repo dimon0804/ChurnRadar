@@ -142,6 +142,7 @@
             "webhookUrl": { "type": "string" },
             "webhookSecret": { "type": "string" },
             "telegramBotToken": { "type": "string" },
+            "smtpPassword": { "type": "string" },
             "telegramChatId": { "type": ["string", "integer"] }
           }
         }

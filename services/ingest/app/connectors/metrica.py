@@ -405,13 +405,15 @@ async def save(pool: asyncpg.Pool, agg: Aggregate, start: date, end: date, *, as
     async with pool.acquire() as conn, conn.transaction():
         if start <= end:
             await conn.execute("DELETE FROM source.web_visits_daily WHERE day BETWEEN $1 AND $2", start, end)
-            if agg.days:
+            # дни вне запрошенного периода не пишем: их строки уже лежат в базе от прошлых выгрузок
+            rows = [
+                (account, day, s.visits, s.payment, s.cancel, s.pricing, s.last_visit_at, s.last_cancel_at)
+                for (account, day), s in agg.days.items()
+                if start <= day <= end
+            ]
+            if rows:
                 await conn.copy_records_to_table(
-                    "web_visits_daily", schema_name="source", columns=DAILY_COLS,
-                    records=[
-                        (account, day, s.visits, s.payment, s.cancel, s.pricing, s.last_visit_at, s.last_cancel_at)
-                        for (account, day), s in agg.days.items()
-                    ],
+                    "web_visits_daily", schema_name="source", columns=DAILY_COLS, records=rows
                 )
         await conn.execute(
             "DELETE FROM source.web_visits_daily WHERE day < $1", as_of_day - timedelta(days=RETENTION_DAYS)

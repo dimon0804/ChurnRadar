@@ -365,13 +365,15 @@ function History({ m }: { m: Marketing }) {
   )
 }
 
-function Economics({ m }: { m: Marketing }) {
+type SaveMessage = { ok: boolean; text: string } | null
+
+/** Форма пересоздаётся по ключу из сохранённых значений, поэтому сообщение о сохранении живёт у страницы. */
+function Economics({ m, message, setMessage }: { m: Marketing; message: SaveMessage; setMessage: (m: SaveMessage) => void }) {
   const { isAdmin } = useAuth()
   const queryClient = useQueryClient()
   const settings = m.settings
   const [margin, setMargin] = useState(() => formatDecimal(settings.margin * 100, 1))
   const [cac, setCac] = useState(() => (settings.cac === null ? '' : formatDecimal(settings.cac / 100, 2).replace(/\s/g, '')))
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
   const save = useMutation({
     mutationFn: api.putMarketingSettings,
     onSuccess: () => {
@@ -506,6 +508,7 @@ function MarketingSkeleton() {
 
 export default function MarketingPage() {
   const query = useQuery({ queryKey: queryKeys.marketing, queryFn: ({ signal }) => api.marketing(signal) })
+  const [saveMessage, setSaveMessage] = useState<SaveMessage>(null)
   const m = query.data
   return (
     <>
@@ -530,7 +533,7 @@ export default function MarketingPage() {
             <RevenueStructure m={m} />
             <History m={m} />
           </div>
-          <Economics key={`${m.settings.margin}-${m.settings.cac}`} m={m} />
+          <Economics key={`${m.settings.margin}-${m.settings.cac}`} m={m} message={saveMessage} setMessage={setSaveMessage} />
           <Glossary />
         </div>
       ) : null}

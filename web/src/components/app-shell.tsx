@@ -146,7 +146,7 @@ function UserMenu() {
           <span className="flex size-7 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">
             {initials(name)}
           </span>
-          <span className="hidden max-w-36 flex-col leading-tight lg:flex">
+          <span className="hidden max-w-36 flex-col leading-tight 2xl:flex">
             <span className="truncate text-[13px] font-medium" title={name}>
               {name}
             </span>
@@ -234,7 +234,8 @@ export function AppShell() {
                 <span className="opacity-80" aria-hidden>
                   {item.icon}
                 </span>
-                <span className="max-lg:sr-only">{item.label}</span>
+                {/* у администратора пунктов вдвое больше: подписи влезают только на широком экране */}
+                <span className={items.length > 6 ? 'max-2xl:sr-only' : 'max-lg:sr-only'}>{item.label}</span>
               </NavLink>
             ))}
           </nav>

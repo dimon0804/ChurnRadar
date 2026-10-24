@@ -191,7 +191,9 @@ async def test_endpoint_maps_superseded_and_timeout() -> None:
 
 async def _scores(pool: Any) -> dict[int, Any]:
     async with pool.acquire() as conn:
-        rows = await conn.fetch("SELECT customer_id, risk_score, risk_level, expected_loss FROM scoring.customer_scores")
+        rows = await conn.fetch(
+            "SELECT customer_id, risk_score, risk_level, expected_loss FROM scoring.customer_scores"
+        )
     return {r["customer_id"]: r for r in rows}
 
 

@@ -13,7 +13,7 @@ import uvicorn
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict
-from svckit.auth import User, make_current_user, make_require_admin
+from svckit.auth import make_current_user, make_require_admin
 from svckit.db import db_ready
 from svckit.errors import ApiError, install_error_handlers
 from svckit.health import install_probes
@@ -77,8 +77,8 @@ def create_http_app(config: Config, state: State) -> FastAPI:
     install_error_handlers(app)
     require_admin = make_require_admin(make_current_user(config))
 
-    @app.post("/internal/v1/model/preview")
-    async def preview(body: PreviewRequest, _: User = Depends(require_admin)) -> dict[str, Any]:
+    @app.post("/internal/v1/model/preview", dependencies=[Depends(require_admin)])
+    async def preview(body: PreviewRequest) -> dict[str, Any]:
         """«Что если»: расчёт по присланным настройкам без записи. Вызывает только api."""
         if state.previewer is None:
             raise ApiError(503, "scoring_starting", "Сервис оценки ещё запускается")

@@ -301,6 +301,10 @@ class World:
         return True
 
     def _to_wait(self, service: dict[str, Any], now: datetime) -> None:
+        # В ожидание оплаты услуга попадает только с истёкшим сроком: продление,
+        # которое не прошло досрочно, сдвигает срок на текущий момент.
+        if parse_iso(service["expiresAt"]) > now:
+            service["expiresAt"] = iso(now)
         service["status"] = "prolong_wait"
         self.deadlines[int(service["id"])] = now + timedelta(seconds=5 * self.demo_day_seconds)
 

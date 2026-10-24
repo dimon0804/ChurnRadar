@@ -92,6 +92,24 @@ def test_renewal_without_money_moves_to_prolong_wait(world) -> None:  # type: ig
     assert int(service["id"]) in w.deadlines
 
 
+def test_prolong_wait_never_keeps_future_expiry(world) -> None:  # type: ignore[no-untyped-def]
+    from datetime import timedelta
+
+    from app.stream import Batch
+    from app.timeutil import iso, parse_iso
+
+    w, _ = world
+    service = next(s for s in w.services.values() if s["status"] == "active")
+    service["autoProlong"] = True
+    now = w.clock()
+    service["expiresAt"] = iso(now + timedelta(days=60))
+    w.accounts[service["ownerId"]].update(balance=0, bonusBalance=0, withdrawBalance=0)
+    w.service_ids = [service["id"]]
+    assert w._m_renewal(Batch())
+    assert service["status"] == "prolong_wait"
+    assert parse_iso(service["expiresAt"]) <= w.clock()
+
+
 def test_renewal_with_money_extends_expiry(world) -> None:  # type: ignore[no-untyped-def]
     from app.stream import Batch
     from app.timeutil import parse_iso

@@ -33,6 +33,9 @@ class ShortCommitment(ServiceFeature):
     def recommend(self, signal: Signal) -> Recommendation:
         return Recommendation(
             code=self.code,
-            title=f"Предложить оплату {signal.facts['service']} на более долгий срок",
-            detail="Скидка за переход на квартал или год закрепит клиента.",
+            title=(
+                f"{signal.facts['service']} оплачивается {signal.facts['term']}: "
+                "предложить оплату за квартал или год"
+            ),
+            detail="Скидка за длинный период закрепит клиента и уберёт соблазн уйти в любой момент.",
         )

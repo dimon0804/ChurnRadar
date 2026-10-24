@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -17,7 +18,7 @@ log = structlog.get_logger()
 
 REQUEST_ID_HEADER = "X-Request-Id"
 
-_STATUS_CODES: dict[int, tuple[str, str]] = {
+STATUS_CODES: dict[int, tuple[str, str]] = {
     400: ("bad_request", "Некорректный запрос"),
     401: ("unauthorized", "Требуется вход в систему"),
     403: ("forbidden", "Недостаточно прав"),
@@ -34,13 +35,22 @@ _STATUS_CODES: dict[int, tuple[str, str]] = {
 }
 
 
-class ApiError(Exception):
+class ApiError(StarletteHTTPException):
+    """Ошибка с кодом и сообщением для клиента.
+
+    Наследник HTTPException: FastAPI пропускает такие исключения из чтения тела запроса
+    как есть, а не превращает в 400 (важно для лимитов и распаковки тела).
+    """
+
     def __init__(self, status: int, code: str, message: str, details: Any = None) -> None:
-        super().__init__(message)
+        super().__init__(status_code=status, detail=message)
         self.status = status
         self.code = code
         self.message = message
         self.details = details
+
+    def __str__(self) -> str:
+        return self.message
 
 
 def request_id_of(request: Request) -> str:
@@ -58,13 +68,34 @@ def error_response(
     return JSONResponse(status_code=status, content=body, headers={REQUEST_ID_HEADER: rid})
 
 
-def _validation_details(exc: RequestValidationError) -> list[dict[str, Any]]:
+async def send_error(scope: Scope, send: Send, status: int, code: str, message: str) -> None:
+    """Ответ-ошибка прямо из ASGI-middleware, до маршрутизации.
+
+    Заголовок X-Request-Id добавит RequestIdMiddleware.
+    """
+    rid = scope.get("state", {}).get("request_id")
+    body = json.dumps(
+        {"error": {"code": code, "message": message, "request_id": rid}}, ensure_ascii=False
+    ).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
+def validation_details(errors: Any) -> list[dict[str, Any]]:
     out = []
-    for err in exc.errors():
+    for err in errors:
         loc = [str(p) for p in err.get("loc", ())]
         out.append(
             {
-                "field": ".".join(loc[1:]) if loc and loc[0] in {"body", "query", "path", "header"} else ".".join(loc),
+                "field": ".".join(loc[1:])
+                if loc and loc[0] in {"body", "query", "path", "header"}
+                else ".".join(loc),
                 "location": loc[0] if loc else None,
                 "message": err.get("msg"),
                 "type": err.get("type"),
@@ -81,12 +112,12 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def _validation(request: Request, exc: RequestValidationError) -> JSONResponse:
         return error_response(
-            request, 422, "validation_error", "Ошибка валидации запроса", _validation_details(exc)
+            request, 422, "validation_error", "Ошибка валидации запроса", validation_details(exc.errors())
         )
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-        code, message = _STATUS_CODES.get(exc.status_code, ("error", "Ошибка запроса"))
+        code, message = STATUS_CODES.get(exc.status_code, ("error", "Ошибка запроса"))
         response = error_response(request, exc.status_code, code, message)
         if exc.headers:
             response.headers.update(exc.headers)
@@ -95,7 +126,7 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
         log.exception("unhandled_error", path=request.url.path)
-        code, message = _STATUS_CODES[500]
+        code, message = STATUS_CODES[500]
         return error_response(request, 500, code, message)
 
 

@@ -38,7 +38,7 @@ class Config:
             nats_url=os.getenv("NATS_URL", "nats://nats:4222"),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             http_host=os.getenv("HTTP_HOST", "0.0.0.0"),
-            http_port=int(os.getenv("HTTP_PORT", "8001")),
+            http_port=int(os.getenv("HTTP_PORT", "8000")),
             metrics_token=os.getenv("METRICS_TOKEN", "churn-metrics-token"),
             rescore_interval_s=float(os.getenv("RESCORE_INTERVAL_S", "60")),
             debounce_ms=int(os.getenv("DEBOUNCE_MS", "300")),

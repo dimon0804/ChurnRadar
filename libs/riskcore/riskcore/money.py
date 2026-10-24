@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 from .types import PaymentTerm, Service
 
+EPSILON = timedelta(microseconds=1)
 FIXED_PERIODS: dict[str, timedelta] = {"hour": timedelta(hours=1), "week": timedelta(days=7)}
 CALENDAR_PERIODS: dict[str, int] = {"month": 1, "quarter_year": 3, "half_year": 6, "year": 12}
 
@@ -29,6 +30,26 @@ def monthly_price(price: int, term: PaymentTerm) -> float:
 
 def horizon_revenue(monthly: float, horizon_days: int) -> float:
     return monthly * horizon_days / 30
+
+
+def replenishment_rate(total_replenished: int, lifetime_days: float) -> float:
+    """Сколько клиент в среднем вносит за 30 дней. Срок жизни меньше месяца считаем за месяц."""
+    return max(total_replenished, 0) / max(lifetime_days / 30, 1.0)
+
+
+def payment_capacity(spendable: int, rate: float, horizon_days: int) -> float:
+    """Сколько клиент способен заплатить за горизонт: то, что уже на балансе, плюс обычные пополнения."""
+    return max(spendable, 0) + rate * horizon_days / 30
+
+
+def collectible_revenue(contract: float, capacity: float, price: int) -> float:
+    """Выручка услуги за горизонт, которую реально можно получить.
+
+    По цене услуга может обещать больше, чем клиент когда-либо платил (почасовой сервер
+    за €0,95 в час — это €684 в месяц). Больше, чем клиент способен заплатить, одна услуга
+    принести не может; при этом хотя бы один платёж за период считаем всегда.
+    """
+    return min(contract, max(capacity, float(price)))
 
 
 def add_months(moment: datetime, months: int) -> datetime:
@@ -77,6 +98,21 @@ class RenewalPlan:
     def cost_until(self, moment: datetime) -> int:
         return self.count_until(moment) * self.price
 
+    def cost_before(self, moment: datetime) -> int:
+        """Сколько стоят продления строго раньше moment."""
+        return self.cost_until(moment - EPSILON)
+
+    def next_after(self, moment: datetime) -> datetime | None:
+        """Первое продление позже moment, если оно попадает в горизонт."""
+        if moment < self.first:
+            return self.first
+        if self.term in FIXED_PERIODS:
+            step = FIXED_PERIODS[self.term]
+            candidate = self.first + step * (int((moment - self.first) / step) + 1)
+        else:
+            candidate = add_periods(self.first, self.term, self.count_until(moment))
+        return candidate if candidate <= self.end else None
+
 
 def renewal_plan(service: Service, as_of: datetime, horizon_days: int) -> RenewalPlan | None:
     """График продлений автопродляемой живой услуги. Просроченная оплата считается срочной."""
@@ -90,7 +126,11 @@ def renewal_plan(service: Service, as_of: datetime, horizon_days: int) -> Renewa
 
 
 def shortfall_moment(plans: list[RenewalPlan], spendable: int) -> datetime | None:
-    """Первый момент, когда суммарные продления превысят доступные деньги."""
+    """Момент первого продления, на которое уже не хватит денег.
+
+    Продления оплачиваются по очереди, во времени. Двоичный поиск сужает окно до минуты,
+    а затем берётся точный момент ближайшего продления внутри окна.
+    """
     if not plans or sum(plan.cost for plan in plans) <= spendable:
         return None
 
@@ -107,7 +147,8 @@ def shortfall_moment(plans: list[RenewalPlan], spendable: int) -> datetime | Non
             high = middle
         else:
             low = middle
-    return high
+    moments = [moment for plan in plans if (moment := plan.next_after(low)) is not None and moment <= high]
+    return min(moments, default=high)
 
 
 def format_eur(cents: float) -> str:

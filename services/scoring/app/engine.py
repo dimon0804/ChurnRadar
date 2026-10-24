@@ -18,9 +18,9 @@ import asyncpg
 import riskcore
 from riskcore import CustomerResult
 from riskcore.types import Service, Settings
+from svckit.logs import get_logger
 
 from . import repository as repo
-from .logs import get_logger
 from .metrics import CUSTOMERS, DURATION, RUNS
 
 log = get_logger("scoring.engine")

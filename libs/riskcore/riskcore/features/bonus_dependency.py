@@ -35,7 +35,7 @@ class BonusDependency(AccountFeature):
     def recommend(self, signal: Signal) -> Recommendation:
         return Recommendation(
             code=self.code,
-            title="Предложить пополнение с бонусом",
+            title=f"Держится на бонусах ({signal.facts['bonus']}): предложить пополнение с бонусом",
             detail=(
                 f"Бонусы ({signal.facts['bonus']}) скоро закончатся, а своих денег {signal.facts['balance']}."
             ),

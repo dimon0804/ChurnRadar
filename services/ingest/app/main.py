@@ -2,26 +2,32 @@
 
 from __future__ import annotations
 
+import contextlib
+import ctypes
+import ctypes.util
+import gc
 import json
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import structlog
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import JSONResponse
+from svckit.auth import User, make_current_user, make_require_admin
+from svckit.body import RequestBodyMiddleware, parse_json_body, read_body
+from svckit.bus import EventBus
+from svckit.db import create_pool, db_ready, get_pool
+from svckit.errors import ApiError, RequestIdMiddleware, install_error_handlers
+from svckit.health import install_probes
+from svckit.logs import configure_logging
+from svckit.metrics import HttpMetricsMiddleware, check_metrics_token, render
 
 from app import metrics
-from app.auth import AdminUser
-from app.body_limit import BodyLimitMiddleware
-from app.bus import EventBus
 from app.config import settings
-from app.db import create_pool
-from app.errors import ApiError, RequestIdMiddleware, install_error_handlers
-from app.logging_setup import configure_logging
 from app.repository import WriteResult, apply_changes, replace_snapshot
 from app.schemas import (
+    SNAPSHOT,
     EventsAccepted,
     SnapshotAccepted,
     SourceChangeBatch,
@@ -33,12 +39,18 @@ log = structlog.get_logger()
 
 SUBJECT_SOURCE_CHANGED = "churn.source.changed"
 
+current_user = make_current_user(settings)
+AdminUser = Annotated[User, Depends(make_require_admin(current_user))]
+Pool = Annotated[Any, Depends(get_pool)]
 
-def get_pool(request: Request):
-    pool = getattr(request.app.state, "pool", None)
-    if pool is None:
-        raise ApiError(503, "service_unavailable", "База данных недоступна")
-    return pool
+
+def release_memory() -> None:
+    """Возвращает ОС память после большого снимка: без этого glibc держит пик (гигабайты) до рестарта."""
+    gc.collect()
+    libc = ctypes.util.find_library("c")
+    if libc:
+        with contextlib.suppress(OSError, AttributeError):
+            ctypes.CDLL(libc).malloc_trim(0)
 
 
 def get_bus(request: Request) -> EventBus | None:
@@ -72,7 +84,7 @@ def load_seed(path: str) -> SourceSnapshot:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     if settings.seed_reference_time is not None:
         raw["reference_time"] = settings.seed_reference_time.isoformat()
-    return SourceSnapshot.model_validate(raw)
+    return SNAPSHOT.validate_python(raw)
 
 
 async def seed_if_empty(app: FastAPI) -> WriteResult | None:
@@ -113,6 +125,14 @@ async def lifespan(app: FastAPI):
     await app.state.pool.close()
 
 
+async def readiness(request: Request) -> dict[str, bool]:
+    bus = getattr(request.app.state, "bus", None)
+    return {
+        "db": await db_ready(getattr(request.app.state, "pool", None)),
+        "nats": bool(bus and bus.connected),
+    }
+
+
 def create_app(*, with_lifespan: bool = True) -> FastAPI:
     app = FastAPI(
         title="ChurnRadar ingest",
@@ -122,33 +142,54 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         lifespan=lifespan if with_lifespan else None,
     )
     install_error_handlers(app)
-    app.add_middleware(BodyLimitMiddleware, max_bytes=settings.max_body_bytes)
-    app.add_middleware(metrics.HttpMetricsMiddleware)
+    app.add_middleware(
+        RequestBodyMiddleware,
+        max_bytes=settings.max_body_bytes,
+        max_compressed_bytes=settings.max_compressed_body_bytes,
+    )
+    app.add_middleware(HttpMetricsMiddleware, histogram=metrics.http_duration)
     app.add_middleware(RequestIdMiddleware)
 
     @app.put("/api/v1/source/snapshot", status_code=202, response_model=SnapshotAccepted)
     async def put_snapshot(
-        body: SourceSnapshot,
+        request: Request,
         user: AdminUser,
-        pool=Depends(get_pool),
+        pool: Pool,
         bus: Annotated[EventBus | None, Depends(get_bus)] = None,
     ) -> SnapshotAccepted:
+        # Тело разбираем сами: JSON сразу в датаклассы (pydantic-core), без промежуточных dict.
+        # Content-Encoding: gzip к этому моменту уже распакован RequestBodyMiddleware.
+        received = time.perf_counter()
+        raw = await read_body(request)
+        size = len(raw)
+        parse_started = time.perf_counter()
+        body = parse_json_body(request, raw, SNAPSHOT)
+        del raw
         errors = check_batch_consistency(body.accounts, body.services, body.transactions)
         if errors:
             raise ApiError(422, "validation_error", "Снимок не прошёл проверку целостности", errors)
         started = time.perf_counter()
+        metrics.parse_duration.observe(started - parse_started)
         result = await replace_snapshot(pool, body, kind="snapshot", created_by=user.name)
-        metrics.write_duration.labels("snapshot").observe(time.perf_counter() - started)
+        assert result is not None  # None бывает только при only_if_empty
+        written = time.perf_counter()
+        metrics.write_duration.labels("snapshot").observe(written - started)
         _observe_write("snapshot", result)
-        log.info("snapshot_accepted", **result.counts, snapshot_id=result.batch_id, user=user.name)
+        log.info(
+            "snapshot_accepted", **result.counts, snapshot_id=result.batch_id, user=user.name, bytes=size,
+            receive_s=round(parse_started - received, 2), parse_s=round(started - parse_started, 2),
+            write_s=round(written - started, 2),
+        )
         await publish_source_changed(bus, "snapshot", result)
+        del body
+        release_memory()
         return SnapshotAccepted(snapshot_id=result.batch_id, counts=result.counts)
 
     @app.post("/api/v1/source/events", status_code=202, response_model=EventsAccepted)
     async def post_events(
         body: SourceChangeBatch,
         user: AdminUser,
-        pool=Depends(get_pool),
+        pool: Pool,
         bus: Annotated[EventBus | None, Depends(get_bus)] = None,
     ) -> EventsAccepted:
         total = len(body.accounts) + len(body.services) + len(body.transactions)
@@ -168,24 +209,12 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         await publish_source_changed(bus, "changes", result)
         return EventsAccepted(accepted=total)
 
-    @app.get("/healthz", include_in_schema=False)
-    async def healthz(request: Request) -> JSONResponse:
-        pool = getattr(request.app.state, "pool", None)
-        bus = getattr(request.app.state, "bus", None)
-        db_ok = False
-        if pool is not None:
-            try:
-                async with pool.acquire(timeout=2) as conn:
-                    db_ok = await conn.fetchval("SELECT 1") == 1
-            except Exception:
-                db_ok = False
-        body = {"status": "ok" if db_ok else "fail", "checks": {"db": db_ok, "nats": bool(bus and bus.connected)}}
-        return JSONResponse(body, status_code=200 if db_ok else 503)
+    install_probes(app, readiness)
 
     @app.get("/metrics", include_in_schema=False)
     async def get_metrics(request: Request):
-        metrics.check_metrics_token(request, settings.metrics_token)
-        return metrics.render()
+        check_metrics_token(request, settings.metrics_token)
+        return render(metrics.registry)
 
     return app
 

@@ -30,6 +30,9 @@ class ChurnHistory(AccountFeature):
     def recommend(self, signal: Signal) -> Recommendation:
         return Recommendation(
             code=self.code,
-            title="Подключить персонального менеджера",
-            detail="Клиент уже уходил: подготовить удерживающее предложение.",
+            title=(
+                f"Уже ушло {signal.facts['gone']} из {signal.facts['total']} услуг: "
+                "подключить персонального менеджера"
+            ),
+            detail="Подготовить удерживающее предложение, пока клиент не закрыл оставшиеся услуги.",
         )

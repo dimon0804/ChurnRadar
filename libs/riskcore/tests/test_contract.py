@@ -78,6 +78,12 @@ def test_nested_objects_match_schemas(openapi, scored):
             validate(openapi, "Transaction", transaction)
         for reason in detail["reasons"]:
             validate(openapi, "Reason", reason)
+            assert set(reason) <= strict(openapi, "Reason")
+        for recommendation in detail["recommendations"]:
+            validate(openapi, "Recommendation", recommendation)
+            assert set(recommendation) <= strict(openapi, "Recommendation")
+        if detail["next_action"] is not None:
+            validate(openapi, "Recommendation", detail["next_action"])
 
 
 def test_customer_summary_matches_schema(openapi, scored):

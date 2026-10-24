@@ -9,15 +9,17 @@ import httpx
 import structlog
 from fastapi import Body, Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
+from svckit.auth import User, make_current_user, make_require_admin
+from svckit.bus import EventBus
+from svckit.db import create_pool, db_ready, get_pool
+from svckit.errors import ApiError, RequestIdMiddleware, install_error_handlers
+from svckit.health import install_probes
+from svckit.logs import configure_logging
+from svckit.metrics import HttpMetricsMiddleware, check_metrics_token, render
 
 from app import metrics, model_settings, queries
-from app.auth import AdminUser, CurrentUser
-from app.bus import EventBus
 from app.config import settings
-from app.db import create_pool
 from app.docs import router as docs_router
-from app.errors import ApiError, RequestIdMiddleware, install_error_handlers
-from app.logging_setup import configure_logging
 
 log = structlog.get_logger()
 
@@ -25,13 +27,9 @@ SUBJECT_SETTINGS_CHANGED = "churn.settings.changed"
 FORWARDED_HEADERS = ("x-user-id", "x-user-name", "x-user-roles", "x-request-id")
 
 
-def get_pool(request: Request):
-    pool = getattr(request.app.state, "pool", None)
-    if pool is None:
-        raise ApiError(503, "service_unavailable", "База данных недоступна")
-    return pool
-
-
+current_user = make_current_user(settings)
+CurrentUser = Annotated[User, Depends(current_user)]
+AdminUser = Annotated[User, Depends(make_require_admin(current_user))]
 Pool = Annotated[Any, Depends(get_pool)]
 
 
@@ -62,6 +60,14 @@ async def lifespan(app: FastAPI):
     await app.state.pool.close()
 
 
+async def readiness(request: Request) -> dict[str, bool]:
+    bus = getattr(request.app.state, "bus", None)
+    return {
+        "db": await db_ready(getattr(request.app.state, "pool", None)),
+        "nats": bool(bus and bus.connected),
+    }
+
+
 def create_app(*, with_lifespan: bool = True) -> FastAPI:
     app = FastAPI(
         title="ChurnRadar API",
@@ -72,7 +78,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
     )
     app.state.summary_cache = queries.SummaryCache(settings.summary_cache_ttl_s)
     install_error_handlers(app)
-    app.add_middleware(metrics.HttpMetricsMiddleware)
+    app.add_middleware(HttpMetricsMiddleware, histogram=metrics.http_duration)
     app.add_middleware(RequestIdMiddleware)
     app.include_router(docs_router)
 
@@ -170,23 +176,11 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         return await proxy_simulator(request, "PUT", command)
 
     # --- ops -------------------------------------------------------------------------
-    @app.get("/healthz", include_in_schema=False)
-    async def healthz(request: Request) -> JSONResponse:
-        pool = getattr(request.app.state, "pool", None)
-        bus = getattr(request.app.state, "bus", None)
-        db_ok = False
-        if pool is not None:
-            try:
-                async with pool.acquire(timeout=2) as conn:
-                    db_ok = await conn.fetchval("SELECT 1") == 1
-            except Exception:
-                db_ok = False
-        body = {"status": "ok" if db_ok else "fail", "checks": {"db": db_ok, "nats": bool(bus and bus.connected)}}
-        return JSONResponse(body, status_code=200 if db_ok else 503)
+    install_probes(app, readiness)
 
     @app.get("/metrics", include_in_schema=False)
     async def get_metrics(request: Request):
-        metrics.check_metrics_token(request, settings.metrics_token)
+        check_metrics_token(request, settings.metrics_token)
         cache: queries.SummaryCache = request.app.state.summary_cache
         pool = getattr(request.app.state, "pool", None)
         try:
@@ -197,7 +191,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
             log.warning("metrics_summary_failed", error=str(exc))
             if cache.last is not None:
                 metrics.update_from_summary(cache.last)
-        return metrics.render()
+        return render(metrics.registry)
 
     return app
 

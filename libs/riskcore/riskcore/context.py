@@ -6,7 +6,16 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from .money import RenewalPlan, monthly_price, renewal_plan, shortfall_moment
+from .money import (
+    RenewalPlan,
+    collectible_revenue,
+    horizon_revenue,
+    monthly_price,
+    payment_capacity,
+    renewal_plan,
+    replenishment_rate,
+    shortfall_moment,
+)
 from .types import Account, Service, Transaction
 
 SECONDS_PER_DAY = 86_400
@@ -33,6 +42,8 @@ class AccountContext:
     horizon_days: int
     renewal_plans: tuple[RenewalPlan, ...]
     funds: Funds
+    replenishment_rate: float = 0.0
+    payment_capacity: float = float("inf")
 
     @property
     def horizon(self) -> int:
@@ -66,6 +77,28 @@ class ServiceContext:
     account_ctx: AccountContext
     funds: Funds
     renewal: RenewalPlan | None
+    contract_revenue: float = 0.0
+    horizon_revenue: float = 0.0
+
+    @property
+    def revenue_capped(self) -> bool:
+        return self.horizon_revenue < self.contract_revenue
+
+    def uncovered_cost(self) -> int:
+        """Сколько продлений этой услуги в горизонте придётся на момент, когда деньги уже кончились."""
+        if self.renewal is None or self.funds.shortfall_at is None:
+            return 0
+        return self.renewal.cost - self.renewal.cost_before(self.funds.shortfall_at)
+
+
+def _lifetime_days(
+    services: Iterable[Service], transactions: Iterable[Transaction], as_of: datetime
+) -> float:
+    """Сколько дней клиент с нами: от самой ранней услуги или транзакции."""
+    moments = [s.created_at for s in services] + [t.created_at for t in transactions]
+    if not moments:
+        return 0.0
+    return max((as_of - min(moments)).total_seconds() / SECONDS_PER_DAY, 0.0)
 
 
 def build_account_context(
@@ -76,9 +109,11 @@ def build_account_context(
     horizon_days: int,
 ) -> AccountContext:
     all_services = tuple(sorted(services, key=lambda s: s.id))
+    transactions = tuple(transactions)
     live = tuple(s for s in all_services if s.is_live)
     plans = tuple(plan for s in live if (plan := renewal_plan(s, as_of, horizon_days)) is not None)
     spendable = account.spendable
+    rate = replenishment_rate(account.total_replenished, _lifetime_days(all_services, transactions, as_of))
     funds = Funds(
         spendable=spendable,
         upcoming_renewals_cost=sum(plan.cost for plan in plans),
@@ -88,25 +123,31 @@ def build_account_context(
         account=account,
         live_services=live,
         all_services=all_services,
-        transactions=tuple(transactions),
+        transactions=transactions,
         as_of=as_of,
         horizon_days=horizon_days,
         renewal_plans=plans,
         funds=funds,
+        replenishment_rate=rate,
+        payment_capacity=payment_capacity(spendable, rate, horizon_days),
     )
 
 
 def build_service_context(service: Service, account_ctx: AccountContext) -> ServiceContext:
     as_of = account_ctx.as_of
+    monthly = monthly_price(service.price, service.payment_term)
+    contract = horizon_revenue(monthly, account_ctx.horizon_days)
     return ServiceContext(
         service=service,
         account=account_ctx.account,
         as_of=as_of,
         horizon_days=account_ctx.horizon_days,
         days_to_expiry=(service.expires_at - as_of).total_seconds() / SECONDS_PER_DAY,
-        monthly_price=monthly_price(service.price, service.payment_term),
+        monthly_price=monthly,
         service_transactions=tuple(t for t in account_ctx.transactions if t.service_id == service.id),
         account_ctx=account_ctx,
         funds=account_ctx.funds,
         renewal=account_ctx.plan_for(service.id),
+        contract_revenue=contract,
+        horizon_revenue=collectible_revenue(contract, account_ctx.payment_capacity, service.price),
     )

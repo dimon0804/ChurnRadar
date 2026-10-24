@@ -5,18 +5,11 @@
 
 from __future__ import annotations
 
-import hmac
-import time
 from datetime import datetime
 from typing import Any
 
-from fastapi import Request
-from prometheus_client import CollectorRegistry, Gauge, Histogram, generate_latest
-from prometheus_client.exposition import CONTENT_TYPE_LATEST
-from starlette.responses import Response
-from starlette.types import ASGIApp, Receive, Scope, Send
-
-from app.errors import ApiError
+from prometheus_client import CollectorRegistry, Gauge
+from svckit.metrics import http_duration_histogram
 
 registry = CollectorRegistry(auto_describe=True)
 
@@ -35,10 +28,7 @@ last_scored = Gauge(
     "churn_last_scored_timestamp_seconds", "Время последнего расчёта, unix-секунды (0 — расчёта не было)",
     registry=registry,
 )
-http_duration = Histogram(
-    "http_request_duration_seconds", "Длительность HTTP-запросов", ["method", "route", "status"],
-    registry=registry,
-)
+http_duration = http_duration_histogram(registry)
 
 LEVELS = ("high", "medium", "low", "unknown")
 
@@ -70,40 +60,3 @@ def update_from_summary(summary: dict[str, Any]) -> None:
         except ValueError:
             ts = 0.0
     last_scored.set(ts)
-
-
-def check_metrics_token(request: Request, token: str) -> None:
-    header = request.headers.get("Authorization", "")
-    scheme, _, value = header.partition(" ")
-    if scheme.lower() != "bearer" or not hmac.compare_digest(value.strip().encode(), token.encode()):
-        raise ApiError(401, "unauthorized", "Нужен токен сборщика метрик")
-
-
-def render() -> Response:
-    return Response(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
-
-
-class HttpMetricsMiddleware:
-    def __init__(self, app: ASGIApp) -> None:
-        self.app = app
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-        started = time.perf_counter()
-        status = {"code": 500}
-
-        async def send_wrapper(message):
-            if message["type"] == "http.response.start":
-                status["code"] = message["status"]
-            await send(message)
-
-        try:
-            await self.app(scope, receive, send_wrapper)
-        finally:
-            route = scope.get("route")
-            path = getattr(route, "path", None) or "unmatched"
-            http_duration.labels(scope["method"], path, str(status["code"])).observe(
-                time.perf_counter() - started
-            )

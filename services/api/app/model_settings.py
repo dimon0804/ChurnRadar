@@ -8,9 +8,9 @@ from typing import Any
 
 import asyncpg
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from svckit.errors import ApiError
 
 from app import model_catalog
-from app.errors import ApiError
 
 
 class ThresholdsPatch(BaseModel):

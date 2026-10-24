@@ -28,15 +28,16 @@ class Config:
     auth_dev_roles: str
     snapshot_reference: str
     ingest_timeout_s: float
+    snapshot_gzip_level: int
 
     @classmethod
     def from_env(cls) -> Config:
         return cls(
             database_url=os.getenv("DATABASE_URL", "postgresql://churn:churn@postgres:5432/churn"),
-            ingest_url=os.getenv("INGEST_URL", "http://ingest:8002").rstrip("/"),
+            ingest_url=os.getenv("INGEST_URL", "http://ingest:8000").rstrip("/"),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             http_host=os.getenv("HTTP_HOST", "0.0.0.0"),
-            http_port=int(os.getenv("HTTP_PORT", "8003")),
+            http_port=int(os.getenv("HTTP_PORT", "8000")),
             metrics_token=os.getenv("METRICS_TOKEN", "churn-metrics-token"),
             interval_ms=int(os.getenv("SIMULATOR_INTERVAL_MS", "2000")),
             running=_env_bool("SIMULATOR_RUNNING", False),
@@ -48,4 +49,5 @@ class Config:
             # now — опорное время снимка = момент генерации; null — время идёт (as_of = now()).
             snapshot_reference=os.getenv("SNAPSHOT_REFERENCE", "now").strip().lower(),
             ingest_timeout_s=float(os.getenv("INGEST_TIMEOUT_S", "600")),
+            snapshot_gzip_level=int(os.getenv("SNAPSHOT_GZIP_LEVEL", "5")),
         )

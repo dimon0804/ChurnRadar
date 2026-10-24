@@ -217,5 +217,12 @@ def test_to_row_matches_table_columns():
         "model_version",
         "scored_at",
     }
-    assert set(row["detail"]) == {"services", "features", "transactions", "money", "recommendations"}
+    assert set(row["detail"]) == {
+        "services",
+        "features",
+        "transactions",
+        "money",
+        "recommendations",
+        "next_action",
+    }
     assert row["scored_at"] == AS_OF

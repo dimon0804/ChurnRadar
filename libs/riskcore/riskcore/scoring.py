@@ -12,7 +12,7 @@ from typing import Any
 from .base import Feature, Signal
 from .context import AccountContext, ServiceContext, build_account_context, build_service_context
 from .money import format_eur, horizon_revenue
-from .recommendations import build_recommendations
+from .recommendations import action_for, build_recommendations
 from .registry import account_features, service_features
 from .types import (
     GONE_STATUSES,
@@ -81,6 +81,8 @@ class ServiceOutcome:
     probability: float | None
     level: RiskLevel
     hits: tuple[FeatureHit, ...] = ()
+    contract_revenue: float = 0.0
+    revenue_note: str | None = None
 
     @property
     def risk_score(self) -> float | None:
@@ -98,6 +100,8 @@ class ServiceOutcome:
                 "title": hit.signal.explanation,
                 "contribution": 100.0 * hit.contribution,
                 "service_id": s.id,
+                "action": action_for(hit.feature, hit.signal).title,
+                "expected_loss": round(hit.contribution * self.revenue),
             }
             for hit in sorted(self.hits, key=lambda h: h.contribution, reverse=True)
             if 100.0 * hit.contribution > 0
@@ -117,6 +121,8 @@ class ServiceOutcome:
             "risk_level": self.level,
             "reasons": reasons,
             "expected_loss": round(self.expected_loss),
+            "horizon_revenue": round(self.revenue),
+            "revenue_note": self.revenue_note,
         }
 
 
@@ -131,17 +137,25 @@ class FeatureTotal:
     weight: float
     top_hit: FeatureHit
     top_service_id: int | None
+    # На сколько снизится ожидаемая потеря клиента, если причина исчезнет, евроценты.
+    saving: float = 0.0
 
     @property
     def code(self) -> str:
         return self.feature.code
+
+    @property
+    def service_id(self) -> int | None:
+        return self.top_service_id if self.feature.level == "service" else None
 
     def to_reason(self) -> dict[str, Any]:
         return {
             "code": self.code,
             "title": self.top_hit.signal.explanation,
             "contribution": self.points,
-            "service_id": self.top_service_id if self.feature.level == "service" else None,
+            "service_id": self.service_id,
+            "action": action_for(self.feature, self.top_hit.signal).title,
+            "expected_loss": round(self.loss),
         }
 
     def to_api(self) -> dict[str, Any]:
@@ -262,10 +276,24 @@ def _score_service(
         service=ctx.service,
         days_to_expiry=ctx.days_to_expiry,
         monthly_price=ctx.monthly_price,
-        revenue=horizon_revenue(ctx.monthly_price, ctx.horizon_days),
+        revenue=ctx.horizon_revenue,
         probability=probability,
         level=settings.level_for(100.0 * probability),
         hits=hits,
+        contract_revenue=ctx.contract_revenue,
+        revenue_note=_revenue_note(ctx),
+    )
+
+
+def _revenue_note(ctx: ServiceContext) -> str | None:
+    if not ctx.revenue_capped:
+        return None
+    account = ctx.account_ctx
+    return (
+        f"По цене {ctx.service.name} принесла бы {format_eur(ctx.contract_revenue)} "
+        f"за {ctx.horizon_days} дн., но клиент вносит в среднем {format_eur(account.replenishment_rate)} "
+        f"в месяц и держит на балансе {format_eur(account.spendable)}, поэтому в расчёт берём "
+        f"{format_eur(ctx.horizon_revenue)}: больше он заплатить не сможет"
     )
 
 
@@ -293,11 +321,19 @@ def _account_signals(ctx: AccountContext, settings: Settings) -> list[tuple[Feat
     return signals
 
 
+def _saving_share(outcome: ServiceOutcome, removed: FeatureHit) -> float:
+    """На сколько упадёт вероятность непродления услуги без этой причины: p − p(без неё)."""
+    rest = noisy_or(hit.strength for hit in outcome.hits if hit is not removed)
+    return (outcome.probability or 0.0) - rest
+
+
 def _feature_totals(live: Sequence[ServiceOutcome], total_revenue: float) -> list[FeatureTotal]:
     grouped: dict[str, list[tuple[FeatureHit, ServiceOutcome]]] = defaultdict(list)
+    savings: dict[str, float] = defaultdict(float)
     for outcome in live:
         for hit in outcome.hits:
             grouped[hit.feature.code].append((hit, outcome))
+            savings[hit.feature.code] += outcome.revenue * _saving_share(outcome, hit)
 
     totals = []
     for pairs in grouped.values():
@@ -312,6 +348,7 @@ def _feature_totals(live: Sequence[ServiceOutcome], total_revenue: float) -> lis
                 weight=100.0 * top_hit.weight,
                 top_hit=top_hit,
                 top_service_id=top_outcome.service.id,
+                saving=savings[top_hit.feature.code],
             )
         )
     totals.sort(key=lambda t: (-t.points, t.code))
@@ -324,20 +361,26 @@ def _money(
     exposure: float,
     spendable: int,
     horizon_days: int,
+    capped: int = 0,
 ) -> dict[str, Any]:
     coverage: float | None = None
+    revenue = horizon_revenue(monthly_revenue, horizon_days)
     if monthly_revenue <= 0:
         explanation = "Действующих платных услуг нет, терять сейчас нечего."
     else:
         coverage = spendable / (monthly_revenue / 30)
-        revenue = format_eur(horizon_revenue(monthly_revenue, horizon_days))
         explanation = (
-            f"За {horizon_days} дн. клиент приносит {revenue}. "
+            f"За {horizon_days} дн. клиент приносит {format_eur(revenue)}. "
             f"С учётом риска по каждой услуге ожидаем потерять {format_eur(expected_loss)}. "
             f"Денег на балансе хватит примерно на {math.floor(coverage)} дн."
         )
+        if capped:
+            explanation += (
+                f" Выручку {capped} усл. посчитали не по цене, а по тому, сколько клиент способен заплатить."
+            )
     return {
         "monthly_revenue": round(monthly_revenue),
+        "horizon_revenue": round(revenue),
         "exposure": round(exposure),
         "expected_loss": round(expected_loss),
         "balance_coverage_days": None if coverage is None else round(coverage, 1),
@@ -382,7 +425,8 @@ def score_account(
 
     live = [o for o in outcomes if o.probability is not None]
     total_revenue = sum(o.revenue for o in live)
-    monthly = sum(o.monthly_price for o in live)
+    # Месячная выручка — та же собираемая выручка, что и в score, приведённая к 30 дням.
+    monthly = total_revenue * 30 / settings.horizon_days
     expected = sum(o.expected_loss for o in live)
     exposure = sum(o.revenue for o in live if o.level in ("medium", "high"))
     at_risk = sum(1 for o in live if o.level in ("medium", "high"))
@@ -410,12 +454,14 @@ def score_account(
         features = []
 
     recommendations = build_recommendations(totals, unknown_reason[0] if unknown_reason else None)
+    capped = sum(1 for o in live if o.revenue_note is not None)
     detail = {
         "services": [o.to_api() for o in outcomes],
         "features": features,
         "transactions": _transactions_api(ctx.transactions),
-        "money": _money(monthly, expected, exposure, ctx.spendable, settings.horizon_days),
+        "money": _money(monthly, expected, exposure, ctx.spendable, settings.horizon_days, capped),
         "recommendations": [r.to_api() for r in recommendations],
+        "next_action": recommendations[0].to_api() if recommendations else None,
     }
     return CustomerResult(
         customer_id=account.id,

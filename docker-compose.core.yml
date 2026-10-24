@@ -3,6 +3,15 @@
 # Заголовки X-User-* вместо гейтвея подставляет AUTH_DEV_USER (только для локальной проверки).
 name: churnradar-core
 
+# Как в общем compose платформы: корневая ФС только для чтения, запись — только в /tmp, без capabilities.
+x-hardening: &hardening
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+
 x-common-env: &common-env
   DATABASE_URL: postgresql://churn:churn@postgres:5432/churn
   NATS_URL: nats://nats:4222
@@ -13,6 +22,8 @@ x-common-env: &common-env
 services:
   postgres:
     image: postgres:16-alpine
+    # VACUUM и параллельные запросы на 200k клиентов не помещаются в стандартные 64 МБ /dev/shm
+    shm_size: 256m
     environment:
       POSTGRES_USER: churn
       POSTGRES_PASSWORD: churn
@@ -52,6 +63,7 @@ services:
     build:
       context: .
       dockerfile: services/migrate/Dockerfile
+    <<: *hardening
     environment:
       <<: *common-env
     depends_on:
@@ -63,13 +75,17 @@ services:
     build:
       context: .
       dockerfile: services/ingest/Dockerfile
+    <<: *hardening
+    # Пик на снимке: 100k аккаунтов ≈ 1.4 ГБ, 200k ≈ 2.8 ГБ
+    mem_limit: 3500m
+    mem_reservation: 256m
     environment:
       <<: *common-env
       SEED_ON_START: "true"
       SEED_REFERENCE_TIME: "2026-10-19T15:00:00Z"
       AUTH_DEV_USER: ${AUTH_DEV_USER:-admin}
     ports:
-      - "127.0.0.1:8002:8002"
+      - "127.0.0.1:8002:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -80,11 +96,15 @@ services:
     build:
       context: .
       dockerfile: services/scoring/Dockerfile
+    <<: *hardening
+    # Полный пересчёт: 100k ≈ 2 ГБ, 200k ≈ 2.8 ГБ (с пулом процессов)
+    mem_limit: 3500m
+    mem_reservation: 256m
     environment:
       <<: *common-env
       RESCORE_INTERVAL_S: "60"
     ports:
-      - "127.0.0.1:8001:8001"
+      - "127.0.0.1:8001:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -95,9 +115,10 @@ services:
     build:
       context: .
       dockerfile: services/api/Dockerfile
+    <<: *hardening
     environment:
       <<: *common-env
-      SIMULATOR_URL: http://simulator:8003
+      SIMULATOR_URL: http://simulator:8000
       AUTH_DEV_USER: ${AUTH_DEV_USER:-admin}
     ports:
       - "127.0.0.1:8000:8000"
@@ -113,12 +134,16 @@ services:
     build:
       context: .
       dockerfile: services/simulator/Dockerfile
+    <<: *hardening
+    # Генерация 200k держит набор в памяти ≈ 1.8 ГБ
+    mem_limit: 2500m
+    mem_reservation: 256m
     environment:
       <<: *common-env
-      INGEST_URL: http://ingest:8002
+      INGEST_URL: http://ingest:8000
       SNAPSHOT_REFERENCE: ${SNAPSHOT_REFERENCE:-null}
     ports:
-      - "127.0.0.1:8003:8003"
+      - "127.0.0.1:8003:8000"
     depends_on:
       ingest:
         condition: service_healthy

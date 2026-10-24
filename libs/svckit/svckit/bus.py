@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import uuid
 from datetime import UTC, datetime
@@ -10,6 +11,8 @@ from typing import Any
 
 import nats
 import structlog
+from nats.aio.client import Client as NATS
+from nats.js import JetStreamContext
 from nats.js.api import RetentionPolicy, StorageType, StreamConfig
 from nats.js.errors import NotFoundError
 
@@ -31,18 +34,42 @@ def envelope(event_type: str, payload: dict[str, Any], producer: str) -> dict[st
     }
 
 
+async def ensure_stream(js: JetStreamContext, name: str = STREAM_NAME) -> None:
+    """Создаёт стрим, если его ещё нет. Гонку с другим сервисом переживает."""
+    try:
+        await js.stream_info(name)
+        return
+    except NotFoundError:
+        pass
+    try:
+        await js.add_stream(
+            StreamConfig(
+                name=name,
+                subjects=STREAM_SUBJECTS,
+                storage=StorageType.FILE,
+                retention=RetentionPolicy.LIMITS,
+                max_age=STREAM_MAX_AGE_S,
+            )
+        )
+        log.info("nats_stream_created", stream=name)
+    except Exception as exc:
+        # стрим мог создать другой сервис параллельно
+        await js.stream_info(name)
+        log.info("nats_stream_exists", stream=name, note=str(exc))
+
+
 class EventBus:
     def __init__(self, url: str, producer: str) -> None:
         self.url = url
         self.producer = producer
-        self._nc: nats.NATS | None = None
-        self._js = None
+        self._nc: NATS | None = None
+        self._js: JetStreamContext | None = None
         self._ready = asyncio.Event()
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
 
     @property
     def connected(self) -> bool:
-        return self._nc is not None and self._nc.is_connected
+        return self._nc is not None and bool(self._nc.is_connected)
 
     async def start(self, wait_s: float = 0) -> None:
         """Подключение в фоне с повторами; при wait_s > 0 ждём готовности не дольше wait_s."""
@@ -74,34 +101,15 @@ class EventBus:
             except Exception as exc:
                 log.warning("nats_connect_failed", error=str(exc), retry_in=delay)
                 if self._nc is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         await self._nc.close()
-                    except Exception:
-                        pass
                     self._nc = None
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 10.0)
 
     async def ensure_stream(self) -> None:
         assert self._js is not None
-        try:
-            await self._js.stream_info(STREAM_NAME)
-        except NotFoundError:
-            try:
-                await self._js.add_stream(
-                    StreamConfig(
-                        name=STREAM_NAME,
-                        subjects=STREAM_SUBJECTS,
-                        storage=StorageType.FILE,
-                        retention=RetentionPolicy.LIMITS,
-                        max_age=STREAM_MAX_AGE_S,
-                    )
-                )
-                log.info("nats_stream_created", stream=STREAM_NAME)
-            except Exception as exc:
-                # стрим мог создать другой сервис параллельно
-                await self._js.stream_info(STREAM_NAME)
-                log.info("nats_stream_exists", stream=STREAM_NAME, note=str(exc))
+        await ensure_stream(self._js)
 
     async def publish(
         self, subject: str, event_type: str, payload: dict[str, Any], retries: int = 3
@@ -126,12 +134,8 @@ class EventBus:
     async def close(self) -> None:
         if self._task is not None and not self._task.done():
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._task
-            except (asyncio.CancelledError, Exception):
-                pass
         if self._nc is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self._nc.drain()
-            except Exception:
-                pass

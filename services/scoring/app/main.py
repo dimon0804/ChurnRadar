@@ -1,21 +1,22 @@
-"""Точка входа воркера пересчёта: HTTP /healthz и /metrics на 8001 + потребитель NATS."""
+"""Точка входа воркера пересчёта: HTTP /healthz, /readyz и /metrics на HTTP_PORT (8000) + потребитель NATS."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import hmac
 import signal
 
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from svckit.db import db_ready
+from svckit.health import install_probes
+from svckit.logs import configure_logging, get_logger
+from svckit.metrics import METRICS_TOKEN_MESSAGE, bearer_token_valid, render
 
 from . import repository as repo
 from .config import Config
 from .engine import Scorer
-from .logs import get_logger, setup_logging
 from .worker import Worker
 
 log = get_logger("scoring")
@@ -31,30 +32,28 @@ class State:
 def create_http_app(config: Config, state: State) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
-    @app.get("/healthz")
-    async def healthz() -> JSONResponse:
-        checks = {"database": False, "nats": False}
-        if state.pool is not None:
-            with contextlib.suppress(Exception):
-                async with state.pool.acquire(timeout=2) as conn:
-                    await conn.fetchval("SELECT 1", timeout=2)
-                checks["database"] = True
-        checks["nats"] = state.worker is not None and state.worker.nats_connected
-        ok = all(checks.values()) and state.ready
-        return JSONResponse({"status": "ok" if ok else "starting" if not state.ready else "degraded", **checks},
-                            status_code=200 if ok else 503)
+    async def readiness(_: Request) -> dict[str, bool]:
+        worker = state.worker
+        return {
+            "database": await db_ready(state.pool),
+            "nats": worker is not None and worker.nats_connected,
+            "consumer": worker is not None and worker.subscribed,
+            # первый полный пересчёт после старта завершён
+            "initial_scoring": state.ready,
+        }
+
+    install_probes(app, readiness)
 
     @app.get("/metrics")
     async def metrics(request: Request) -> Response:
-        if config.metrics_token:
-            header = request.headers.get("authorization", "")
-            expected = f"Bearer {config.metrics_token}"
-            if not hmac.compare_digest(header.encode(), expected.encode()):
-                return JSONResponse(
-                    {"error": {"code": "unauthorized", "message": "Нужен токен сборщика метрик", "details": None}},
-                    status_code=401,
-                )
-        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+        if config.metrics_token and not bearer_token_valid(
+            request.headers.get("authorization"), config.metrics_token, exact=True
+        ):
+            return JSONResponse(
+                {"error": {"code": "unauthorized", "message": METRICS_TOKEN_MESSAGE, "details": None}},
+                status_code=401,
+            )
+        return render()
 
     return app
 
@@ -73,7 +72,7 @@ async def _connect_with_retry(coro_factory, what: str, attempts: int = 60):  # t
 
 async def run() -> None:
     config = Config.from_env()
-    setup_logging(config.log_level)
+    configure_logging(config.log_level, event_key="event", force=False)
     state = State()
 
     server = uvicorn.Server(

@@ -6,6 +6,8 @@ from ..registry import register
 from ..text import format_days, format_eur
 from ..types import PROLONG_WAIT_GRACE
 
+BASE_STRENGTH = 0.6
+
 
 @register
 class ProlongWait(ServiceFeature):
@@ -13,7 +15,9 @@ class ProlongWait(ServiceFeature):
     title = "Ждёт оплаты"
     description = (
         "Услуга в статусе «Ожидает оплаты»: через 5 дней после окончания срока её удалят. "
-        "Сила 1.0, если денег на балансе не хватает на продление, иначе 0.6."
+        "Сила 0.6. Если автопродление выключено и на балансе не хватает на оплату, сила 1.0. "
+        "При включённом автопродлении нехватку денег учитывает признак «Не хватит денег на продление», "
+        "чтобы один и тот же пустой баланс не считался дважды."
     )
     group = "renewal"
     default_weight = 85.0
@@ -25,35 +29,45 @@ class ProlongWait(ServiceFeature):
         deletion_at = service.expires_at + PROLONG_WAIT_GRACE
         days_left = (deletion_at - ctx.as_of).total_seconds() / SECONDS_PER_DAY
         shortfall = max(0, service.price - ctx.funds.spendable)
+        # С автопродлением деньги на эту услугу уже входят в график продлений клиента,
+        # и их нехватку оценивает insufficient_funds.
+        money_counted_here = ctx.renewal is None
         when = (
             f"до удаления ~{format_days(days_left)}"
             if days_left > 0
             else "срок ожидания вышел, удалить могут в любой момент"
         )
-        money = (
-            f"на балансе не хватает {format_eur(shortfall)}"
-            if shortfall
-            else "деньги на балансе есть, но оплата не прошла"
-        )
+        if shortfall:
+            money = f"на балансе не хватает {format_eur(shortfall)}"
+        elif service.auto_prolong:
+            money = "деньги на балансе есть, но автосписание не прошло"
+        else:
+            money = "деньги на балансе есть, автопродление выключено"
+        value = 1.0 if shortfall and money_counted_here else BASE_STRENGTH
         return Signal(
-            value=1.0 if shortfall else 0.6,
+            value=value,
             explanation=f"Услуга {service.name} ждёт оплаты, {when}, {money}",
             facts={
                 "service": service.name,
                 "days_left": format_days(days_left) if days_left > 0 else "",
                 "shortfall": format_eur(shortfall) if shortfall else "",
+                "spendable": format_eur(ctx.funds.spendable),
             },
         )
 
     def recommend(self, signal: Signal) -> Recommendation:
-        shortfall = signal.facts.get("shortfall")
-        detail = "Предложить оплатить сейчас или разбить платёж на части."
-        if shortfall:
-            detail = f"Не хватает {shortfall}. {detail}"
         days_left = signal.facts.get("days_left")
-        when = f"через {days_left}" if days_left else "в любой момент"
+        when = f"удалят через {days_left}" if days_left else "могут удалить в любой момент"
+        shortfall = signal.facts.get("shortfall")
+        if shortfall:
+            detail = f"Не хватает {shortfall}: предложить промокод на эту сумму или оплату частями."
+        else:
+            detail = (
+                f"На балансе {signal.facts.get('spendable', '')}, но оплата не прошла: "
+                "помочь оплатить вручную или проверить карту."
+            )
         return Recommendation(
             code=self.code,
-            title=f"Позвонить или написать: {signal.facts['service']} удалят {when}",
+            title=f"Срочный звонок: {signal.facts['service']} {when}",
             detail=detail,
         )

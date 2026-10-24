@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertCircle, ArrowRight, Eye, EyeOff, KeyRound, Loader2, Moon, Sun } from 'lucide-react'
+import { AlertCircle, ArrowRight, Eye, EyeOff, KeyRound, Loader2, Moon, ShieldCheck, Sun } from 'lucide-react'
 import { useEffect, useId, useState, type FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { z } from 'zod'
@@ -41,7 +41,7 @@ function withNext(url: string, next: string): string {
 const SSO_ERRORS: Record<string, string> = {
   oidc_failed: 'Не удалось войти через SSO. Попробуйте ещё раз или войдите по логину и паролю.',
   oidc_denied: 'Вход через SSO отменён.',
-  forbidden: 'У этой учётной записи нет доступа к панели.',
+  forbidden: 'У этой учётной записи нет доступа к панели: её нет ни в одной группе ChurnRadar у провайдера входа.',
 }
 
 export function LoginPage() {
@@ -123,7 +123,21 @@ export function LoginPage() {
     login.mutate(parsed.data)
   }
 
+  // кнопка SSO есть, только если провайдер настроен и прямо сейчас отвечает
   const oidc = providers.data?.oidc
+  const saml = providers.data?.saml
+  const ssoButtons = [
+    oidc?.enabled && {
+      key: 'oidc',
+      url: oidc.login_url || '/api/v1/auth/oidc/login',
+      label: oidc.display_name?.trim() || 'Войти через SSO (OIDC)',
+    },
+    saml?.enabled && {
+      key: 'saml',
+      url: saml.login_url || '/api/v1/auth/saml/login',
+      label: saml.display_name?.trim() || 'Войти через SSO (SAML)',
+    },
+  ].filter((b): b is { key: string; url: string; label: string } => Boolean(b))
   const ssoError = params.get('error')
   const ssoErrorText = ssoError ? (SSO_ERRORS[ssoError] ?? SSO_ERRORS.oidc_failed) : null
   const formError = login.isError ? loginErrorText(login.error, retryLeft) : ssoErrorText
@@ -210,19 +224,23 @@ export function LoginPage() {
             </Button>
           </form>
 
-          {oidc?.enabled && (
+          {ssoButtons.length > 0 && (
             <>
               <div className="my-6 flex items-center gap-3 text-xs text-subtle-foreground">
                 <div className="h-px flex-1 bg-border" />
                 или
                 <div className="h-px flex-1 bg-border" />
               </div>
-              <Button asChild variant="outline" size="lg" className="w-full">
-                <a href={withNext(oidc.login_url || '/api/v1/auth/oidc/login', next)}>
-                  <KeyRound />
-                  {oidc.display_name?.trim() || 'Войти через SSO'}
-                </a>
-              </Button>
+              <div className="space-y-2.5">
+                {ssoButtons.map((sso) => (
+                  <Button key={sso.key} asChild variant="outline" size="lg" className="w-full">
+                    <a href={withNext(sso.url, next)}>
+                      {sso.key === 'saml' ? <ShieldCheck /> : <KeyRound />}
+                      {sso.label}
+                    </a>
+                  </Button>
+                ))}
+              </div>
             </>
           )}
         </div>

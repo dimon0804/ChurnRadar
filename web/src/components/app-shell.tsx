@@ -115,7 +115,8 @@ function UserMenu() {
   const role = admin ? ROLE_LABEL.admin : ROLE_LABEL.analyst
   const access = admin ? 'полный доступ' : 'только просмотр'
   // «Администратор / Администратор» — когда имя совпадает с ролью; вторая строка — логин и права
-  const caption = `${user.auth_method === 'oidc' ? 'SSO' : user.username} · ${access}`
+  const via = user.auth_method === 'oidc' ? 'SSO' : user.auth_method === 'saml' ? 'SAML' : user.username
+  const caption = `${via} · ${access}`
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>

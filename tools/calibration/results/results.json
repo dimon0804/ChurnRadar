@@ -9,8 +9,8 @@
     "concentration": 8.0,
     "bootstrap": 200,
     "riskcore_version": "1.0.0",
-    "riskcore_sources": "8d4a86974bd8",
-    "simulator_sources": "3b9616ea2ac7",
+    "riskcore_sources": "40f8d2243edd",
+    "simulator_sources": "530c4ad01846",
     "weights": {
       "prolong_wait": 85.0,
       "autoprolong_off_expiring": 60.0,
@@ -21,7 +21,10 @@
       "churn_history": 40.0,
       "inactivity": 20.0,
       "bonus_dependency": 15.0,
-      "withdraw_pressure": 10.0
+      "withdraw_pressure": 10.0,
+      "cancel_page_views": 45.0,
+      "panel_absence": 25.0,
+      "web_activity_drop": 20.0
     },
     "thresholds": {
       "medium": 35.0,
@@ -2014,7 +2017,7 @@
       }
     }
   },
-  "elapsed_s": 58.9,
+  "elapsed_s": 27.0,
   "robustness": [
     {
       "label": "seed 42 (основной)",

@@ -107,6 +107,13 @@ export const FEATURES: Feature[] = [
     target: { kind: 'step', step: 'contact-today' },
   },
   {
+    id: 'playbooks',
+    title: 'Сценарии удержания с контрольной группой',
+    extra: true,
+    detail: '«Если — то» после каждого пересчёта: письмо, статус, уведомление. Лимиты и симуляция, контроль по хешу id и эффект с 95% интервалом.',
+    target: { kind: 'step', step: 'playbooks' },
+  },
+  {
     id: 'marketing',
     title: 'Маркетинговые метрики',
     extra: true,

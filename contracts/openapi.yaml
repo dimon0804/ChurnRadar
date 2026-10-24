@@ -25,6 +25,8 @@ tags:
     description: С кем связаться сегодня и отметки работы с клиентом
   - name: mail
     description: Письма клиентам, шаблоны, рассылки и их эффективность
+  - name: playbooks
+    description: Сценарии удержания с контрольной группой и оценкой эффекта
   - name: analytics
     description: Сводные показатели и денежная оценка
   - name: model
@@ -780,6 +782,194 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MailStats' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/playbooks:
+    get:
+      tags: [playbooks]
+      summary: Сценарии удержания, готовые шаблоны сценариев и причины риска для условий
+      operationId: listPlaybooks
+      responses:
+        '200':
+          description: Сценарии
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlaybookList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [playbooks]
+      summary: Создать сценарий (только admin)
+      description: |
+        Включённый сценарий срабатывает после каждого пересчёта оценок. В режиме simulation
+        он только записывает в журнал, кого бы задел; в режиме live выполняет действия.
+      operationId: createPlaybook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlaybookInput' }
+      responses:
+        '201':
+          description: Сценарий создан
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Playbook' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/playbooks/preview:
+    post:
+      tags: [playbooks]
+      summary: Кого правило заденет сейчас и сколько из них уйдёт в контроль
+      description: |
+        Ничего не выполняет и не записывает. С playbook_id учитываются дневной лимит и пауза
+        «не чаще раза в K дней» по уже сработавшим клиентам этого сценария.
+      operationId: previewPlaybook
+      parameters:
+        - { name: playbook_id, in: query, schema: { type: integer, format: int64, minimum: 1 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlaybookInput' }
+      responses:
+        '200':
+          description: Предпросмотр
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlaybookPreview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/playbooks/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      tags: [playbooks]
+      summary: Сценарий
+      operationId: getPlaybook
+      responses:
+        '200':
+          description: Сценарий
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Playbook' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [playbooks]
+      summary: Изменить сценарий, включить или выключить (только admin)
+      operationId: updatePlaybook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlaybookInput' }
+      responses:
+        '200':
+          description: Сценарий сохранён
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Playbook' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [playbooks]
+      summary: Удалить сценарий вместе с журналом (только admin)
+      description: Отправленные письма остаются в истории писем клиента.
+      operationId: deletePlaybook
+      responses:
+        '204': { description: Удалён }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/playbooks/{id}/run:
+    post:
+      tags: [playbooks]
+      summary: Запустить сценарий сейчас, не дожидаясь пересчёта (только admin)
+      description: Соблюдает режим, дневной лимит и паузу на клиента. Выключенный сценарий тоже можно запустить.
+      operationId: runPlaybook
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '200':
+          description: Итог запуска
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlaybookRunResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/playbooks/{id}/runs:
+    get:
+      tags: [playbooks]
+      summary: Журнал запусков сценария
+      operationId: listPlaybookRuns
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+      responses:
+        '200':
+          description: Запуски от новых к старым
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PlaybookRun' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/playbooks/{id}/hits:
+    get:
+      tags: [playbooks]
+      summary: Клиенты, попавшие под сценарий, с группой и итогом действий
+      operationId: listPlaybookHits
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
+      responses:
+        '200':
+          description: Срабатывания от новых к старым
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PlaybookHit' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/playbooks/{id}/uplift:
+    get:
+      tags: [playbooks]
+      summary: Эффект сценария — затронутые против контрольной группы
+      description: |
+        Для каждого окна (0, 7, 14, 30 дней) берутся клиенты, сработавшие не меньше N дней назад
+        (по первому срабатыванию), и их состояние сейчас сравнивается с моментом срабатывания.
+        diff — разница долей «затронутые минус контроль», ci_low..ci_high — 95% интервал
+        Агрести — Каффо. Если в группе меньше min_group клиентов, verdict = few_data.
+      operationId: getPlaybookUplift
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '200':
+          description: Эффект по окнам
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlaybookUplift' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/analytics/summary:
     get:
@@ -1852,6 +2042,242 @@ components:
         topped_up: { type: integer }
         helped: { type: integer, description: 'risk_down или topped_up' }
         helped_share: { type: [number, 'null'], minimum: 0, maximum: 1 }
+
+    PlaybookConditions:
+      type: object
+      additionalProperties: false
+      description: Заданные условия должны выполняться все сразу; хотя бы одно обязательно.
+      properties:
+        risk_levels:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/RiskLevel' }
+        became_high: { type: boolean, description: 'Уровень стал high с прошлого пересчёта' }
+        main_reason: { type: string, description: 'Код главной причины риска', examples: [insufficient_funds] }
+        min_expected_loss: { type: integer, minimum: 0, description: 'Ожидаемая потеря не меньше, евроценты' }
+        no_email_days: { type: integer, minimum: 1, maximum: 365, description: 'Клиенту не писали столько дней' }
+        min_mrr: { type: integer, minimum: 0, description: 'Месячная выручка от, евроценты' }
+        max_mrr: { type: integer, minimum: 0, description: 'Месячная выручка до, евроценты' }
+        autoprolong_off: { type: boolean, description: 'У действующей услуги выключено автопродление' }
+        expires_within_days: { type: integer, minimum: 0, maximum: 90, description: 'Ближайшее списание не позже чем через N дней' }
+
+    PlaybookAction:
+      type: object
+      required: [type]
+      description: |
+        email — письмо по шаблону (template_code null — по главной причине клиента) через очередь рассылки;
+        status — поставить статус (snoozed на days дней или resolved);
+        notify — уведомление пользователю панели username в колокольчик, одно на запуск.
+      properties:
+        type: { type: string, enum: [email, status, notify] }
+        template_code: { type: [string, 'null'] }
+        status: { type: string, enum: [snoozed, resolved] }
+        days: { type: integer, minimum: 1, maximum: 365 }
+        username: { type: string, minLength: 1, maxLength: 64 }
+
+    PlaybookInput:
+      type: object
+      additionalProperties: false
+      required: [name, conditions, actions]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: [string, 'null'], maxLength: 500 }
+        enabled: { type: boolean, default: false }
+        mode: { type: string, enum: [simulation, live], default: simulation }
+        conditions: { $ref: '#/components/schemas/PlaybookConditions' }
+        actions:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items: { $ref: '#/components/schemas/PlaybookAction' }
+        control_share: { type: number, minimum: 0, maximum: 0.5, default: 0.2, description: 'Доля контрольной группы' }
+        max_per_day: { type: integer, minimum: 1, maximum: 5000, default: 50, description: 'Сколько клиентов в день получают действие' }
+        cooldown_days: { type: integer, minimum: 1, maximum: 365, default: 14, description: 'Не чаще раза в K дней на клиента' }
+        preset: { type: [string, 'null'], description: 'Код готового сценария, из которого создан' }
+
+    Playbook:
+      type: object
+      required: [id, name, description, enabled, mode, conditions, actions, control_share, max_per_day, cooldown_days, preset, created_at, created_by, updated_at, updated_by, last_run_at, stats]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        enabled: { type: boolean }
+        mode: { type: string, enum: [simulation, live] }
+        conditions: { $ref: '#/components/schemas/PlaybookConditions' }
+        actions:
+          type: array
+          items: { $ref: '#/components/schemas/PlaybookAction' }
+        control_share: { type: number }
+        max_per_day: { type: integer }
+        cooldown_days: { type: integer }
+        preset: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        created_by: { type: [string, 'null'] }
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: [string, 'null'] }
+        last_run_at: { type: [string, 'null'], format: date-time }
+        stats:
+          type: object
+          required: [treated, control, emails]
+          properties:
+            treated: { type: integer }
+            control: { type: integer }
+            emails: { type: integer }
+
+    PlaybookPreset:
+      type: object
+      required: [code, name, description, conditions, actions]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        description: { type: string }
+        conditions: { $ref: '#/components/schemas/PlaybookConditions' }
+        actions:
+          type: array
+          items: { $ref: '#/components/schemas/PlaybookAction' }
+
+    PlaybookList:
+      type: object
+      required: [items, presets, reasons, mail_enabled]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Playbook' }
+        presets:
+          type: array
+          items: { $ref: '#/components/schemas/PlaybookPreset' }
+        reasons:
+          type: array
+          items:
+            type: object
+            required: [code, title]
+            properties:
+              code: { type: string }
+              title: { type: string }
+        mail_enabled: { type: boolean, description: 'Настроен ли SMTP: без него действие «письмо» пропускается' }
+
+    PlaybookSample:
+      type: object
+      required: [customer_id, email, risk_level, expected_loss, main_reason, group]
+      properties:
+        customer_id: { type: integer, format: int64 }
+        email: { type: string }
+        risk_level: { $ref: '#/components/schemas/RiskLevel' }
+        expected_loss: { type: integer }
+        main_reason: { type: [string, 'null'] }
+        group: { type: string, enum: [treated, control] }
+
+    PlaybookPreview:
+      type: object
+      required: [matched, treated, control, skipped_cooldown, skipped_limit, skipped_no_email, sample, levels_ready]
+      properties:
+        matched: { type: integer, description: 'Подходят под условия' }
+        treated: { type: integer, description: 'Получат действие' }
+        control: { type: integer, description: 'В контрольной группе: учитываются, но действие не выполняется' }
+        skipped_cooldown: { type: integer, description: 'Сценарий уже срабатывал на них за cooldown_days' }
+        skipped_limit: { type: integer, description: 'Не вошли в дневной лимит' }
+        skipped_no_email: { type: integer }
+        sample:
+          type: array
+          description: 'До 20 клиентов с наибольшей ожидаемой потерей'
+          items: { $ref: '#/components/schemas/PlaybookSample' }
+        levels_ready: { type: boolean, description: 'false — уровни с прошлого пересчёта ещё не запомнены, «стал high» пока не сработает' }
+
+    PlaybookRunResult:
+      type: object
+      required: [run_id, mode, emails, matched, treated, control, skipped_cooldown, skipped_limit, skipped_no_email, sample]
+      properties:
+        run_id: { type: [integer, 'null'], format: int64 }
+        mode: { type: string, enum: [simulation, live] }
+        emails: { type: integer, description: 'Писем поставлено в очередь' }
+        matched: { type: integer }
+        treated: { type: integer }
+        control: { type: integer }
+        skipped_cooldown: { type: integer }
+        skipped_limit: { type: integer }
+        skipped_no_email: { type: integer }
+        sample:
+          type: array
+          items: { $ref: '#/components/schemas/PlaybookSample' }
+
+    PlaybookRun:
+      type: object
+      required: [id, cause, mode, matched, treated, control, skipped_cooldown, skipped_limit, skipped_no_email, emails, created_at, created_by]
+      properties:
+        id: { type: integer, format: int64 }
+        cause: { type: string, enum: [scores, manual], description: 'scores — после пересчёта, manual — из панели' }
+        mode: { type: string, enum: [simulation, live] }
+        matched: { type: integer }
+        treated: { type: integer }
+        control: { type: integer }
+        skipped_cooldown: { type: integer }
+        skipped_limit: { type: integer }
+        skipped_no_email: { type: integer }
+        emails: { type: integer }
+        created_at: { type: string, format: date-time }
+        created_by: { type: [string, 'null'] }
+
+    PlaybookHit:
+      type: object
+      required: [id, run_id, customer_id, email, group, risk_level, expected_loss, actions, email_id, email_status, hit_at]
+      properties:
+        id: { type: integer, format: int64 }
+        run_id: { type: integer, format: int64 }
+        customer_id: { type: integer, format: int64 }
+        email: { type: [string, 'null'] }
+        group: { type: string, enum: [treated, control] }
+        risk_level: { $ref: '#/components/schemas/RiskLevel' }
+        expected_loss: { type: integer, description: 'На момент срабатывания, евроценты' }
+        actions:
+          type: array
+          items:
+            type: object
+            required: [type, result]
+            properties:
+              type: { type: string, enum: [email, status, notify] }
+              result: { type: string, description: 'queued, done, mail_disabled, no_email, not_found' }
+        email_id: { type: [integer, 'null'], format: int64 }
+        email_status: { type: [string, 'null'], description: 'queued, sending, sent, failed' }
+        hit_at: { type: string, format: date-time }
+
+    PlaybookUpliftMetric:
+      type: object
+      required: [code, title, treated, control, treated_share, control_share, diff, ci_low, ci_high, verdict]
+      properties:
+        code: { type: string, enum: [retained, risk_down, topped_up] }
+        title: { type: string }
+        treated: { type: integer }
+        control: { type: integer }
+        treated_share: { type: [number, 'null'] }
+        control_share: { type: [number, 'null'] }
+        diff: { type: [number, 'null'] }
+        ci_low: { type: [number, 'null'] }
+        ci_high: { type: [number, 'null'] }
+        verdict: { type: string, enum: [few_data, better, worse, no_effect] }
+
+    PlaybookUpliftWindow:
+      type: object
+      required: [days, treated_n, control_n, enough, metrics, summary]
+      properties:
+        days: { type: integer, description: '0, 7, 14 или 30' }
+        treated_n: { type: integer }
+        control_n: { type: integer }
+        enough: { type: boolean }
+        metrics:
+          type: array
+          items: { $ref: '#/components/schemas/PlaybookUpliftMetric' }
+        summary: { type: string, description: 'Вывод одной фразой' }
+
+    PlaybookUplift:
+      type: object
+      required: [playbook_id, min_group, windows]
+      properties:
+        playbook_id: { type: integer, format: int64 }
+        min_group: { type: integer, description: 'Меньше стольких клиентов в группе — мало данных' }
+        windows:
+          type: array
+          items: { $ref: '#/components/schemas/PlaybookUpliftWindow' }
 
     ServiceRisk:
       type: object

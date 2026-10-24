@@ -15,6 +15,7 @@ const CustomerSheet = lazy(() => import('@/pages/customer-detail'))
 const ModelPage = lazy(() => import('@/pages/model'))
 const DataPage = lazy(() => import('@/pages/data'))
 const MailPage = lazy(() => import('@/pages/mail'))
+const PlaybooksPage = lazy(() => import('@/pages/playbooks'))
 const ModelQualityPage = lazy(() => import('@/pages/model-quality'))
 const MarketingPage = lazy(() => import('@/pages/marketing'))
 const NotificationsPage = lazy(() => import('@/pages/notifications'))
@@ -134,6 +135,14 @@ export const router = createBrowserRouter([
         element: (
           <Lazy>
             <NotificationsPage />
+          </Lazy>
+        ),
+      },
+      {
+        path: 'playbooks',
+        element: (
+          <Lazy>
+            <PlaybooksPage />
           </Lazy>
         ),
       },

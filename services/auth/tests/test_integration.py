@@ -59,7 +59,7 @@ async def app_client():
     app = create_app(settings, redis=redis, http=upstream)
     async with LifespanManager(app):
         pool = app.state.ctx.repo.pool
-        await pool.execute("DELETE FROM auth.users WHERE username NOT IN ('admin', 'analyst')")
+        await pool.execute("DELETE FROM auth.users WHERE username NOT IN ('admin', 'marketer', 'analyst')")
         await pool.execute("UPDATE auth.users SET is_active = true, email = NULL")
         await pool.execute("TRUNCATE auth.audit_log")
         transport = httpx.ASGITransport(app=app, client=("10.0.0.7", 5000))
@@ -131,3 +131,19 @@ async def test_pending_sso_user_in_postgres(app_client):
     assert resp.json()["user"]["source"] == "sso"
     claimed = await sso_sign_in(st.repo, "oidc", "it-sub-2", "it-pending", "Ждал", None, [])
     assert claimed.provider == "oidc" and claimed.subject == "it-sub-2" and claimed.roles == ["analyst"]
+
+
+async def test_three_roles_in_postgres(app_client):
+    c, st = app_client
+    # сид маркетолога и роль marketer проходят ограничение users_roles_check (миграция 0004)
+    resp = await login(c, "marketer", "marketer")
+    assert resp.status_code == 200 and resp.json()["roles"] == ["marketer"]
+    c.cookies.clear()
+    await login(c, "admin", "admin")
+    analyst = next(u for u in (await c.get("/api/v1/auth/users")).json()["items"] if u["username"] == "analyst")
+    promoted = await c.patch(f"/api/v1/auth/users/{analyst['id']}", json={"role": "marketer"}, headers=H)
+    assert promoted.json()["user"]["role"] == "marketer"
+    back = await c.patch(f"/api/v1/auth/users/{analyst['id']}", json={"role": "analyst"}, headers=H)
+    assert back.json()["user"]["role"] == "analyst"
+    with pytest.raises(Exception):  # noqa: B017 — любая ошибка ограничения базы
+        await st.repo.update_user(analyst["id"], roles=["boss"])

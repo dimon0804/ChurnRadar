@@ -156,8 +156,8 @@ function PasswordCard() {
 }
 
 export default function ProfilePage() {
-  const { user } = useAuth()
-  const role = user.roles.includes('admin') ? ROLE_LABEL.admin : ROLE_LABEL.analyst
+  const { user, role: topRole } = useAuth()
+  const role = ROLE_LABEL[topRole]
   return (
     <>
       <PageHeader title="Профиль" description={`${user.display_name} · ${user.username} · ${role}, вход через ${METHOD_LABEL[user.auth_method]}`} />

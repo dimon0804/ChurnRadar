@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from . import permissions
 from .accounts import SsoDenied, clean_email, sso_sign_in
 from .config import Settings, get_settings
 from .observability import LOGINS, VERIFY, RequestContextMiddleware, request_id_var, setup_logging
@@ -40,7 +41,6 @@ from .users_api import register_user_routes
 log = logging.getLogger("auth")
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-ADMIN_ONLY_PREFIXES = ("/api/v1/model", "/api/v1/source", "/api/v1/simulator")
 
 hasher = PasswordHasher()
 # verified against when the username is unknown, so response time does not reveal valid logins
@@ -104,6 +104,8 @@ class EmailCache:
 async def seed_users(state: State) -> None:
     s = state.settings
     seeds = [(s.admin_username, s.admin_password, "Администратор", ["admin"])]
+    if s.marketer_username:
+        seeds.append((s.marketer_username, s.marketer_password, "Маркетолог", ["marketer"]))
     if s.analyst_username:
         seeds.append((s.analyst_username, s.analyst_password, "Аналитик", ["analyst"]))
     for username, password, display, roles in seeds:
@@ -483,9 +485,10 @@ def create_app(
             if kind == "cookie" and not same_origin(request):
                 VERIFY.labels("csrf").inc()
                 return error_response(403, "csrf_rejected", "Запрос пришёл с чужого сайта")
-            if path.startswith(ADMIN_ONLY_PREFIXES) and "admin" not in session.roles:
+            ok, need = permissions.allowed(session.roles, method, path)
+            if not ok:
                 VERIFY.labels("forbidden").inc()
-                return error_response(403, "forbidden", "Это действие доступно только администратору")
+                return error_response(403, "forbidden", permissions.ROLE_FORBIDDEN_MESSAGES[need])
 
         VERIFY.labels("ok").inc()
         return Response(

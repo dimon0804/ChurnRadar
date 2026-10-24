@@ -47,10 +47,39 @@ const SOURCE_LABEL: Record<ManagedUser['source'], string> = {
   sso: 'SSO, ещё не входил',
 }
 
+type PanelRole = 'admin' | 'marketer' | 'analyst'
+
 const ROLE_OPTIONS = [
   { value: 'analyst', label: ROLE_LABEL.analyst },
+  { value: 'marketer', label: ROLE_LABEL.marketer },
   { value: 'admin', label: ROLE_LABEL.admin },
 ]
+
+/** Что даёт роль — под выбором роли в диалогах. */
+const ROLE_HINT: Record<PanelRole, string> = {
+  analyst: 'Смотрит всё и выгружает CSV, настраивает свои уведомления. Клиентам не пишет и ничего не меняет.',
+  marketer:
+    'Работает с клиентами: письма, рассылки, отметки «связались, решено, отложить». Шаблоны писем видит, но не правит. Модель, данные и пользователи ему недоступны.',
+  admin: 'Всё, что может маркетолог, плюс модель, данные, шаблоны писем, CAC и маржа, пользователи.',
+}
+
+function RoleField({ value, onChange }: { value: PanelRole; onChange: (role: PanelRole) => void }) {
+  return (
+    <div className="space-y-1.5">
+      <Label>Роль</Label>
+      <Select
+        value={value}
+        onValueChange={(v) => onChange(v as PanelRole)}
+        options={ROLE_OPTIONS}
+        ariaLabel="Роль"
+        className="h-9 w-full"
+      />
+      <p className="text-xs leading-5 text-muted-foreground" data-testid="role-hint">
+        {ROLE_HINT[value]}
+      </p>
+    </div>
+  )
+}
 
 const AUDIT_LABEL: Record<string, string> = {
   'user.create': 'создал пользователя',
@@ -160,7 +189,7 @@ function CreateDialog({
   const [username, setUsername] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [email, setEmail] = useState('')
-  const [role, setRole] = useState<'admin' | 'analyst'>('analyst')
+  const [role, setRole] = useState<PanelRole>('analyst')
   const [mode, setMode] = useState<PasswordMode>('generate')
   const [password, setPassword] = useState('')
 
@@ -210,7 +239,7 @@ function CreateDialog({
         onOpenChange(next)
       }}
       title="Новый пользователь"
-      description="Аналитик видит всё, но ничего не меняет. Администратор управляет моделью, данными и пользователями."
+      description="Выберите роль: от неё зависит, что человек сможет делать в панели."
       footer={
         <>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -242,16 +271,7 @@ function CreateDialog({
         <Field id={ids.email} label="Email" hint="Сюда придут уведомления. Можно оставить пустым.">
           <Input id={ids.email} type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="off" />
         </Field>
-        <div className="space-y-1.5">
-          <Label>Роль</Label>
-          <Select
-            value={role}
-            onValueChange={(v) => setRole(v as 'admin' | 'analyst')}
-            options={ROLE_OPTIONS}
-            ariaLabel="Роль"
-            className="h-9 w-full"
-          />
-        </div>
+        <RoleField value={role} onChange={setRole} />
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium">Как будет входить</legend>
           <div role="radiogroup" aria-label="Как будет входить" className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
@@ -304,7 +324,7 @@ function EditUserForm({ user, onClose, isSelf }: { user: ManagedUser; onClose: (
   const ids = { name: useId(), email: useId(), status: useId(), form: useId() }
   const [displayName, setDisplayName] = useState(user.display_name)
   const [email, setEmail] = useState(user.email ?? '')
-  const [role, setRole] = useState<'admin' | 'analyst'>(user.role)
+  const [role, setRole] = useState<PanelRole>(user.role)
   const [active, setActive] = useState(user.status === 'active')
 
   const save = useMutation({
@@ -361,20 +381,14 @@ function EditUserForm({ user, onClose, isSelf }: { user: ManagedUser; onClose: (
         <Field id={ids.email} label="Email">
           <Input id={ids.email} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </Field>
-        <div className="space-y-1.5">
-          <Label>Роль</Label>
-          {isSelf ? (
-            <p className="text-sm text-muted-foreground">{user ? ROLE_LABEL[user.role] : ''}</p>
-          ) : (
-            <Select
-              value={role}
-              onValueChange={(v) => setRole(v as 'admin' | 'analyst')}
-              options={ROLE_OPTIONS}
-              ariaLabel="Роль"
-              className="h-9 w-full"
-            />
-          )}
-        </div>
+        {isSelf ? (
+          <div className="space-y-1.5">
+            <Label>Роль</Label>
+            <p className="text-sm text-muted-foreground">{ROLE_LABEL[user.role]}</p>
+          </div>
+        ) : (
+          <RoleField value={role} onChange={setRole} />
+        )}
         {!isSelf && (
           <div className="flex items-center justify-between gap-4 rounded-lg border border-border px-3.5 py-3">
             <div>
@@ -545,7 +559,7 @@ function AuditLog() {
               <span className="text-muted-foreground">{AUDIT_LABEL[e.action] ?? e.action}</span>
               {e.target && e.target !== e.actor && <span className="font-medium">{e.target}</span>}
               {e.action === 'user.role' && typeof e.details.role === 'string' && (
-                <span className="text-muted-foreground">→ {ROLE_LABEL[e.details.role as 'admin' | 'analyst'] ?? e.details.role}</span>
+                <span className="text-muted-foreground">→ {ROLE_LABEL[e.details.role as PanelRole] ?? e.details.role}</span>
               )}
             </li>
           ))}

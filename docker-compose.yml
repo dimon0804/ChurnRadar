@@ -144,6 +144,8 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      MARKETER_USERNAME: ${MARKETER_USERNAME:-marketer}
+      MARKETER_PASSWORD: ${MARKETER_PASSWORD:-marketer}
       ANALYST_USERNAME: ${ANALYST_USERNAME:-analyst}
       ANALYST_PASSWORD: ${ANALYST_PASSWORD:-analyst}
       # SSO: кнопки на /login появляются, только когда IdP отвечает (профиль sso поднимает Authentik)
@@ -159,6 +161,7 @@ services:
       SAML_IDP_PUBLIC_URL: ${SAML_IDP_PUBLIC_URL:-http://localhost:9000}
       SAML_DISPLAY_NAME: ${SAML_DISPLAY_NAME:-Войти через Authentik (SAML)}
       SSO_ADMIN_GROUPS: ${SSO_ADMIN_GROUPS:-churn-admins}
+      SSO_MARKETER_GROUPS: ${SSO_MARKETER_GROUPS:-churn-marketers}
       SSO_ANALYST_GROUPS: ${SSO_ANALYST_GROUPS:-churn-analysts}
       SSO_DEFAULT_ROLE: ${SSO_DEFAULT_ROLE:-}
     depends_on:
@@ -461,6 +464,7 @@ services:
       CHURN_RADAR_OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-churn-radar-demo-secret}
       CHURN_RADAR_SSO_ADMIN_PASSWORD: ${SSO_DEMO_ADMIN_PASSWORD:-admin}
       CHURN_RADAR_SSO_MARKETER_PASSWORD: ${SSO_DEMO_MARKETER_PASSWORD:-marketer}
+      CHURN_RADAR_SSO_ANALYST_PASSWORD: ${SSO_DEMO_ANALYST_PASSWORD:-analyst}
       CHURN_RADAR_SSO_OUTSIDER_PASSWORD: ${SSO_DEMO_OUTSIDER_PASSWORD:-outsider}
     ports:
       - "${AUTHENTIK_PORT:-9000}:9000"

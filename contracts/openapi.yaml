@@ -11,6 +11,11 @@ info:
     Доступ: все методы, кроме `POST /api/v1/auth/login`, `GET /api/v1/auth/providers`
     и SSO-редиректов (OIDC, SAML), требуют сессию (cookie `cr_session`) или `Authorization: Bearer`.
     `GET /metrics` закрыт отдельным токеном сборщика метрик.
+
+    Роли вложены: `analyst` < `marketer` < `admin`. Читать может любой вошедший. Письма,
+    рассылки и отметки клиентов (`/customers/{id}/action`, `/customers/{id}/email*`,
+    `/mail/campaigns*`) — `marketer` и выше. Модель, данные, симулятор, шаблоны писем, CAC и маржа,
+    пользователи — только `admin`. Свои уведомления и профиль — любая роль. Не хватает роли — `403`.
 servers:
   - url: http://localhost:8080
     description: Локальный запуск через Docker Compose
@@ -1429,7 +1434,7 @@ components:
         display_name: { type: string }
         roles:
           type: array
-          items: { type: string, enum: [admin, analyst] }
+          items: { type: string, enum: [admin, marketer, analyst] }
         auth_method: { type: string, enum: [password, oidc, saml] }
         email:
           type: [string, 'null']
@@ -1443,7 +1448,7 @@ components:
         username: { type: string }
         display_name: { type: string }
         email: { type: [string, 'null'] }
-        role: { type: string, enum: [admin, analyst] }
+        role: { type: string, enum: [admin, marketer, analyst] }
         status: { type: string, enum: [active, blocked] }
         source:
           type: string
@@ -1460,7 +1465,7 @@ components:
         username: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._@-]*$' }
         display_name: { type: string, maxLength: 128 }
         email: { type: [string, 'null'], maxLength: 254 }
-        role: { type: string, enum: [admin, analyst], default: analyst }
+        role: { type: string, enum: [admin, marketer, analyst], default: analyst }
         password: { type: [string, 'null'], minLength: 8, maxLength: 256 }
         sso_only: { type: boolean, default: false }
 
@@ -1469,7 +1474,7 @@ components:
       properties:
         display_name: { type: string, minLength: 1, maxLength: 128 }
         email: { type: [string, 'null'], maxLength: 254 }
-        role: { type: string, enum: [admin, analyst] }
+        role: { type: string, enum: [admin, marketer, analyst] }
         status: { type: string, enum: [active, blocked] }
 
     AuditEntry:

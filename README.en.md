@@ -66,7 +66,7 @@ If you have `make`, `make up` does the same thing.
 
 | Address | What is there | Login |
 |---|---|---|
-| http://localhost:8080 | marketer panel | `admin` / `admin` (full access), `analyst` / `analyst` (read only) |
+| http://localhost:8080 | marketer panel | `admin` / `admin` (full access), `marketer` / `marketer` (works with customers), `analyst` / `analyst` (read only) |
 | http://localhost:8080/api/v1/docs | Swagger UI | after signing in to the panel |
 | http://localhost:8080/metrics | Prometheus metrics | header `Authorization: Bearer churn-metrics-demo-token` |
 | http://localhost:3000 | Grafana, dashboards "Отток" (churn) and "Платформа" (platform) | `admin` / `admin` |
@@ -158,8 +158,8 @@ because they already got one in the last 7 days, and what the first email looks 
 go out in the background, no faster than five per second (`MAIL_RATE_PER_S`), with progress
 and a final "sent X, errors Y" right there. At the bottom of the block a "helped" counter shows
 how many customers had lower risk or a higher balance after the email; the same numbers are in
-`/metrics` (`churn_emails_*`). Analysts can mark and email customers too; only admins edit the
-templates on the "Письма" (emails) page. "CSV" in the block downloads the whole queue.
+`/metrics` (`churn_emails_*`). Marketers and admins mark and email customers, analysts see the list read-only;
+only admins edit the templates on the "Письма" (emails) page. "CSV" in the block downloads the whole queue.
 
 **Customer ranking.** Sorting by ID, email, balance, total top-ups, risk and expected loss,
 filter by risk level, search by email or ID. "Export CSV" saves the table with the same filters
@@ -412,11 +412,55 @@ so on). Outbound HTTPS and SMTP (587, 465) are opened by a dedicated NetworkPoli
 
 ## Users and SSO
 
+### Roles and permissions
+
+There are three nested roles: a marketer can do everything an analyst can, an admin everything a
+marketer can.
+
+- **Admin** configures the system: model, data and simulator, email templates, CAC and margin,
+  users, team notifications.
+- **Marketer** works with customers: emails, bulk campaigns, "contacted / resolved / snooze"
+  marks, CSV export, their own notifications.
+- **Analyst** sees everything and exports CSV, sets up their own notifications, and changes
+  nothing about customers.
+
+Marketers can read email templates but not edit them. A template is the company's shared text
+that goes to every customer, so one person owns it. In a particular email a marketer can still
+change the subject and the text; the template stays as it is.
+
+Permissions are checked twice. The gateway (ForwardAuth in `auth`, rule table in
+[`services/auth/app/permissions.py`](services/auth/app/permissions.py)) drops state-changing
+requests from the wrong role, and every service checks the role again
+(`svckit.auth.make_require_role`). The UI hides unavailable sections and buttons, but the server
+is what enforces it: a direct request gets 403.
+
+| Action | Endpoint | Analyst | Marketer | Admin |
+|---|---|:-:|:-:|:-:|
+| View overview, customers, marketing, model quality, campaigns, templates | any `GET` except admin lists | ✓ | ✓ | ✓ |
+| Export CSV (customer table and the "contact today" queue) | `GET /api/v1/customers/export.csv` | ✓ | ✓ | ✓ |
+| Own notifications, profile (email, password) | `PUT/POST/DELETE /api/v1/alerts/preferences…`, `/alerts/telegram/link`, `/alerts/notifications/read`, `PATCH /api/v1/auth/me`, `POST /api/v1/auth/me/password` | ✓ | ✓ | ✓ |
+| Mark a customer: contacted, resolved, snoozed, clear the mark | `PUT/DELETE /api/v1/customers/{id}/action` | — | ✓ | ✓ |
+| Draft and send an email to a customer | `POST /api/v1/customers/{id}/email/draft`, `POST /api/v1/customers/{id}/email` | — | ✓ | ✓ |
+| Bulk campaign: preview and start | `POST /api/v1/mail/campaigns/preview`, `POST /api/v1/mail/campaigns` | — | ✓ | ✓ |
+| Edit and reset email templates | `PUT /api/v1/mail/templates/{code}`, `POST …/reset` | — | — | ✓ |
+| CAC and margin | `PUT /api/v1/analytics/marketing/settings` | — | — | ✓ |
+| Model: edit, what-if, reset | `PATCH /api/v1/model/settings`, `POST …/preview`, `POST …/reset` | — | — | ✓ |
+| Data: snapshot and change stream | `PUT /api/v1/source/snapshot`, `POST /api/v1/source/events` | — | — | ✓ |
+| Simulator | `PUT /api/v1/simulator` | — | — | ✓ |
+| Other users' notifications | `GET/DELETE /api/v1/alerts/preferences/users…` | — | — | ✓ |
+| Users and the audit log | `/api/v1/auth/users…`, `GET /api/v1/auth/audit` | — | — | ✓ |
+
+Any state-changing request that matches no rule is let through by the gateway for admins only:
+a new endpoint stays closed until it is explicitly given a role. The matrix is covered by
+`services/auth/tests/test_permissions.py` (gateway) and `services/api/tests/test_roles.py`
+(role × endpoint in `api`), and in the browser by `tests/e2e/specs/roles.spec.ts`.
+
 ### Panel users
 
-Accounts live in PostgreSQL (`auth` schema). On first start `auth` seeds `admin` / `admin` and
-`analyst` / `analyst` from the environment; after that the administrator manages users on the
-"Пользователи" (Users) page:
+Accounts live in PostgreSQL (`auth` schema). On first start `auth` seeds `admin` / `admin`,
+`marketer` / `marketer` and `analyst` / `analyst` from the environment; after that the
+administrator manages users on the "Пользователи" (Users) page (one of three roles, with a hint
+on what it allows):
 
 - search by login, name and email;
 - create with a password, with a temporary password (shown once, hand it over to the person) or
@@ -431,7 +475,7 @@ away, no need to wait for the session to expire. Every user changes their own em
 password in the profile (menu in the top right). The email is returned by `/api/v1/auth/me` and
 is used for notifications.
 
-One caveat: the `admin` and `analyst` accounts from the environment are seeded on every start,
+One caveat: the `admin`, `marketer` and `analyst` accounts from the environment are seeded on every start,
 so a deleted seed account comes back. A blocked one stays blocked.
 
 ### Sign-in through Authentik (OIDC and SAML)
@@ -454,7 +498,8 @@ http://localhost:8080/login shows "Войти через Authentik (OIDC)" and "
 | Authentik login | Password | Group | Panel role |
 |---|---|---|---|
 | `admin` | `admin` | `churn-admins` | administrator |
-| `marketer` | `marketer` | `churn-analysts` | analyst |
+| `marketer` | `marketer` | `churn-marketers` | marketer |
+| `analyst` | `analyst` | `churn-analysts` | analyst |
 | `outsider` | `outsider` | none | access denied |
 | `akadmin` | `authentik` | — | Authentik admin UI at http://localhost:9000 |
 
@@ -514,6 +559,7 @@ SAML_IDP_PUBLIC_URL=            # only if metadata is fetched over an internal a
 
 # IdP groups -> roles
 SSO_ADMIN_GROUPS=churn-admins
+SSO_MARKETER_GROUPS=churn-marketers
 SSO_ANALYST_GROUPS=churn-analysts
 ```
 
@@ -685,7 +731,7 @@ and that raising its weight never lowers the risk. Full example with a test:
 | Editable weights that persist | "Модель" (model) page, `PATCH /api/v1/model/settings`; versions and history in PostgreSQL, survive a restart |
 | Auto-refresh without reload | NATS JetStream → `scoring` → `scores.updated` → `notifier` (SSE) → panel |
 | `/metrics` endpoint | `api`, Prometheus format, token-protected; Grafana dashboards in `monitoring/` |
-| Authentication | `services/auth`: password (argon2id), `admin` and `analyst` roles, SSO through Authentik over OIDC and SAML 2.0, user management in the panel |
+| Authentication | `services/auth`: password (argon2id), `admin`, `marketer` and `analyst` roles, SSO through Authentik over OIDC and SAML 2.0, user management in the panel |
 | Compose deployment | [`docker-compose.yml`](docker-compose.yml), one command, no `.env` |
 | API documentation | Swagger UI at `/api/v1/docs`, contract [`contracts/openapi.yaml`](contracts/openapi.yaml) |
 | Model and architecture description | [docs/model.md](docs/model.md), [docs/architecture.md](docs/architecture.md) |
@@ -880,7 +926,8 @@ The e2e scenario walks through what the jury will check: nothing opens without l
 leads to an overview with numbers, sorting works, a high-risk customer has reasons and money, a
 weight change updates scores without a reload and survives a restart, a new snapshot refreshes
 the table by itself, `/metrics` matches the panel, Swagger opens, and an analyst cannot change
-the model. The scenario changes the weights and data of the stack, so do not run it against a
+the model. `roles.spec.ts` covers the three roles: a marketer emails a customer but does not see
+the model, and the server rejects an analyst's attempt to send an email with 403. The scenario changes the weights and data of the stack, so do not run it against a
 demo someone is looking at.
 
 `users.spec.ts` covers user management: an admin creates an analyst, the analyst signs in, after
@@ -912,6 +959,7 @@ change something, copy it to `.env`.
 |---|---|---|
 | `HTTP_PORT`, `PUBLIC_URL` | `8080`, `http://localhost:8080` | gateway port and external address for redirects and CSRF |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin` | administrator |
+| `MARKETER_USERNAME` / `MARKETER_PASSWORD` | `marketer` / `marketer` | marketer, works with customers |
 | `ANALYST_USERNAME` / `ANALYST_PASSWORD` | `analyst` / `analyst` | analyst, read only |
 | `METRICS_TOKEN` | `churn-metrics-demo-token` | Bearer token for `/metrics` and Prometheus |
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | `churn` | database |
@@ -937,8 +985,9 @@ Default passwords and tokens are for the demo only. Set your own for any other d
   login pair.
 - CSRF: the cookie is `SameSite=Lax`, and for state-changing requests the gateway requires an
   `Origin` from the same site.
-- Roles: `admin` changes the model, uploads data, controls the simulator and manages users;
-  `analyst` can only view. Permissions are checked both at the gateway and in the service.
+- Roles: `admin` configures the system, `marketer` works with customers, `analyst` only views
+  (table in [Roles and permissions](#roles-and-permissions)). Permissions are checked both at the
+  gateway and in the service.
   Blocking, a role change or a password reset closes all of the user's sessions at once, and
   admin actions are written to an audit log.
 - SSO: the SAML assertion signature is checked against the certificate from the IdP metadata,

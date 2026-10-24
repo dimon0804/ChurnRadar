@@ -22,10 +22,11 @@ global:
 # --set / внешний values-файл или укажите existingSecret.
 secrets:
   # Имя готового Secret. Обязательные ключи: DATABASE_URL, REDIS_URL, METRICS_TOKEN,
-  # ADMIN_PASSWORD, ANALYST_PASSWORD, POSTGRES_PASSWORD (если postgres в чарте).
+  # ADMIN_PASSWORD, MARKETER_PASSWORD, ANALYST_PASSWORD, POSTGRES_PASSWORD (если postgres в чарте).
   existingSecret: ""
   metricsToken: churn-metrics-demo-token
   adminPassword: admin
+  marketerPassword: marketer
   analystPassword: analyst
   # Каналы сервиса оповещений. Пустое значение — канал выключен (лента в панели работает всегда).
   # Попадают в отдельный Secret <релиз>-alerts; existingSecret — взять готовый с ключами
@@ -44,6 +45,7 @@ secrets:
 # Общие переменные окружения всех приложений (попадают в ConfigMap каждого сервиса)
 commonEnv:
   ADMIN_USERNAME: admin
+  MARKETER_USERNAME: marketer
   ANALYST_USERNAME: analyst
 
 serviceAccount:
@@ -159,7 +161,7 @@ auth:
   enabled: true
   image:
     repository: churn-radar-auth
-  secretKeys: [DATABASE_URL, REDIS_URL, METRICS_TOKEN, ADMIN_PASSWORD, ANALYST_PASSWORD]
+  secretKeys: [DATABASE_URL, REDIS_URL, METRICS_TOKEN, ADMIN_PASSWORD, MARKETER_PASSWORD, ANALYST_PASSWORD]
   # секрет OIDC-клиента (OIDC_CLIENT_SECRET); нет Secret — переменной нет
   envFromSecret: '{{ include "cr.ssoSecretName" . }}'
   env:
@@ -490,6 +492,7 @@ gateway:
 sso:
   # группы IdP -> роли панели (через запятую). Пустая роль по умолчанию — без группы входа нет.
   adminGroups: churn-admins
+  marketerGroups: churn-marketers
   analystGroups: churn-analysts
   defaultRole: ""
   # готовый Secret с ключом OIDC_CLIENT_SECRET; пусто — чарт создаст <релиз>-sso из oidc.clientSecret

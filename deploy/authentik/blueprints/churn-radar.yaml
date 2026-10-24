@@ -14,6 +14,7 @@ context:
   saml_issuer: !Env [CHURN_RADAR_SAML_IDP_ISSUER, "churn-radar-authentik"]
   admin_password: !Env [CHURN_RADAR_SSO_ADMIN_PASSWORD, "admin"]
   marketer_password: !Env [CHURN_RADAR_SSO_MARKETER_PASSWORD, "marketer"]
+  analyst_password: !Env [CHURN_RADAR_SSO_ANALYST_PASSWORD, "analyst"]
   outsider_password: !Env [CHURN_RADAR_SSO_OUTSIDER_PASSWORD, "outsider"]
 entries:
   # потоки, маппинги и самоподписанный сертификат из стандартных blueprint'ов должны появиться раньше
@@ -48,6 +49,14 @@ entries:
         churn_radar_role: admin
 
   - model: authentik_core.group
+    id: group-marketers
+    identifiers:
+      name: churn-marketers
+    attrs:
+      attributes:
+        churn_radar_role: marketer
+
+  - model: authentik_core.group
     id: group-analysts
     identifiers:
       name: churn-analysts
@@ -75,8 +84,19 @@ entries:
       email: marketer@churn-radar.local
       path: churn-radar
       groups:
-        - !KeyOf group-analysts
+        - !KeyOf group-marketers
       password: !Context marketer_password
+
+  - model: authentik_core.user
+    identifiers:
+      username: analyst
+    attrs:
+      name: Алексей Аналитик
+      email: analyst@churn-radar.local
+      path: churn-radar
+      groups:
+        - !KeyOf group-analysts
+      password: !Context analyst_password
 
   # без групп: Authentik его пустит, а панель откажет — так видно, что доступ решают группы
   - model: authentik_core.user
@@ -104,11 +124,13 @@ entries:
         roles = []
         if "churn-admins" in names:
             roles.append("admin")
+        if "churn-marketers" in names:
+            roles.append("marketer")
         if "churn-analysts" in names:
             roles.append("analyst")
         return {"roles": roles}
 
-  # SAML: атрибут churn-radar-role со значениями admin / analyst
+  # SAML: атрибут churn-radar-role со значениями admin / marketer / analyst
   - model: authentik_providers_saml.samlpropertymapping
     id: saml-roles
     identifiers:
@@ -120,6 +142,8 @@ entries:
         names = {group.name for group in request.user.groups.all()}
         if "churn-admins" in names:
             yield "admin"
+        if "churn-marketers" in names:
+            yield "marketer"
         if "churn-analysts" in names:
             yield "analyst"
 

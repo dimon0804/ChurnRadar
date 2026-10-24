@@ -67,7 +67,7 @@ helm upgrade --install churn-radar deploy/helm/churn-radar \
 ```
 
 Секрет `secrets.existingSecret` должен содержать ключи `DATABASE_URL`, `REDIS_URL`,
-`METRICS_TOKEN`, `ADMIN_PASSWORD`, `ANALYST_PASSWORD` и `POSTGRES_PASSWORD`
+`METRICS_TOKEN`, `ADMIN_PASSWORD`, `MARKETER_PASSWORD`, `ANALYST_PASSWORD` и `POSTGRES_PASSWORD`
 (последний — только для встроенного Postgres).
 
 Управляемые БД: `postgresql.enabled=false` + `postgresql.external.url`, аналогично

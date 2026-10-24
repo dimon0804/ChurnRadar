@@ -293,7 +293,7 @@ function SkeletonRows({ count }: { count: number }) {
 export default function CustomersPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
-  const { isAdmin } = useAuth()
+  const { isAdmin, canAct } = useAuth()
   const { changed } = useLive()
   const qs = searchParams.toString()
   const state = useMemo(() => parseCustomersState(new URLSearchParams(qs)), [qs])
@@ -368,7 +368,8 @@ export default function CustomersPage() {
   const table = useReactTable({
     data: items,
     columns,
-    state: { sorting },
+    // галочки нужны только для рассылки, а писать клиентам аналитику нельзя
+    state: { sorting, columnVisibility: { select: canAct } },
     manualSorting: true,
     manualPagination: true,
     enableSortingRemoval: false,
@@ -445,7 +446,7 @@ export default function CustomersPage() {
         </div>
       </div>
 
-      {selected.size > 0 && (
+      {canAct && selected.size > 0 && (
         <div
           className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-4 py-2.5 text-sm shadow-card"
           data-testid="selection-bar"

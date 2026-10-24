@@ -34,7 +34,7 @@ async def test_only_admin_manages_users(client):
 async def test_list_and_search(client):
     await as_admin(client)
     body = (await client.get("/api/v1/auth/users")).json()
-    assert {u["username"] for u in body["items"]} == {"admin", "analyst"}
+    assert {u["username"] for u in body["items"]} == {"admin", "marketer", "analyst"}
     admin = find(body["items"], "admin")
     assert admin["role"] == "admin" and admin["status"] == "active" and admin["source"] == "password"
     assert admin["last_login_at"]
@@ -185,7 +185,7 @@ async def test_delete_and_audit(client):
 
 async def test_sso_only_user(client, repo):
     await as_admin(client)
-    resp = await create(client, username="marketer", sso_only=True, role="admin")
+    resp = await create(client, username="mariya", sso_only=True, role="admin")
     assert "temporary_password" not in resp.json()
     user = resp.json()["user"]
     assert user["source"] == "sso" and not user["has_password"]

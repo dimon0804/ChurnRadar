@@ -5,9 +5,9 @@ import { loginApi, loginUi, originHeaders } from './helpers'
 // Спек сам снимает все отметки, которые поставил, — стенд остаётся как был.
 test.describe.configure({ mode: 'serial' })
 
-const ANALYST = {
-  username: process.env.ANALYST_USERNAME ?? 'analyst',
-  password: process.env.ANALYST_PASSWORD ?? 'analyst',
+const MARKETER = {
+  username: process.env.MARKETER_USERNAME ?? 'marketer',
+  password: process.env.MARKETER_PASSWORD ?? 'marketer',
 }
 
 type QueueItem = { id: number; email: string; risk_level: string; expected_loss: number }
@@ -30,7 +30,7 @@ test.afterAll(async ({ request }) => {
 })
 
 test('очередь: только клиенты с риском, по убыванию ожидаемой потери', async ({ request }) => {
-  await loginApi(request, ANALYST)
+  await loginApi(request, MARKETER)
   const q = await queue(request)
   expect(q.items.length).toBeGreaterThan(0)
   for (const item of q.items) {
@@ -47,10 +47,10 @@ test('очередь: только клиенты с риском, по убыв
 })
 
 test('блок на обзоре: топ-5 по деньгам, «Решено» убирает клиента, «Вернуть» — возвращает', async ({ page, request }) => {
-  await loginApi(request, ANALYST)
+  await loginApi(request, MARKETER)
   const top = (await queue(request)).items.slice(0, 5)
 
-  await loginUi(page, ANALYST)
+  await loginUi(page, MARKETER)
   const block = page.getByTestId('contact-today')
   await expect(block.getByText('Сортируем по деньгам, которые можно спасти')).toBeVisible()
   const rows = block.getByTestId('contact-today-row')
@@ -86,7 +86,7 @@ test('блок на обзоре: топ-5 по деньгам, «Решено»
   const state = await request.get(`/api/v1/customers/${first.id}/action`)
   const body = (await state.json()) as { action: { status: string; updated_by: string } }
   expect(body.action.status).toBe('resolved')
-  expect(body.action.updated_by).toBe(ANALYST.username)
+  expect(body.action.updated_by).toBe(MARKETER.username)
 
   // «Вернуть» — снова в очереди на своём месте
   const markedRow = block.getByTestId('contact-today-row').filter({ has: page.getByRole('link', { name: first.email, exact: true }) })
@@ -96,7 +96,7 @@ test('блок на обзоре: топ-5 по деньгам, «Решено»
 })
 
 test('выгрузка CSV: UTF-8 с BOM, «;», те же фильтры, что у списка', async ({ page, request }) => {
-  await loginApi(request, ANALYST)
+  await loginApi(request, MARKETER)
   const res = await request.get('/api/v1/customers/export.csv', { params: { level: 'high', sort: 'expected_loss', order: 'desc' } })
   expect(res.status()).toBe(200)
   expect(res.headers()['content-type']).toContain('text/csv')
@@ -113,7 +113,7 @@ test('выгрузка CSV: UTF-8 с BOM, «;», те же фильтры, чт�
   for (const line of lines.slice(1)) expect(line.split(';')[2]).toBe('Высокий')
 
   // кнопка на странице «Клиенты» несёт текущие фильтры
-  await loginUi(page, ANALYST)
+  await loginUi(page, MARKETER)
   await page.goto('/customers?level=high&sort=expected_loss&order=desc')
   const href = await page.getByTestId('customers-csv').getAttribute('href')
   expect(href).toBe('/api/v1/customers/export.csv?sort=expected_loss&order=desc&level=high')

@@ -16,6 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useCustomerAction, type ActionVariables } from '@/hooks/use-customer-action'
 import { CONTACT_LIST_CSV_URL, emailedUpdate, resolvedUpdate, savingText, snoozeUpdate, statsLine } from '@/lib/contact-today'
 import { countLabel, formatMoney } from '@/lib/format'
+import { useAuth } from '@/providers/auth'
 
 export const CONTACT_TODAY_LIMIT = 5
 /** Карточку открываем поверх списка, отсортированного так же — по деньгам. */
@@ -31,8 +32,9 @@ export function ContactTodayList({
   items: ContactTodayItem[]
   marked: boolean
   busyId?: number | null
-  onAction: (vars: ActionVariables) => void
-  onWrite: (item: ContactTodayItem) => void
+  /** нет обработчиков — список только для чтения (аналитик) */
+  onAction?: (vars: ActionVariables) => void
+  onWrite?: (item: ContactTodayItem) => void
 }) {
   return (
     <ol className="divide-y divide-border" data-testid="contact-today-list">
@@ -72,7 +74,7 @@ export function ContactTodayList({
                 </p>
                 <p className="text-xs text-muted-foreground">ожидаемая потеря</p>
               </div>
-              {marked ? (
+              {!onAction || !onWrite ? null : marked ? (
                 <Button variant="outline" size="sm" disabled={busy} onClick={() => onAction({ id: c.id, update: null })}>
                   <Undo2 />
                   Вернуть
@@ -140,6 +142,7 @@ export function ContactTodayCard() {
     queryFn: ({ signal }) => api.contactToday({ limit: marked ? 50 : CONTACT_TODAY_LIMIT, marked }, signal),
   })
   const mutation = useCustomerAction()
+  const { canAct } = useAuth()
   const data = query.data
   const items = data?.items ?? []
   const rest = data ? data.queue_total - items.length : 0
@@ -159,7 +162,7 @@ export function ContactTodayCard() {
           </CardDescription>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-          {!marked && data && data.queue_total > 0 && (
+          {canAct && !marked && data && data.queue_total > 0 && (
             <Button size="sm" onClick={() => setMass(true)} data-testid="contact-today-mass">
               <Mails />
               Написать всем · {data.queue_total}
@@ -201,8 +204,8 @@ export function ContactTodayCard() {
             items={items}
             marked={marked}
             busyId={mutation.isPending ? mutation.variables?.id : null}
-            onAction={(vars) => mutation.mutate(vars)}
-            onWrite={setWriteTo}
+            onAction={canAct ? (vars) => mutation.mutate(vars) : undefined}
+            onWrite={canAct ? setWriteTo : undefined}
           />
         )}
         {mutation.isError && (

@@ -18,6 +18,8 @@ class Settings(BaseSettings):
 
     admin_username: str = "admin"
     admin_password: str = "admin"
+    marketer_username: str = "marketer"
+    marketer_password: str = "marketer"
     analyst_username: str = "analyst"
     analyst_password: str = "analyst"
 
@@ -51,6 +53,7 @@ class Settings(BaseSettings):
 
     # роли из групп IdP (через запятую). Пустая роль по умолчанию — без групп в панель не пускаем.
     sso_admin_groups: str = "churn-admins"
+    sso_marketer_groups: str = "churn-marketers"
     sso_analyst_groups: str = "churn-analysts"
     sso_default_role: str = ""
 

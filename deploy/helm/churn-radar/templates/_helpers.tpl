@@ -115,6 +115,7 @@ true
 OIDC_ENABLED: {{ $sso.oidc.enabled | toString | quote }}
 SAML_ENABLED: {{ $sso.saml.enabled | toString | quote }}
 SSO_ADMIN_GROUPS: {{ $sso.adminGroups | quote }}
+SSO_MARKETER_GROUPS: {{ $sso.marketerGroups | quote }}
 SSO_ANALYST_GROUPS: {{ $sso.analystGroups | quote }}
 SSO_DEFAULT_ROLE: {{ $sso.defaultRole | quote }}
 {{- if $sso.oidc.enabled }}

@@ -149,6 +149,13 @@ seconds. Only the `admin` role can open this page.
 
 ![Weight editor](docs/img/screens/model.png)
 
+**Model quality.** The answer to "how far can we trust the model": how many times more often
+customers of each risk level churn, the ROC curve and a comparison with simple rules, precision
+and recall of the "high" threshold, forecast versus outcome, runs with other seeds and an honest
+list of limitations. The numbers come from the synthetic-future check (see
+[Quality check](#quality-check)). Every signed-in user can open the page, and every chart has
+a table view.
+
 **Grafana.** The "Отток" dashboard is built on the business metrics from `/metrics`;
 "Платформа" shows service health, RPS and latency through the gateway, SSE clients and scoring
 replicas.
@@ -340,6 +347,12 @@ that the model reads these mechanisms correctly but does not prove that real cus
 for the same reasons. All limitations and the command to reproduce it
 (`python -m tools.calibration`): [docs/calibration.md](docs/calibration.md).
 
+The same results are shown in the panel on the "Model quality" page (`/quality`). The file
+`tools/calibration/results/results.json` is baked into the api image at build time and served
+by `GET /api/v1/model/quality`. An api test compares the riskcore and simulator source
+fingerprints stored in the file with the current code, so after a model change CI asks you to
+rerun the check. If the weights in the settings differ from the tested ones, the page says so.
+
 ## Adding a new feature
 
 A feature is one file in [`libs/riskcore/riskcore/features/`](libs/riskcore/riskcore/features/).
@@ -495,6 +508,7 @@ types are generated from it. Main resources:
 | `GET /api/v1/customers/{id}` | card: reasons, score breakdown, money, recommendations, services |
 | `GET /api/v1/analytics/summary` | base summary, actual and forecast chart, top reasons |
 | `GET/PATCH /api/v1/model/settings` | weights, thresholds and horizon (PATCH changes only the fields you send); next to it `POST …/reset` and `GET …/history` |
+| `GET /api/v1/model/quality` | model check results on a synthetic future: lift, ROC, baselines, calibration, robustness |
 | `PUT /api/v1/source/snapshot` | upload a snapshot in the `data.json` format, gzip allowed |
 | `POST /api/v1/source/events` | a batch of real-time changes |
 | `GET /api/v1/stream` | live updates (SSE) |

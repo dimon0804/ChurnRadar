@@ -89,9 +89,9 @@ function EmailForm({
           </p>
         )}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             <span className="text-[13px] text-muted-foreground">Шаблон</span>
-            <Select value={draft.template_code} onValueChange={onTemplate} options={templateOptions} ariaLabel="Шаблон письма" className="w-60" />
+            <Select value={draft.template_code} onValueChange={onTemplate} options={templateOptions} ariaLabel="Шаблон письма" className="w-60 max-w-full min-w-0" />
           </div>
           <div className="inline-flex rounded-md border border-border p-0.5" role="group" aria-label="Вид">
             {(['edit', 'preview'] as const).map((v) => (
@@ -127,7 +127,7 @@ function EmailForm({
           </p>
         )}
       </div>
-      <div className="-mx-6 mt-4 -mb-4 flex flex-wrap items-center justify-end gap-2 border-t border-border px-6 py-3">
+      <div className="sticky bottom-0 z-10 -mx-4 mt-4 -mb-4 flex flex-wrap items-center justify-end gap-2 border-t border-border bg-card px-4 py-3 sm:-mx-6 sm:px-6">
         <DialogClose asChild>
           <Button variant="outline">Отмена</Button>
         </DialogClose>

@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { RouterProvider } from 'react-router'
 import { isApiError, setUnauthorizedHandler } from '@/api/client'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { installChunkErrorReload } from '@/lib/chunk-error'
 import { loginUrl } from '@/lib/url-state'
 import { ThemeProvider } from '@/providers/theme'
 import { router } from './router'
@@ -21,6 +22,9 @@ const queryClient = new QueryClient({
     mutations: { retry: false },
   },
 })
+
+// после пересборки панели открытая вкладка просит удалённые файлы — перезагружаемся один раз
+installChunkErrorReload()
 
 let redirecting = false
 setUnauthorizedHandler(() => {

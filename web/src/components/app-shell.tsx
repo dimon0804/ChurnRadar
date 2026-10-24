@@ -8,6 +8,7 @@ import {
   LogOut,
   Mail,
   Megaphone,
+  Menu,
   Moon,
   ShieldCheck,
   SlidersHorizontal,
@@ -15,8 +16,10 @@ import {
   UserCog,
   Users,
   Workflow,
+  X,
 } from 'lucide-react'
-import type { ReactNode } from 'react'
+import * as DialogPrimitive from '@radix-ui/react-dialog'
+import { useState, type ReactNode } from 'react'
 import type { Role } from '@/api/types'
 import { Link, NavLink, Outlet } from 'react-router'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -135,7 +138,8 @@ function initials(name: string): string {
   return letters.join('') || '?'
 }
 
-function UserMenu() {
+/** showName — подпись с именем рядом с аватаром; у администратора на неё не хватает места рядом с восемью разделами. */
+function UserMenu({ showName = true }: { showName?: boolean }) {
   const { user, role: topRole, logout } = useAuth()
   const name = user.display_name?.trim() || user.username
   const role = ROLE_LABEL[topRole]
@@ -154,7 +158,7 @@ function UserMenu() {
           <span className="flex size-7 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">
             {initials(name)}
           </span>
-          <span className="hidden max-w-36 flex-col leading-tight 2xl:flex">
+          <span className={cn('hidden max-w-36 flex-col leading-tight', showName && '2xl:flex')}>
             <span className="truncate text-[13px] font-medium" title={name}>
               {name}
             </span>
@@ -206,6 +210,70 @@ function UserMenu() {
   )
 }
 
+/** На телефоне и планшете разделы уезжают в выдвижную панель: в шапке остаются бургер, колокольчик и профиль. */
+function MobileNav({ items }: { items: NavItem[] }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
+      <DialogPrimitive.Trigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="text-muted-foreground lg:hidden"
+          aria-label="Открыть меню разделов"
+          data-testid="nav-menu"
+        >
+          <Menu />
+        </Button>
+      </DialogPrimitive.Trigger>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-black/30 data-[state=closed]:animate-overlay-out data-[state=open]:animate-overlay-in dark:bg-black/50" />
+        <DialogPrimitive.Content
+          className="fixed inset-y-0 left-0 z-50 flex w-[min(300px,85vw)] flex-col border-r border-border bg-background pb-[env(safe-area-inset-bottom)] shadow-pop outline-none data-[state=open]:animate-fade-in"
+          aria-describedby={undefined}
+          data-testid="nav-drawer"
+        >
+          <div className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border px-4">
+            <DialogPrimitive.Title asChild>
+              <span>
+                <Logo />
+                <span className="sr-only">: разделы</span>
+              </span>
+            </DialogPrimitive.Title>
+            <DialogPrimitive.Close
+              className="-mr-1 inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              aria-label="Закрыть меню"
+            >
+              <X className="size-4" />
+            </DialogPrimitive.Close>
+          </div>
+          <nav aria-label="Разделы" className="min-h-0 flex-1 overflow-y-auto p-2">
+            {items.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                onClick={() => setOpen(false)}
+                className={({ isActive }) =>
+                  cn(
+                    'flex h-11 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4',
+                    isActive ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+                  )
+                }
+              >
+                <span className="opacity-80" aria-hidden>
+                  {item.icon}
+                </span>
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  )
+}
+
 export function AppShell() {
   const { isAdmin } = useAuth()
   const items = NAV.filter((item) => !item.adminOnly || isAdmin)
@@ -219,11 +287,12 @@ export function AppShell() {
         К содержимому
       </a>
       <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur-md supports-[backdrop-filter]:bg-background/70">
-        <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-2 px-4 sm:gap-4 md:px-6">
+        <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-1 px-3 sm:gap-4 sm:px-4 md:px-6">
+          <MobileNav items={items} />
           <NavLink to="/" className="shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="ChurnRadar, обзор">
             <Logo className="[&>span]:max-sm:sr-only" />
           </NavLink>
-          <nav aria-label="Разделы" className="flex min-w-0 items-center gap-0.5 sm:ml-2">
+          <nav aria-label="Разделы" className="flex min-w-0 items-center gap-0.5 max-lg:hidden sm:ml-2">
             {items.map((item) => (
               <NavLink
                 key={item.to}
@@ -252,11 +321,11 @@ export function AppShell() {
             <AlertsBell />
             <ThemeToggle />
             <div className="mx-1 h-5 w-px bg-border max-sm:hidden" aria-hidden />
-            <UserMenu />
+            <UserMenu showName={items.length <= 6} />
           </div>
         </div>
       </header>
-      <main id="main" className="mx-auto w-full max-w-[1400px] flex-1 px-4 pt-6 pb-16 md:px-6">
+      <main id="main" className="mx-auto w-full max-w-[1400px] min-w-0 flex-1 px-4 pt-6 pb-16 md:px-6">
         <Outlet />
       </main>
       <RecalcToast />

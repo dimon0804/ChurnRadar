@@ -27,12 +27,14 @@ export function Dialog({
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/30 data-[state=closed]:animate-overlay-out data-[state=open]:animate-overlay-in dark:bg-black/50" />
         <DialogPrimitive.Content
           className={cn(
-            'fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100vh-32px)] w-[min(480px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-card shadow-pop outline-none data-[state=open]:animate-pop-in',
+            'fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-32px)] w-[min(480px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-card shadow-pop outline-none data-[state=open]:animate-pop-in',
+            // на телефоне — на весь экран
+            'max-sm:inset-0 max-sm:h-dvh max-sm:max-h-dvh max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 max-sm:pb-[env(safe-area-inset-bottom)]',
             className,
           )}
           {...(description ? {} : { 'aria-describedby': undefined })}
         >
-          <div className="flex items-start gap-3 px-6 pt-5">
+          <div className="flex items-start gap-3 px-4 pt-5 sm:px-6">
             <div className="min-w-0 flex-1">
               <DialogPrimitive.Title className="text-base font-semibold">{title}</DialogPrimitive.Title>
               {description && (
@@ -48,8 +50,8 @@ export function Dialog({
               <X className="size-4" />
             </DialogPrimitive.Close>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">{children}</div>
-          {footer && <div className="flex justify-end gap-2 border-t border-border px-6 py-3.5">{footer}</div>}
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">{children}</div>
+          {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-border px-4 py-3.5 sm:px-6">{footer}</div>}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

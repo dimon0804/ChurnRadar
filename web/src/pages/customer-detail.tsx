@@ -41,7 +41,7 @@ import { useLive } from '@/providers/live'
 
 function Section({ title, aside, children, className }: { title: string; aside?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={cn('px-6 py-5', className)}>
+    <section className={cn('px-4 py-5 sm:px-6', className)}>
       <div className="mb-3 flex items-baseline justify-between gap-3">
         <h3 className="text-[13px] font-semibold tracking-wide text-muted-foreground uppercase">{title}</h3>
         {aside}
@@ -504,7 +504,7 @@ function Transactions({ txs, services }: { txs: Transaction[]; services: Map<num
 
 function DetailSkeleton() {
   return (
-    <div className="space-y-5 px-6 py-5" aria-busy="true" aria-label="Загружаем карточку клиента">
+    <div className="space-y-5 px-4 py-5 sm:px-6" aria-busy="true" aria-label="Загружаем карточку клиента">
       <div className="grid gap-4 sm:grid-cols-[220px_1fr]">
         <Skeleton className="h-24 rounded-xl" />
         <Skeleton className="h-24 rounded-xl" />
@@ -578,7 +578,7 @@ export default function CustomerSheet() {
           <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />
         ) : c ? (
           <div key={flash ?? 0} className={cn('divide-y divide-border', flash && 'animate-row-flash')}>
-            <div className="px-6 py-5">
+            <div className="px-4 py-5 sm:px-6">
               <Hero c={c} />
             </div>
             <NextAction c={c} />
@@ -589,7 +589,7 @@ export default function CustomerSheet() {
             <MarketingStats c={c} />
             <Services services={c.services ?? []} />
             <Transactions txs={c.transactions ?? []} services={services} />
-            <p className="px-6 py-4 text-xs text-subtle-foreground num">
+            <p className="px-4 py-4 text-xs sm:px-6 text-subtle-foreground num">
               Оценка от {formatDateTime(c.scored_at)} · модель v{c.model_version}
             </p>
           </div>

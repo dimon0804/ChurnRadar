@@ -49,7 +49,7 @@ export function ContactTodayList({
               <div className="flex flex-wrap items-center gap-2">
                 <Link
                   to={`/customers/${c.id}${BY_LOSS}`}
-                  className="truncate text-sm font-medium text-foreground underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                  className="max-w-full min-w-0 truncate text-sm font-medium text-foreground underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
                   title={c.email}
                 >
                   {c.email}
@@ -67,7 +67,7 @@ export function ContactTodayList({
                 </p>
               )}
             </div>
-            <div className="flex items-center justify-between gap-4 sm:justify-end">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 sm:shrink-0 sm:flex-nowrap sm:justify-end">
               <div className="text-left sm:w-28 sm:text-right">
                 <p className="text-[17px] font-semibold tracking-[-0.01em] num" data-testid="contact-today-loss">
                   {formatMoney(c.expected_loss, { cents: false })}
@@ -80,7 +80,7 @@ export function ContactTodayList({
                   Вернуть
                 </Button>
               ) : (
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <Button variant="outline" size="sm" disabled={busy} onClick={() => onWrite(c)}>
                     <Mail />
                     Написать
@@ -107,7 +107,7 @@ function ListSkeleton() {
       {Array.from({ length: 3 }, (_, i) => (
         <div key={i} className="flex items-center gap-4">
           <div className="flex-1 space-y-2">
-            <Skeleton className="h-4 w-48" />
+            <Skeleton className="h-4 w-48 max-w-full" />
             <Skeleton className="h-3.5 w-80 max-w-full" />
           </div>
           <Skeleton className="h-8 w-40" />

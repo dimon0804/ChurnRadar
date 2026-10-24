@@ -30,7 +30,7 @@ export function ConfirmDialog({
           <AlertDialogPrimitive.Description className="mt-2 text-sm leading-6 text-muted-foreground">
             {description}
           </AlertDialogPrimitive.Description>
-          <div className="mt-6 flex justify-end gap-2">
+          <div className="mt-6 flex flex-wrap justify-end gap-2">
             <AlertDialogPrimitive.Cancel className={buttonVariants({ variant: 'outline' })}>
               {cancelLabel}
             </AlertDialogPrimitive.Cancel>

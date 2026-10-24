@@ -37,6 +37,10 @@ def now_ms() -> datetime:
     return moment.replace(microsecond=moment.microsecond // 1000 * 1000)
 
 
+class LockTimeout(RuntimeError):
+    """Другая реплика держит advisory lock дольше lock_timeout."""
+
+
 @dataclass(slots=True)
 class RunResult:
     full: bool
@@ -80,8 +84,10 @@ class Scorer:
         cache_results: bool = True,
         chunk_size: int = 5000,
         workers: int = 1,
+        lock_timeout_s: float = 60.0,
     ) -> None:
         self._pool = pool
+        self._lock_timeout_s = lock_timeout_s
         self._chunk_size = max(1, chunk_size)
         self._workers = max(1, workers)
         self._process_pool: ProcessPoolExecutor | None = None
@@ -139,15 +145,18 @@ class Scorer:
         event_ids: Sequence[str] = (),
         wait_lock: bool = True,
     ) -> RunResult | None:
-        """Пересчёт под advisory lock. Без wait_lock возвращает None, если пересчёт уже идёт."""
+        """Пересчёт под advisory lock. Без wait_lock возвращает None, если пересчёт уже идёт.
+
+        Lock транзакционный и живёт на отдельном соединении: снимается коммитом, откатом или
+        обрывом соединения, поэтому не может остаться висеть на соединении, вернувшемся в пул.
+        Ожидание ограничено lock_timeout: при превышении — LockTimeout, событие уйдёт на повтор.
+        """
         if not wait_lock and self._local.locked():
             return None
-        async with self._local:
+        async with self._local, self._pool.acquire() as lock_conn, lock_conn.transaction():
+            if not await self._acquire_lock(lock_conn, wait=wait_lock):
+                return None
             async with self._pool.acquire() as conn:
-                if wait_lock:
-                    await conn.execute("SELECT pg_advisory_lock($1)", self._lock_key)
-                elif not await conn.fetchval("SELECT pg_try_advisory_lock($1)", self._lock_key):
-                    return None
                 kind = "full" if full else "incremental"
                 started = time.perf_counter()
                 try:
@@ -155,8 +164,6 @@ class Scorer:
                 except Exception:
                     RUNS.labels(kind=kind, result="error").inc()
                     raise
-                finally:
-                    await conn.execute("SELECT pg_advisory_unlock($1)", self._lock_key)
                 RUNS.labels(kind="full" if result.full else "incremental", result="ok").inc()
                 DURATION.labels(kind="full" if result.full else "incremental").observe(time.perf_counter() - started)
                 CUSTOMERS.set(result.customers)
@@ -164,6 +171,18 @@ class Scorer:
             self.last_full_seconds = result.duration_ms / 1000
             self._schedule_vacuum()
         return result
+
+    async def _acquire_lock(self, conn: asyncpg.Connection, *, wait: bool) -> bool:
+        if not wait:
+            return bool(await conn.fetchval("SELECT pg_try_advisory_xact_lock($1)", self._lock_key))
+        if self._lock_timeout_s > 0:
+            # аналог SET LOCAL: действует до конца транзакции
+            await conn.execute("SELECT set_config('lock_timeout', $1, true)", f"{int(self._lock_timeout_s * 1000)}ms")
+        try:
+            await conn.execute("SELECT pg_advisory_xact_lock($1)", self._lock_key)
+        except asyncpg.LockNotAvailableError as exc:
+            raise LockTimeout(f"advisory lock {self._lock_key} занят дольше {self._lock_timeout_s} с") from exc
+        return True
 
     async def _run_locked(
         self,
@@ -258,7 +277,7 @@ class Scorer:
                 counts["services"] += len(chunk_services)
                 counts["transactions"] += tx_count
 
-        async with self._pool.acquire() as writer:
+        async with self._pool.acquire() as writer:  # noqa: SIM117
             async with conn.transaction(isolation="repeatable_read"), writer.transaction():
                 history = await repo.load_status_history(conn, as_of)
                 await repo.replace_all_scores_begin(writer)

@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from conftest import TEST_DATABASE_URL, TEST_NATS_URL, load_snapshot
+from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy
+from svckit.bus import ensure_stream
 
 from app.config import Config
-from app.engine import Scorer
-from app.worker import Worker
+from app.engine import LockTimeout, Scorer
+from app.worker import Worker, ensure_consumer
+from conftest import TEST_DATABASE_URL, TEST_NATS_URL, load_snapshot
 
 pytestmark = pytest.mark.integration
 
@@ -130,10 +133,8 @@ async def js():  # type: ignore[no-untyped-def]
     except Exception as exc:
         pytest.skip(f"NATS недоступен: {exc}")
     ctx = nc.jetstream()
-    try:
+    with contextlib.suppress(Exception):
         await ctx.delete_stream("CHURN")
-    except Exception:
-        pass
     yield nc, ctx
     await nc.close()
 
@@ -270,3 +271,148 @@ async def test_chunked_full_equals_single_chunk(db_pool, sample_data) -> None:  
         assert parts is not None
         for key in ("by_level", "expected_loss", "exposure", "top_reasons", "timeline", "risk_scores"):
             assert parts.summary[key] == whole.summary[key], (workers, key)
+
+
+# --- живучесть ------------------------------------------------------------------------------
+
+
+async def test_lock_timeout_and_no_leak_after_cancel(db_pool, sample_data) -> None:  # type: ignore[no-untyped-def]
+    async with db_pool.acquire() as conn:
+        await load_snapshot(conn, sample_data, REFERENCE)
+    async with db_pool.acquire() as holder:
+        await holder.execute("SELECT pg_advisory_lock($1)", LOCK_KEY)
+        try:
+            with pytest.raises(LockTimeout):
+                await Scorer(db_pool, lock_key=LOCK_KEY, lock_timeout_s=0.3).run(full=True)
+            # lock_timeout_s=0 — ждать без ограничения; отменяем посреди ожидания
+            waiting = asyncio.create_task(Scorer(db_pool, lock_key=LOCK_KEY, lock_timeout_s=0).run(full=True))
+            await asyncio.sleep(0.3)
+            assert not waiting.done()
+            waiting.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiting
+        finally:
+            await holder.execute("SELECT pg_advisory_unlock($1)", LOCK_KEY)
+    # ни таймаут, ни отмена не оставили lock на соединениях пула
+    assert await Scorer(db_pool, lock_key=LOCK_KEY).run(full=True, wait_lock=False) is not None
+    assert await _count(db_pool, "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'") == 0
+
+
+async def test_consumer_config_updated_on_drift(js) -> None:  # type: ignore[no-untyped-def]
+    _, ctx = js
+    await ensure_stream(ctx, "CHURN")
+    await ctx.add_consumer(
+        "CHURN",
+        config=ConsumerConfig(
+            name="scoring",
+            durable_name="scoring",
+            ack_policy=AckPolicy.EXPLICIT,
+            deliver_policy=DeliverPolicy.ALL,
+            ack_wait=30,
+            max_ack_pending=10_000,
+            filter_subjects=["churn.source.changed", "churn.settings.changed"],
+        ),
+    )
+    await ensure_consumer(ctx, "CHURN", "scoring", ack_wait_s=300, max_deliver=10)
+    info = await ctx.consumer_info("CHURN", "scoring")
+    assert info.config.max_deliver == 11
+    assert info.config.ack_wait == pytest.approx(300)
+    assert not info.config.backoff
+
+
+async def test_server_backoff_overrides_ack_wait(js) -> None:  # type: ignore[no-untyped-def]
+    """Почему backoff делаем через nak(delay), а не в конфиге потребителя."""
+    _, ctx = js
+    await ensure_stream(ctx, "CHURN")
+    await ctx.add_consumer(
+        "CHURN",
+        config=ConsumerConfig(
+            name="backoff-probe",
+            durable_name="backoff-probe",
+            ack_policy=AckPolicy.EXPLICIT,
+            ack_wait=300,
+            max_deliver=10,
+            backoff=[1.0, 5.0, 30.0, 120.0],
+            filter_subjects=["churn.source.changed"],
+        ),
+    )
+    info = await ctx.consumer_info("CHURN", "backoff-probe")
+    assert info.config.ack_wait == pytest.approx(1.0)
+
+
+async def test_poison_event_lands_in_dlq(db_pool, sample_data, js) -> None:  # type: ignore[no-untyped-def]
+    nc, ctx = js
+    async with db_pool.acquire() as conn:
+        await load_snapshot(conn, sample_data, REFERENCE)
+    scorer = Scorer(db_pool, lock_key=LOCK_KEY)
+
+    async def broken(**kwargs: Any) -> None:
+        raise RuntimeError("poison")
+
+    scorer.run = broken  # type: ignore[method-assign]
+    worker = Worker(_config(max_deliver=3, retry_backoff_s=(0.1,), debounce_ms=0), db_pool, scorer)
+    await worker.connect()
+    letters: asyncio.Queue = asyncio.Queue()
+
+    async def on_letter(msg) -> None:  # type: ignore[no-untyped-def]
+        await letters.put(msg)
+
+    await nc.subscribe("churn.dlq.scoring", cb=on_letter)
+    consumer = asyncio.create_task(worker.consume())
+    try:
+        body = _envelope("source.changed", {"kind": "changes", "counts": {}, "account_ids": [1]})
+        ack = await ctx.publish("churn.source.changed", body)
+        letter = await asyncio.wait_for(letters.get(), 20)
+        assert letter.data == body
+        assert letter.headers["Churn-Original-Subject"] == "churn.source.changed"
+        assert letter.headers["Churn-Deliveries"] == "3"
+        assert letter.headers["Churn-Stream-Seq"] == str(ack.seq)
+        assert "poison" in letter.headers["Churn-Error"]
+        # копия лежит в стриме CHURN (churn.> покрывает DLQ), исходное больше не доставляется
+        stored = await ctx.get_last_msg("CHURN", "churn.dlq.scoring")
+        assert stored.data == body
+        await asyncio.sleep(0.5)
+        info = await ctx.consumer_info("CHURN", "scoring")
+        assert info.num_ack_pending == 0 and info.num_pending == 0
+        assert letters.empty()
+    finally:
+        worker.stop()
+        await asyncio.gather(consumer, return_exceptions=True)
+        await worker.close()
+
+
+async def test_cancel_mid_rescore_returns_messages_at_once(db_pool, sample_data, js) -> None:  # type: ignore[no-untyped-def]
+    _, ctx = js
+    scorer = Scorer(db_pool, lock_key=LOCK_KEY)
+    started = asyncio.Event()
+
+    async def slow(**kwargs: Any) -> None:
+        started.set()
+        await asyncio.sleep(3600)
+
+    scorer.run = slow  # type: ignore[method-assign]
+    worker = Worker(_config(debounce_ms=0), db_pool, scorer)
+    await worker.connect()
+    consumer = asyncio.create_task(worker.consume())
+    try:
+        await ctx.publish(
+            "churn.source.changed",
+            _envelope("source.changed", {"kind": "changes", "counts": {}, "account_ids": [1]}),
+        )
+        await asyncio.wait_for(started.wait(), 20)
+        consumer.cancel()
+        await asyncio.gather(consumer, return_exceptions=True)
+        assert not worker.subscribed
+        await worker.close()
+        # «другая реплика» получает сообщение через секунды; без nak ждала бы ack_wait (300 с)
+        other = await ctx.pull_subscribe_bind("scoring", stream="CHURN")
+        loop = asyncio.get_running_loop()
+        began = loop.time()
+        msgs = await other.fetch(1, timeout=15)
+        assert len(msgs) == 1 and json.loads(msgs[0].data)["payload"]["account_ids"] == [1]
+        assert msgs[0].metadata.num_delivered == 2
+        assert loop.time() - began < 10
+        await msgs[0].ack()
+    finally:
+        worker.stop()
+        await worker.close()

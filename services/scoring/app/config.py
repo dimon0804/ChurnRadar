@@ -3,12 +3,19 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from .events import SUBJECT_DLQ
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_floats(name: str, default: str) -> tuple[float, ...]:
+    raw = os.getenv(name, default)
+    return tuple(float(x) for x in raw.split(",") if x.strip())
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +40,16 @@ class Config:
     # полный пересчёт держит транзакцию, пока считают воркеры, поэтому лимиты сессии свободнее, чем у api
     db_statement_timeout_ms: int = 600_000
     db_idle_in_transaction_timeout_ms: int = 600_000
+    # повторы входного события: после max_deliver доставок — в DLQ, паузы между доставками — retry_backoff_s
+    max_deliver: int = 10
+    retry_backoff_s: tuple[float, ...] = (1.0, 5.0, 30.0, 120.0)
+    dlq_subject: str = SUBJECT_DLQ
+    # сколько ждать текущую пачку при остановке, прежде чем отменять (меньше stop_grace_period в compose)
+    shutdown_grace_s: float = 45.0
+    # ожидание advisory lock другой реплики; дальше — ошибка и повтор по backoff
+    lock_timeout_s: float = 60.0
+    publish_attempts: int = 3
+    publish_retry_delay_s: float = 1.0
 
     @classmethod
     def from_env(cls) -> Config:
@@ -56,4 +73,11 @@ class Config:
             workers=int(os.getenv("SCORING_WORKERS", str(min(4, os.cpu_count() or 1)))),
             db_statement_timeout_ms=int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "600000")),
             db_idle_in_transaction_timeout_ms=int(os.getenv("DB_IDLE_IN_TRANSACTION_TIMEOUT_MS", "600000")),
+            max_deliver=max(1, int(os.getenv("MAX_DELIVER", "10"))),
+            retry_backoff_s=_env_floats("RETRY_BACKOFF_S", "1,5,30,120") or (1.0,),
+            dlq_subject=os.getenv("DLQ_SUBJECT", SUBJECT_DLQ),
+            shutdown_grace_s=float(os.getenv("SHUTDOWN_GRACE_S", "45")),
+            lock_timeout_s=float(os.getenv("LOCK_TIMEOUT_S", "60")),
+            publish_attempts=max(1, int(os.getenv("PUBLISH_ATTEMPTS", "3"))),
+            publish_retry_delay_s=float(os.getenv("PUBLISH_RETRY_DELAY_S", "1")),
         )

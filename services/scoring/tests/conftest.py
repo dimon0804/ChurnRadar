@@ -98,7 +98,7 @@ async def db_pool() -> AsyncIterator[Any]:
     asyncpg = pytest.importorskip("asyncpg")
     try:
         await asyncio.wait_for(_reset_schema(TEST_DATABASE_URL), timeout=10)
-    except (OSError, asyncio.TimeoutError, asyncpg.PostgresError) as exc:
+    except (TimeoutError, OSError, asyncpg.PostgresError) as exc:
         pytest.skip(f"Postgres недоступен: {exc}")
     pool = await asyncpg.create_pool(TEST_DATABASE_URL, min_size=1, max_size=4)
     try:

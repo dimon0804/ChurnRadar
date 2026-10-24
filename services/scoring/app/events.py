@@ -12,6 +12,7 @@ from typing import Any
 SUBJECT_SOURCE = "churn.source.changed"
 SUBJECT_SETTINGS = "churn.settings.changed"
 SUBJECT_SCORES = "churn.scores.updated"
+SUBJECT_DLQ = "churn.dlq.scoring"  # входит в стрим CHURN (churn.>), но не в фильтр потребителя
 
 TYPE_BY_SUBJECT = {
     SUBJECT_SOURCE: "source.changed",

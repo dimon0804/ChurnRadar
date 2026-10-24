@@ -339,7 +339,7 @@ def _score_row(detail: dict | None) -> dict:
 
 
 async def test_customer_card_passes_next_action(client, app):
-    action = {"code": "call", "title": "Позвонить", "priority": 1}
+    action = {"code": "email", "title": "Написать клиенту", "priority": 1}
     app.state.pool = FakePool({"FROM scoring.customer_scores": _score_row({"next_action": action})})
     body = (await client.get("/api/v1/customers/7", headers=ANALYST)).json()
     assert body["next_action"] == action

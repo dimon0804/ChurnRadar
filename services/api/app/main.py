@@ -16,10 +16,11 @@ from svckit.db import create_pool, db_ready, get_pool
 from svckit.errors import ApiError, RequestIdMiddleware, install_error_handlers
 from svckit.health import install_probes
 from svckit.logs import configure_logging
+from svckit.mail import MailConfig
 from svckit.metrics import HttpMetricsMiddleware, check_metrics_token, render
 from svckit.outbox import OutboxRelay
 
-from app import actions, metrics, model_quality, model_settings, preview, queries
+from app import actions, mail_templates, mailer, metrics, model_quality, model_settings, preview, queries
 from app.config import settings
 from app.docs import router as docs_router
 
@@ -59,8 +60,15 @@ async def lifespan(app: FastAPI):
     app.state.relay.start()
     app.state.http = httpx.AsyncClient(base_url=settings.simulator_url, timeout=settings.simulator_timeout_s)
     app.state.scoring_http = httpx.AsyncClient(base_url=settings.scoring_url, timeout=settings.scoring_timeout_s)
+    app.state.mail_worker = mailer.MailWorker(
+        app.state.pool, app.state.mail_config, rate_per_s=settings.mail_rate_per_s,
+        batch_size=settings.mail_batch_size, interval_s=settings.mail_poll_interval_s,
+        followup_days=settings.mail_followup_days,
+    )
+    app.state.mail_worker.start()
     log.info("api_started")
     yield
+    await app.state.mail_worker.stop()
     await app.state.scoring_http.aclose()
     await app.state.http.aclose()
     await app.state.relay.stop()
@@ -85,6 +93,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         lifespan=lifespan if with_lifespan else None,
     )
     app.state.summary_cache = queries.SummaryCache(settings.summary_cache_ttl_s)
+    app.state.mail_config = MailConfig.from_env()
     install_error_handlers(app)
     app.add_middleware(HttpMetricsMiddleware, histogram=metrics.http_duration)
     app.add_middleware(RequestIdMiddleware)
@@ -132,17 +141,17 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
     async def get_customer(customer_id: int, _: CurrentUser, pool: Pool) -> dict[str, Any]:
         return await queries.get_customer(pool, customer_id)
 
-    # --- кому позвонить сегодня -------------------------------------------------------
-    # Отмечать может и аналитик: со списком работает маркетинг, а отметка не меняет ни
-    # данные, ни модель — только очередь звонков. Кто и когда отметил, видно в журнале.
-    @app.get("/api/v1/call-today", tags=["actions"])
-    async def call_today(
+    # --- с кем связаться сегодня -------------------------------------------------------
+    # Отмечать и писать клиентам может и аналитик: с очередью работает маркетинг, а отметка
+    # не меняет ни данные, ни модель. Кто, когда и что отправил, видно в журнале клиента.
+    @app.get("/api/v1/contact-today", tags=["actions"])
+    async def contact_today(
         _: CurrentUser,
         pool: Pool,
         limit: Annotated[int, Query(ge=1, le=100)] = 5,
         marked: bool = False,
     ) -> dict[str, Any]:
-        return await actions.call_today(pool, limit=limit, marked=marked)
+        return await actions.contact_today(pool, limit=limit, marked=marked)
 
     @app.get("/api/v1/customers/{customer_id}/action", tags=["actions"])
     async def get_customer_action(customer_id: int, _: CurrentUser, pool: Pool) -> dict[str, Any]:
@@ -152,7 +161,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
     async def put_customer_action(
         customer_id: int, user: CurrentUser, pool: Pool, update: Annotated[actions.ActionUpdate, Body()]
     ) -> dict[str, Any]:
-        state = await actions.set_action(pool, customer_id, update, user.name)
+        state = await actions.set_action(pool, customer_id, update, user.name, settings.mail_followup_days)
         log.info("customer_action_set", customer_id=customer_id, status=update.status, user=user.name)
         return state
 
@@ -161,6 +170,74 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         state = await actions.clear_action(pool, customer_id, user.name)
         log.info("customer_action_cleared", customer_id=customer_id, user=user.name)
         return state
+
+    # --- письма клиентам -------------------------------------------------------------
+    def mail_config(request: Request) -> MailConfig:
+        return request.app.state.mail_config
+
+    def reply_to(request: Request) -> str:
+        email = request.headers.get("x-user-email") if settings.auth_trust_headers else None
+        return mailer.reply_to_for(email, settings.smtp_reply_to, mail_config(request))
+
+    @app.get("/api/v1/mail/templates", tags=["mail"])
+    async def get_mail_templates(_: CurrentUser, pool: Pool) -> dict[str, Any]:
+        return await mail_templates.list_templates(pool)
+
+    @app.put("/api/v1/mail/templates/{code}", tags=["mail"])
+    async def put_mail_template(
+        code: str, user: AdminUser, pool: Pool, patch: Annotated[mail_templates.TemplatePatch, Body()]
+    ) -> dict[str, Any]:
+        return await mail_templates.save_template(pool, code, patch, user.name)
+
+    @app.post("/api/v1/mail/templates/{code}/reset", tags=["mail"])
+    async def reset_mail_template(code: str, user: AdminUser, pool: Pool) -> dict[str, Any]:
+        return await mail_templates.reset_template(pool, code, user.name)
+
+    @app.post("/api/v1/customers/{customer_id}/email/draft", tags=["mail"])
+    async def draft_customer_email(
+        request: Request, customer_id: int, _: CurrentUser, pool: Pool,
+        body: Annotated[mailer.EmailDraft, Body()],
+    ) -> dict[str, Any]:
+        return await mailer.draft(pool, customer_id, body, mail_config(request), reply_to(request))
+
+    @app.post("/api/v1/customers/{customer_id}/email", tags=["mail"])
+    async def send_customer_email(
+        request: Request, customer_id: int, user: CurrentUser, pool: Pool,
+        body: Annotated[mailer.EmailSend, Body()],
+    ) -> dict[str, Any]:
+        return await mailer.send_one(
+            pool, customer_id, body, mail_config(request), reply_to(request), user.name, settings.mail_followup_days
+        )
+
+    @app.post("/api/v1/mail/campaigns/preview", tags=["mail"])
+    async def preview_mail_campaign(
+        request: Request, _: CurrentUser, pool: Pool, body: Annotated[mailer.CampaignRequest, Body()]
+    ) -> dict[str, Any]:
+        return await mailer.preview_campaign(pool, body, mail_config(request))
+
+    @app.post("/api/v1/mail/campaigns", tags=["mail"], status_code=202)
+    async def create_mail_campaign(
+        request: Request, user: CurrentUser, pool: Pool, body: Annotated[mailer.CampaignRequest, Body()]
+    ) -> dict[str, Any]:
+        campaign = await mailer.create_campaign(pool, body, mail_config(request), reply_to(request), user.name)
+        worker: mailer.MailWorker | None = getattr(request.app.state, "mail_worker", None)
+        if worker is not None:
+            worker.kick()
+        return campaign
+
+    @app.get("/api/v1/mail/campaigns", tags=["mail"])
+    async def list_mail_campaigns(
+        _: CurrentUser, pool: Pool, limit: Annotated[int, Query(ge=1, le=100)] = 20
+    ) -> dict[str, Any]:
+        return await mailer.list_campaigns(pool, limit)
+
+    @app.get("/api/v1/mail/campaigns/{campaign_id}", tags=["mail"])
+    async def get_mail_campaign(campaign_id: int, _: CurrentUser, pool: Pool) -> dict[str, Any]:
+        return await mailer.get_campaign(pool, campaign_id)
+
+    @app.get("/api/v1/mail/stats", tags=["mail"])
+    async def get_mail_stats(_: CurrentUser, pool: Pool) -> dict[str, Any]:
+        return await mailer.stats(pool, settings.mail_stats_days)
 
     # --- analytics ---------------------------------------------------------------
     @app.get("/api/v1/analytics/summary", tags=["analytics"])
@@ -269,6 +346,11 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
             log.warning("metrics_summary_failed", error=str(exc))
             if cache.last is not None:
                 metrics.update_from_summary(cache.last)
+        try:
+            if pool is not None:
+                metrics.update_mail_stats(await mailer.stats(pool, settings.mail_stats_days))
+        except Exception as exc:
+            log.warning("metrics_mail_failed", error=str(exc))
         return render(metrics.registry)
 
     return app

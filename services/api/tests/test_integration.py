@@ -75,7 +75,7 @@ async def insert_scores(url: str) -> None:
                 "transactions": [],
                 "money": {"monthly_revenue": 1000, "exposure": loss, "expected_loss": loss,
                           "balance_coverage_days": 12.5, "explanation": "текст"},
-                "recommendations": [{"code": "prolong_wait", "title": "Позвонить"}],
+                "recommendations": [{"code": "prolong_wait", "title": "Написать клиенту"}],
             }
             await conn.execute(
                 """
@@ -199,7 +199,7 @@ async def test_customer_detail(client):
     assert body["id"] == 3 and body["risk_level"] == "medium"
     assert body["services"][0]["id"] == 30
     assert body["money"]["balance_coverage_days"] == 12.5
-    assert body["recommendations"][0]["title"] == "Позвонить"
+    assert body["recommendations"][0]["title"] == "Написать клиенту"
     assert body["scored_at"] == "2026-10-19T15:00:05Z" and body["model_version"] == 1
     assert (await client.get("/api/v1/customers/999", headers=ANALYST)).status_code == 404
 
@@ -352,41 +352,41 @@ def _csv(resp) -> list[list[str]]:
     return [line.split(";") for line in resp.content.decode("utf-8-sig").split("\r\n") if line]
 
 
-async def test_call_today_marks_and_export(client):
+async def test_contact_today_marks_and_export(client):
     await insert_scores(DB_URL)
-    queue = (await client.get("/api/v1/call-today?limit=10", headers=ANALYST)).json()
+    queue = (await client.get("/api/v1/contact-today?limit=10", headers=ANALYST)).json()
     # без unknown, по убыванию ожидаемой потери, при равенстве — по id
     assert [i["id"] for i in queue["items"]] == [1, 4, 7, 3, 5]
     assert queue["queue_total"] == 5 and queue["marked_total"] == 0 and queue["queue_expected_loss"] == 12_050
     first = queue["items"][0]
     assert first["main_reason"] == "Услуга ждёт оплаты" and first["action"] is None
-    assert first["next_action"] == {"code": "prolong_wait", "title": "Позвонить"}
-    assert len((await client.get("/api/v1/call-today", headers=ANALYST)).json()["items"]) == 5
-    assert len((await client.get("/api/v1/call-today?limit=2", headers=ANALYST)).json()["items"]) == 2
+    assert first["next_action"] == {"code": "prolong_wait", "title": "Написать клиенту"}
+    assert len((await client.get("/api/v1/contact-today", headers=ANALYST)).json()["items"]) == 5
+    assert len((await client.get("/api/v1/contact-today?limit=2", headers=ANALYST)).json()["items"]) == 2
     # короткое название причины (label) предпочитаем длинному объяснению
     await _sql("""UPDATE scoring.customer_scores SET reasons = jsonb_set(reasons, '{0,label}', '"Ждёт"')
                   WHERE customer_id = 3""")
-    items = (await client.get("/api/v1/call-today?limit=10", headers=ANALYST)).json()["items"]
+    items = (await client.get("/api/v1/contact-today?limit=10", headers=ANALYST)).json()["items"]
     assert next(i for i in items if i["id"] == 3)["main_reason"] == "Ждёт"
 
-    # аналитик отмечает «Сделано» — клиент уходит из очереди в «отмеченные»
-    done = await client.put("/api/v1/customers/1/action", json={"status": "done", "note": " позвонили "}, headers=ANALYST)
+    # аналитик отмечает «Решено» — клиент уходит из очереди в «отмеченные»
+    done = await client.put("/api/v1/customers/1/action", json={"status": "resolved", "note": " ответил, пополнит "}, headers=ANALYST)
     assert done.status_code == 200, done.text
     action = done.json()["action"]
-    assert action["status"] == "done" and action["active"] is True and action["updated_by"] == "analyst"
-    assert action["note"] == "позвонили" and action["expected_loss_at_mark"] == 4_000
+    assert action["status"] == "resolved" and action["active"] is True and action["updated_by"] == "analyst"
+    assert action["note"] == "ответил, пополнит" and action["expected_loss_at_mark"] == 4_000
     snoozed = await client.put("/api/v1/customers/4/action", json={"status": "snoozed", "snooze_days": 3}, headers=ADMIN)
-    assert snoozed.status_code == 200 and snoozed.json()["action"]["snoozed_until"].endswith("Z")
-    queue = (await client.get("/api/v1/call-today", headers=ANALYST)).json()
+    assert snoozed.status_code == 200 and snoozed.json()["action"]["until"].endswith("Z")
+    queue = (await client.get("/api/v1/contact-today", headers=ANALYST)).json()
     assert [i["id"] for i in queue["items"]] == [7, 3, 5] and queue["marked_total"] == 2
-    marked = (await client.get("/api/v1/call-today?marked=true", headers=ANALYST)).json()
+    marked = (await client.get("/api/v1/contact-today?marked=true", headers=ANALYST)).json()
     assert [i["id"] for i in marked["items"]] == [1, 4]
 
     past = await client.put(
         "/api/v1/customers/7/action", json={"status": "snoozed", "snoozed_until": "2020-01-01T00:00:00Z"}, headers=ANALYST
     )
     assert past.status_code == 422
-    assert (await client.put("/api/v1/customers/999/action", json={"status": "done"}, headers=ANALYST)).status_code == 404
+    assert (await client.put("/api/v1/customers/999/action", json={"status": "resolved"}, headers=ANALYST)).status_code == 404
     assert (await client.get("/api/v1/customers/999/action", headers=ANALYST)).status_code == 404
 
     # CSV: те же фильтры и сортировка, что у списка, плюс статус
@@ -395,7 +395,7 @@ async def test_call_today_marks_and_export(client):
                        "Пополнения всего, €", "Главная причина", "Что сделать", "Статус"]
     assert [r[0] for r in rows[1:]] == ["1", "4", "7", "3"]
     assert rows[1] == ["1", "anna@example.test", "Высокий", "80,0", "40,00", "5,00", "90,00",
-                       "Услуга ждёт оплаты", "Позвонить", "Сделано"]
+                       "Услуга ждёт оплаты", "Написать клиенту", "Решено"]
     assert rows[2][9].startswith("Отложено до ")
     by_search = _csv(await client.get("/api/v1/customers/export.csv?search=other.test", headers=ANALYST))
     assert [r[0] for r in by_search[1:]] == ["7"]
@@ -406,20 +406,20 @@ async def test_call_today_marks_and_export(client):
 
     # отложка истекла — клиент снова в очереди
     await _sql("UPDATE scoring.customer_actions SET snoozed_until = now() - interval '1 second' WHERE customer_id = 4")
-    assert [i["id"] for i in (await client.get("/api/v1/call-today", headers=ANALYST)).json()["items"]] == [4, 7, 3, 5]
+    assert [i["id"] for i in (await client.get("/api/v1/contact-today", headers=ANALYST)).json()["items"]] == [4, 7, 3, 5]
 
-    # после «Сделано» потеря выросла — тоже возвращаем, с пометкой
+    # после «Решено» потеря выросла — тоже возвращаем, с пометкой
     await _sql("UPDATE scoring.customer_scores SET expected_loss = 5000 WHERE customer_id = 1")
-    queue = (await client.get("/api/v1/call-today", headers=ANALYST)).json()
+    queue = (await client.get("/api/v1/contact-today", headers=ANALYST)).json()
     assert [i["id"] for i in queue["items"]][:2] == [1, 4]
-    assert queue["items"][0]["action"]["returned"] is True and queue["items"][0]["action"]["active"] is False
+    assert queue["items"][0]["action"]["return_reason"] == "risk_grew" and queue["items"][0]["action"]["active"] is False
 
     state = (await client.get("/api/v1/customers/1/action", headers=ANALYST)).json()
-    assert [h["status"] for h in state["history"]] == ["done"]
+    assert [h["status"] for h in state["history"]] == ["resolved"]
     assert state["history"][0]["changed_by"] == "analyst" and state["history"][0]["changed_at"].endswith("Z")
 
     cleared = await client.delete("/api/v1/customers/1/action", headers=ANALYST)
     assert cleared.status_code == 200 and cleared.json()["action"] is None
-    assert [h["status"] for h in cleared.json()["history"]] == ["cleared", "done"]
+    assert [h["status"] for h in cleared.json()["history"]] == ["cleared", "resolved"]
     again = await client.delete("/api/v1/customers/1/action", headers=ANALYST)
-    assert [h["status"] for h in again.json()["history"]] == ["cleared", "done"]  # повторное снятие журнал не засоряет
+    assert [h["status"] for h in again.json()["history"]] == ["cleared", "resolved"]  # повторное снятие журнал не засоряет

@@ -20,7 +20,9 @@ tags:
   - name: customers
     description: Клиенты и их оценки риска
   - name: actions
-    description: Кому позвонить сегодня и отметки работы с клиентом
+    description: С кем связаться сегодня и отметки работы с клиентом
+  - name: mail
+    description: Письма клиентам, шаблоны, рассылки и их эффективность
   - name: analytics
     description: Сводные показатели и денежная оценка
   - name: model
@@ -227,7 +229,7 @@ paths:
           schema: { type: string }
         - name: worklist
           in: query
-          description: 'Только очередь «Кому позвонить сегодня»: есть оценка, есть потеря, нет действующей отметки'
+          description: 'Только очередь «С кем связаться сегодня»: есть оценка, есть потеря, нет действующей отметки'
           schema: { type: boolean, default: false }
       responses:
         '200':
@@ -261,13 +263,15 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
     put:
       tags: [actions]
-      summary: Отметить клиента «Сделано» или «Отложить»
+      summary: Отметить клиента «Письмо отправлено», «Решено» или «Отложено»
       description: |
         Доступно любому вошедшему пользователю, в том числе аналитику: отметка не меняет
-        ни данные, ни модель, только очередь звонков. Кто и когда отметил, пишется в журнал.
+        ни данные, ни модель, только очередь. Кто и когда отметил, пишется в журнал.
 
-        «Сделано» прячет клиента из очереди, пока его ожидаемая потеря или уровень риска
-        не вырастут по сравнению с моментом отметки. «Отложить» прячет до даты.
+        «Письмо отправлено» ставится само при отправке письма из панели; вручную — если
+        написали из своей почты. Клиент вернётся в очередь, если за срок ожидания не ответил
+        или его риск вырос. «Решено» прячет клиента, пока ожидаемая потеря или уровень риска
+        не вырастут по сравнению с моментом отметки. «Отложено» прячет до даты.
       operationId: putCustomerAction
       requestBody:
         required: true
@@ -296,27 +300,233 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /api/v1/call-today:
+  /api/v1/contact-today:
     get:
       tags: [actions]
-      summary: Кому позвонить сегодня
+      summary: С кем связаться сегодня
       description: |
         Клиенты с оценкой риска (не unknown) и ненулевой ожидаемой потерей, по убыванию
         ожидаемой потери: первым идёт тот, на ком можно спасти больше всего денег.
-        Клиенты с действующей отметкой «Сделано» или «Отложить» в очередь не попадают;
-        `marked=true` показывает как раз их.
-      operationId: callToday
+        Клиенты с действующей отметкой («Письмо отправлено» в срок ожидания ответа, «Решено»,
+        «Отложено») в очередь не попадают; `marked=true` показывает как раз их.
+      operationId: contactToday
       parameters:
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 5 } }
         - { name: marked, in: query, schema: { type: boolean, default: false } }
       responses:
         '200':
-          description: Очередь звонков
+          description: Очередь
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/CallToday' }
+              schema: { $ref: '#/components/schemas/ContactToday' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/customers/{id}/email/draft:
+    post:
+      tags: [mail]
+      summary: Черновик письма клиенту по шаблону
+      description: Шаблон по главной причине риска (или указанный), подстановки уже заполнены.
+      operationId: draftCustomerEmail
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailDraftRequest' }
+      responses:
+        '200':
+          description: Черновик
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmailDraft' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/customers/{id}/email:
+    post:
+      tags: [mail]
+      summary: Отправить письмо клиенту
+      description: |
+        Письмо уходит по SMTP сразу, в этом же запросе. После отправки клиент получает
+        отметку «Письмо отправлено», в журнал пишется тема, кто и когда. Reply-To — почта
+        сотрудника (заголовок X-User-Email от шлюза), иначе SMTP_REPLY_TO или SMTP_FROM.
+      operationId: sendCustomerEmail
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailSendRequest' }
+      responses:
+        '200':
+          description: Письмо отправлено
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmailSent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '502':
+          description: Почтовый сервер не принял письмо (письмо сохранено со статусом failed)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: Отправка не настроена (нет SMTP_HOST)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/mail/templates:
+    get:
+      tags: [mail]
+      summary: Шаблоны писем и доступные подстановки
+      operationId: listMailTemplates
+      responses:
+        '200':
+          description: Шаблоны
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MailTemplates' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/mail/templates/{code}:
+    put:
+      tags: [mail]
+      summary: Изменить шаблон (только admin)
+      operationId: putMailTemplate
+      parameters:
+        - { name: code, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MailTemplatePatch' }
+      responses:
+        '200':
+          description: Шаблон сохранён
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MailTemplate' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/mail/templates/{code}/reset:
+    post:
+      tags: [mail]
+      summary: Вернуть исходный текст шаблона (только admin)
+      operationId: resetMailTemplate
+      parameters:
+        - { name: code, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Шаблон с исходным текстом
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MailTemplate' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/mail/campaigns/preview:
+    post:
+      tags: [mail]
+      summary: Сколько писем уйдёт в рассылке и пример письма
+      operationId: previewMailCampaign
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CampaignRequest' }
+      responses:
+        '200':
+          description: Предпросмотр
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CampaignPreview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/mail/campaigns:
+    get:
+      tags: [mail]
+      summary: Последние рассылки
+      operationId: listMailCampaigns
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200':
+          description: Рассылки от новых к старым
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Campaign' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [mail]
+      summary: Запустить рассылку
+      description: |
+        Письма кладутся в очередь и уходят в фоне, не быстрее MAIL_RATE_PER_S в секунду.
+        Тем, кому писали за последние skip_days дней, письмо не отправляется. Прогресс —
+        GET /api/v1/mail/campaigns/{id}.
+      operationId: createMailCampaign
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CampaignRequest' }
+      responses:
+        '202':
+          description: Рассылка поставлена в очередь
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Campaign' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '503':
+          description: Отправка не настроена (нет SMTP_HOST)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/mail/campaigns/{id}:
+    get:
+      tags: [mail]
+      summary: Прогресс и итог рассылки
+      operationId: getMailCampaign
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '200':
+          description: Рассылка
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Campaign' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/mail/stats:
+    get:
+      tags: [mail]
+      summary: Сколько писем отправлено и скольким клиентам это помогло
+      operationId: mailStats
+      responses:
+        '200':
+          description: Статистика за MAIL_STATS_DAYS дней (по умолчанию 30)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MailStats' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /api/v1/analytics/summary:
     get:
@@ -856,39 +1066,46 @@ components:
 
     CustomerAction:
       type: object
-      required: [status, snoozed_until, note, updated_at, updated_by, expected_loss_at_mark, risk_level_at_mark, active, returned]
+      required: [status, until, note, updated_at, updated_by, expected_loss_at_mark, risk_level_at_mark, active, return_reason]
+      description: |
+        Жизненный цикл: «Письмо отправлено» (emailed) держит клиента вне очереди, пока ждём ответа;
+        «Решено» (resolved) — пока риск не вырастет; «Отложено» (snoozed) — до даты.
       properties:
-        status: { type: string, enum: [done, snoozed] }
-        snoozed_until: { type: [string, 'null'], format: date-time, description: 'До какого момента отложен; null для done' }
-        note: { type: [string, 'null'] }
+        status: { type: string, enum: [emailed, resolved, snoozed] }
+        until: { type: [string, 'null'], format: date-time, description: 'До какого момента клиент не показывается в очереди; null для resolved' }
+        note: { type: [string, 'null'], description: 'Комментарий; для письма — его тема' }
         updated_at: { type: string, format: date-time }
         updated_by: { type: [string, 'null'] }
         expected_loss_at_mark: { type: integer, description: 'Ожидаемая потеря в момент отметки, евроценты' }
         risk_level_at_mark: { $ref: '#/components/schemas/RiskLevel' }
-        active:
-          type: boolean
-          description: 'Отметка сейчас прячет клиента из очереди. false — отложка истекла или после «Сделано» риск вырос'
-        returned: { type: boolean, description: 'После «Сделано» потеря или уровень риска выросли — клиент снова в очереди' }
+        active: { type: boolean, description: 'Отметка сейчас прячет клиента из очереди' }
+        return_reason:
+          type: [string, 'null']
+          enum: [risk_grew, no_reply, snooze_over, null]
+          description: 'Почему клиент снова в очереди: риск вырос, на письмо не ответили за срок, отложка кончилась'
 
     CustomerActionUpdate:
       type: object
       additionalProperties: false
       required: [status]
-      description: 'Для snoozed нужно ровно одно из snooze_days и snoozed_until; для done — ни одного'
+      description: >-
+        snoozed — ровно одно из snooze_days и snoozed_until; emailed — срок ожидания ответа
+        (по умолчанию MAIL_FOLLOWUP_DAYS, 7 дней); resolved — без срока
       properties:
-        status: { type: string, enum: [done, snoozed] }
+        status: { type: string, enum: [emailed, resolved, snoozed] }
         snooze_days: { type: integer, minimum: 1, maximum: 365 }
         snoozed_until: { type: string, format: date-time, description: 'В будущем, не дальше чем через 365 дней' }
         note: { type: string, maxLength: 500 }
 
     CustomerActionLogEntry:
       type: object
-      required: [status, snoozed_until, note, expected_loss, changed_at, changed_by]
+      required: [status, until, note, expected_loss, email_id, changed_at, changed_by]
       properties:
-        status: { type: string, enum: [done, snoozed, cleared] }
-        snoozed_until: { type: [string, 'null'], format: date-time }
-        note: { type: [string, 'null'] }
+        status: { type: string, enum: [emailed, resolved, snoozed, cleared] }
+        until: { type: [string, 'null'], format: date-time }
+        note: { type: [string, 'null'], description: 'Комментарий; для письма — тема' }
         expected_loss: { type: [integer, 'null'], description: 'Ожидаемая потеря клиента в момент записи, евроценты' }
+        email_id: { type: [integer, 'null'], format: int64, description: 'Письмо, после которого появилась запись' }
         changed_at: { type: string, format: date-time }
         changed_by: { type: [string, 'null'] }
 
@@ -906,16 +1123,17 @@ components:
           description: Журнал от новых записей к старым
           items: { $ref: '#/components/schemas/CustomerActionLogEntry' }
 
-    CallTodayItem:
+    ContactTodayItem:
       type: object
-      required: [id, email, risk_level, risk_score, expected_loss, main_reason, next_action, action]
+      required: [id, email, risk_level, risk_score, expected_loss, main_reason, main_reason_code, next_action, action]
       properties:
         id: { type: integer, format: int64 }
         email: { type: string }
         risk_level: { $ref: '#/components/schemas/RiskLevel' }
         risk_score: { type: [number, 'null'], minimum: 0, maximum: 100 }
         expected_loss: { type: integer, description: евроценты }
-        main_reason: { type: [string, 'null'], description: Заголовок главной причины риска }
+        main_reason: { type: [string, 'null'], description: Короткое название главной причины риска }
+        main_reason_code: { type: [string, 'null'], description: Код главной причины — по нему выбирается шаблон письма }
         next_action:
           description: Главное действие из карточки клиента
           oneOf:
@@ -926,16 +1144,195 @@ components:
             - { $ref: '#/components/schemas/CustomerAction' }
             - { type: 'null' }
 
-    CallToday:
+    ContactToday:
       type: object
       required: [items, queue_total, queue_expected_loss, marked_total]
       properties:
         items:
           type: array
-          items: { $ref: '#/components/schemas/CallTodayItem' }
+          items: { $ref: '#/components/schemas/ContactTodayItem' }
         queue_total: { type: integer, description: Сколько клиентов в очереди всего (без отмеченных) }
         queue_expected_loss: { type: integer, description: Ожидаемая потеря по всей очереди, евроценты }
         marked_total: { type: integer, description: Сколько клиентов сейчас спрятано отметками }
+
+    MailTemplate:
+      type: object
+      required: [code, title, subject, body, is_default, updated_at, updated_by]
+      properties:
+        code:
+          type: string
+          description: 'Код причины риска, к которой относится шаблон, или general / win_back'
+          examples: [insufficient_funds]
+        title: { type: string, description: 'Название для панели' }
+        subject: { type: string, description: 'Тема с подстановками {{…}}' }
+        body: { type: string, description: 'Текст с подстановками {{…}}' }
+        is_default: { type: boolean, description: 'Текст совпадает с исходным' }
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: [string, 'null'] }
+
+    MailTemplatePatch:
+      type: object
+      additionalProperties: false
+      required: [subject, body]
+      properties:
+        subject: { type: string, minLength: 1, maxLength: 200 }
+        body: { type: string, minLength: 1, maxLength: 10000 }
+
+    MailTemplates:
+      type: object
+      required: [items, placeholders]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MailTemplate' }
+        placeholders:
+          type: array
+          items:
+            type: object
+            required: [name, description]
+            properties:
+              name: { type: string, examples: [service] }
+              description: { type: string }
+
+    EmailDraftRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        template_code: { type: [string, 'null'], description: 'Не указан — шаблон по главной причине риска' }
+
+    EmailDraft:
+      type: object
+      required: [customer_id, to, reply_to, from, template_code, subject, text, last_sent_at, enabled]
+      properties:
+        customer_id: { type: integer, format: int64 }
+        to: { type: string }
+        reply_to: { type: string, description: 'Куда придёт ответ клиента: почта сотрудника, SMTP_REPLY_TO или SMTP_FROM' }
+        from: { type: string }
+        template_code: { type: string }
+        subject: { type: string }
+        text: { type: string }
+        last_sent_at: { type: [string, 'null'], format: date-time, description: 'Когда клиенту писали в последний раз' }
+        enabled: { type: boolean, description: 'Настроена ли отправка (SMTP_HOST)' }
+
+    EmailSendRequest:
+      type: object
+      additionalProperties: false
+      required: [subject, text]
+      properties:
+        template_code: { type: [string, 'null'] }
+        subject: { type: string, minLength: 1, maxLength: 200 }
+        text: { type: string, minLength: 1, maxLength: 10000, description: 'Оставшиеся подстановки {{…}} заполнятся при отправке' }
+
+    CustomerEmail:
+      type: object
+      required: [id, customer_id, campaign_id, to, reply_to, template_code, subject, status, skip_reason, error, created_at, created_by, sent_at]
+      properties:
+        id: { type: integer, format: int64 }
+        customer_id: { type: integer, format: int64 }
+        campaign_id: { type: [integer, 'null'], format: int64 }
+        to: { type: string }
+        reply_to: { type: [string, 'null'] }
+        template_code: { type: [string, 'null'] }
+        subject: { type: string }
+        status: { type: string, enum: [queued, sending, sent, failed, skipped] }
+        skip_reason: { type: [string, 'null'], enum: [recent, no_email, null] }
+        error: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        created_by: { type: [string, 'null'] }
+        sent_at: { type: [string, 'null'], format: date-time }
+
+    EmailSent:
+      type: object
+      required: [email, state]
+      properties:
+        email: { $ref: '#/components/schemas/CustomerEmail' }
+        state: { $ref: '#/components/schemas/CustomerActionState' }
+
+    CampaignRequest:
+      type: object
+      additionalProperties: false
+      description: 'Кому писать: выбранным (customer_ids) или всей очереди (worklist: true) — что-то одно'
+      properties:
+        customer_ids:
+          type: array
+          minItems: 1
+          maxItems: 5000
+          items: { type: integer, format: int64 }
+        worklist: { type: boolean, default: false }
+        template_code: { type: [string, 'null'], description: 'Один шаблон для всех; не указан — по главной причине каждого клиента' }
+        skip_days:
+          type: integer
+          minimum: 0
+          maximum: 90
+          default: 7
+          description: 'Не писать тем, кому уже писали за столько дней (0 — писать всем)'
+
+    CampaignPreview:
+      type: object
+      required: [total, to_send, skipped_recent, skipped_no_email, not_found, templates, sample, enabled]
+      properties:
+        total: { type: integer }
+        to_send: { type: integer }
+        skipped_recent: { type: integer, description: 'Писали недавно (skip_days)' }
+        skipped_no_email: { type: integer }
+        not_found: { type: integer, description: 'Таких id нет среди оценённых клиентов' }
+        templates:
+          type: array
+          items:
+            type: object
+            required: [code, count]
+            properties:
+              code: { type: string }
+              count: { type: integer }
+        sample:
+          description: Первое письмо рассылки, как его увидит клиент
+          oneOf:
+            - type: object
+              required: [customer_id, to, template_code, subject, text]
+              properties:
+                customer_id: { type: integer, format: int64 }
+                to: { type: string }
+                template_code: { type: string }
+                subject: { type: string }
+                text: { type: string }
+            - { type: 'null' }
+        enabled: { type: boolean }
+
+    Campaign:
+      type: object
+      required: [id, template_code, skip_days, created_at, created_by, finished_at, status, total, queued, sending, sent, failed, skipped]
+      properties:
+        id: { type: integer, format: int64 }
+        template_code: { type: [string, 'null'] }
+        skip_days: { type: integer }
+        created_at: { type: string, format: date-time }
+        created_by: { type: [string, 'null'] }
+        finished_at: { type: [string, 'null'], format: date-time }
+        status: { type: string, enum: [running, done] }
+        total: { type: integer }
+        queued: { type: integer }
+        sending: { type: integer }
+        sent: { type: integer }
+        failed: { type: integer }
+        skipped: { type: integer }
+
+    MailStats:
+      type: object
+      required: [period_days, sent, failed, queued, customers, risk_down, topped_up, helped, helped_share]
+      description: |
+        Помогло ли письмо: у клиента после последнего письма за период снизился risk-score
+        или вырос баланс (по последующим данным). Простая оценка: она не отделяет эффект
+        письма от того, что клиент сделал бы и сам.
+      properties:
+        period_days: { type: integer }
+        sent: { type: integer, description: 'Писем отправлено за период' }
+        failed: { type: integer }
+        queued: { type: integer, description: 'Ждут отправки в рассылках' }
+        customers: { type: integer, description: 'Скольким клиентам писали' }
+        risk_down: { type: integer }
+        topped_up: { type: integer }
+        helped: { type: integer, description: 'risk_down или topped_up' }
+        helped_share: { type: [number, 'null'], minimum: 0, maximum: 1 }
 
     ServiceRisk:
       type: object

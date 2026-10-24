@@ -56,6 +56,24 @@ last_scored = Gauge(
 )
 http_duration = http_duration_histogram(registry)
 
+emails_sent = Gauge("churn_emails_sent", "Писем клиентам отправлено за период оценки эффективности", registry=registry)
+emails_failed = Gauge("churn_emails_failed", "Писем клиентам не ушло за период", registry=registry)
+emails_queued = Gauge("churn_emails_queued", "Писем в очереди рассылки", registry=registry)
+emails_customers = Gauge("churn_emails_customers", "Клиентов, которым писали за период", registry=registry)
+emails_helped = Gauge(
+    "churn_emails_helped",
+    "Клиентов, у которых после письма снизился риск или вырос баланс",
+    registry=registry,
+)
+
+
+def update_mail_stats(stats: dict[str, Any]) -> None:
+    emails_sent.set(_num(stats.get("sent")))
+    emails_failed.set(_num(stats.get("failed")))
+    emails_queued.set(_num(stats.get("queued")))
+    emails_customers.set(_num(stats.get("customers")))
+    emails_helped.set(_num(stats.get("helped")))
+
 LEVELS = ("high", "medium", "low", "unknown")
 RISK_SCORE_BUCKETS = tuple(range(10, 101, 10))
 

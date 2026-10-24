@@ -41,6 +41,15 @@ class Settings(ServiceSettings):
     model_quality_path: str = _default_model_quality_path()
     summary_cache_ttl_s: float = 30.0
 
+    # письма клиентам: сколько ждём ответа после письма, скорость рассылки, куда идут ответы
+    mail_followup_days: int = 7
+    mail_rate_per_s: float = 5.0
+    mail_batch_size: int = 20
+    mail_poll_interval_s: float = 2.0
+    mail_stats_days: int = 30
+    # Reply-To, если у сотрудника нет почты в профиле; пусто — SMTP_FROM
+    smtp_reply_to: str = ""
+
     db_pool_max: int = 10
     nats_wait_on_start_s: float = 5.0
 

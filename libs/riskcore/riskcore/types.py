@@ -81,6 +81,25 @@ class StatusChange:
     estimated: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class WebActivity:
+    """Агрегаты визитов клиента на сайт из Яндекс Метрики (source.web_activity).
+
+    Счётчики посчитаны ingest на момент computed_at по дневным агрегатам; сырых визитов модель
+    не видит. Если по клиенту строки нет, признаки сайта молчат.
+    """
+
+    account_id: int
+    last_visit_at: datetime | None
+    first_visit_at: datetime | None
+    visits_7d: int
+    visits_30d: int
+    payment_visits_30d: int = 0
+    cancel_visits_30d: int = 0
+    pricing_visits_30d: int = 0
+    last_cancel_visit_at: datetime | None = None
+
+
 class Thresholds(TypedDict):
     medium: float
     high: float

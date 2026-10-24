@@ -378,7 +378,13 @@ class Scorer:
         history = await repo.load_status_history(conn, as_of)
 
         results = await asyncio.to_thread(
-            riskcore.score_customers, source.accounts, source.services, source.transactions, settings, as_of
+            riskcore.score_customers,
+            source.accounts,
+            source.services,
+            source.transactions,
+            settings,
+            as_of,
+            source.web,
         )
         fresh = {_result_id(r): r for r in results}
         removed = [cid for cid in account_ids if cid not in fresh]
@@ -448,7 +454,9 @@ def _score_chunk(
     gc.disable()
     try:
         chunk = rows.to_data()
-        results = riskcore.score_customers(chunk.accounts, chunk.services, chunk.transactions, settings, as_of)
+        results = riskcore.score_customers(
+            chunk.accounts, chunk.services, chunk.transactions, settings, as_of, chunk.web
+        )
         records = _records(results, version, scored_at)
         return [_slim(r) for r in results], records
     finally:

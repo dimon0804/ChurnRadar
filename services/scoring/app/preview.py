@@ -172,7 +172,7 @@ def _factor(data: _Input, sample: int) -> float:
 
 def _before(data: _Input) -> _Before:
     src = data.source
-    results = riskcore.score_customers(src.accounts, src.services, src.transactions, data.current, data.as_of)
+    results = riskcore.score_customers(src.accounts, src.services, src.transactions, data.current, data.as_of, src.web)
     factor = _factor(data, len(results))
     return _Before(results, _totals(results, src.services, data.current, data.as_of, factor, data.customers_total))
 
@@ -182,7 +182,7 @@ def _compare(data: _Input, before: _Before | None) -> tuple[dict[str, Any], _Bef
     if before is None:
         before = _before(data)
     src = data.source
-    after = riskcore.score_customers(src.accounts, src.services, src.transactions, data.proposed, data.as_of)
+    after = riskcore.score_customers(src.accounts, src.services, src.transactions, data.proposed, data.as_of, src.web)
     sample = len(after)
     changes = _changes(before.results, after)
     result = {

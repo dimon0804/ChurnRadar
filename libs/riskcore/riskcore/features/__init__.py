@@ -14,6 +14,9 @@ ORDER = (
     "inactivity",
     "bonus_dependency",
     "withdraw_pressure",
+    "cancel_page_views",
+    "panel_absence",
+    "web_activity_drop",
 )
 
 

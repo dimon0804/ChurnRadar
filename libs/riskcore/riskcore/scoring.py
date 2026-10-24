@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -29,6 +29,7 @@ from .types import (
     Service,
     Settings,
     Transaction,
+    WebActivity,
     ensure_utc,
     isoformat_z,
 )
@@ -449,9 +450,10 @@ def score_account(
     transactions: Iterable[Transaction],
     settings: Settings,
     as_of: datetime,
+    web: WebActivity | None = None,
 ) -> CustomerResult:
     as_of = ensure_utc(as_of)
-    ctx = build_account_context(account, services, transactions, as_of, settings.horizon_days)
+    ctx = build_account_context(account, services, transactions, as_of, settings.horizon_days, web)
 
     outcomes: list[ServiceOutcome] = []
     account_signals = _account_signals(ctx, settings) if ctx.live_services else []
@@ -547,7 +549,10 @@ def score_customers(
     transactions: Iterable[Transaction],
     settings: Settings,
     as_of: datetime,
+    web_activity: Mapping[int, WebActivity] | None = None,
 ) -> list[CustomerResult]:
+    """web_activity — агрегаты Метрики по id клиента; кого нет в словаре, у того признаки сайта молчат."""
+    web_activity = web_activity or {}
     services_by_owner: dict[int, list[Service]] = defaultdict(list)
     owner_of: dict[int, int] = {}
     for service in services:
@@ -567,6 +572,7 @@ def score_customers(
             transactions_by_owner.get(account.id, []),
             settings,
             as_of,
+            web_activity.get(account.id),
         )
         for account in sorted(accounts, key=lambda a: a.id)
     ]

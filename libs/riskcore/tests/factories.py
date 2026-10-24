@@ -11,7 +11,7 @@ from riskcore.context import (
     build_account_context,
     build_service_context,
 )
-from riskcore.types import PaymentTerm, ServiceStatus
+from riskcore.types import PaymentTerm, ServiceStatus, WebActivity
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SAMPLE_PATH = REPO_ROOT / "data" / "sample" / "data.json"
@@ -86,9 +86,33 @@ def account_ctx(
     services: Iterable[Service] = (),
     transactions: Iterable[Transaction] = (),
     horizon_days: int = 30,
+    web: WebActivity | None = None,
 ) -> AccountContext:
     return build_account_context(
-        account or make_account(), list(services), list(transactions), AS_OF, horizon_days
+        account or make_account(), list(services), list(transactions), AS_OF, horizon_days, web
+    )
+
+
+def make_web(
+    account_id: int = 1,
+    last_visit_days_ago: float | None = 1.0,
+    first_visit_days_ago: float | None = 60.0,
+    visits_7d: int = 5,
+    visits_30d: int = 20,
+    cancel_visits_30d: int = 0,
+    last_cancel_days_ago: float | None = None,
+) -> WebActivity:
+    def ago(days: float | None) -> datetime | None:
+        return None if days is None else AS_OF - timedelta(days=days)
+
+    return WebActivity(
+        account_id=account_id,
+        last_visit_at=ago(last_visit_days_ago),
+        first_visit_at=ago(first_visit_days_ago),
+        visits_7d=visits_7d,
+        visits_30d=visits_30d,
+        cancel_visits_30d=cancel_visits_30d,
+        last_cancel_visit_at=ago(last_cancel_days_ago),
     )
 
 

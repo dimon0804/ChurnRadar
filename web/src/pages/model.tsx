@@ -570,7 +570,13 @@ export default function ModelPage() {
         </Card>
       ) : (
         <>
-          <div className="sticky top-14 z-20 -mx-4 mb-4 border-b border-border bg-background/90 px-4 py-2.5 backdrop-blur-md md:-mx-6 md:px-6">
+          {/* в режиме «Что если» панель высокая: на телефоне не прилипает, чтобы не закрывать ползунки */}
+          <div
+            className={cn(
+              whatIf ? 'relative md:sticky' : 'sticky',
+              'top-14 z-20 -mx-4 mb-4 border-b border-border bg-background/90 px-4 py-2.5 backdrop-blur-md md:-mx-6 md:px-6',
+            )}
+          >
             {whatIf ? (
               <WhatIfBar
                 preview={preview}
@@ -581,7 +587,7 @@ export default function ModelPage() {
             ) : (
               <ImpactBar />
             )}
-            <div className="mt-2 flex items-center justify-between gap-4">
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
               <StatusLine
                 save={save}
                 settings={current}

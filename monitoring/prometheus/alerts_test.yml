@@ -9,7 +9,22 @@ tests:
         values: '10x20 2x20'
       - series: 'jetstream_consumer_num_pending{stream_name="CHURN",consumer_name="scoring"}'
         values: '0 5x5'
+      # ingest: очередь копится 6 минут; api: возраст держится ниже порога
+      - series: 'outbox_oldest_pending_seconds{job="ingest",service="ingest"}'
+        values: '0+60x6'
+      - series: 'outbox_oldest_pending_seconds{job="api",service="api"}'
+        values: '100x6'
     alert_rule_test:
+      - eval_time: 3m
+        alertname: OutboxStuck
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: OutboxStuck
+        exp_alerts:
+          - exp_labels: {severity: warning, service: ingest}
+            exp_annotations:
+              summary: "События ingest застряли в outbox: старейшему 5m 0s"
+              description: "Данные сохранены, но событие для пересчёта не уходит в NATS дольше двух минут. Пока очередь не разойдётся, scoring не знает об изменениях. Проверьте NATS и логи ingest (outbox_publish_paused, outbox_relay_error)."
       - eval_time: 70m
         alertname: ChurnExpectedLossGrowth
         exp_alerts:

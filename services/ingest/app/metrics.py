@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from prometheus_client import CollectorRegistry, Counter, Histogram
 from svckit.metrics import http_duration_histogram
+from svckit.outbox import OutboxMetrics
 
 registry = CollectorRegistry(auto_describe=True)
 
@@ -19,9 +20,8 @@ records_total = Counter(
 status_changes_total = Counter(
     "ingest_status_changes_total", "Записи в истории статусов услуг", registry=registry
 )
-publish_failures_total = Counter(
-    "ingest_publish_failures_total", "Не удалось опубликовать событие в NATS", registry=registry
-)
+# отправка churn.source.changed из source.outbox: глубина очереди, отправлено, ошибки
+outbox = OutboxMetrics.create(registry)
 write_duration = Histogram(
     "ingest_write_duration_seconds", "Время записи в БД", ["operation"], registry=registry,
     buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60),

@@ -23,11 +23,23 @@ STREAM_SUBJECTS = ["churn.>"]
 STREAM_MAX_AGE_S = 24 * 3600
 
 
-def envelope(event_type: str, payload: dict[str, Any], producer: str) -> dict[str, Any]:
+def iso_z(moment: datetime) -> str:
+    return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def envelope(
+    event_type: str,
+    payload: dict[str, Any],
+    producer: str,
+    *,
+    event_id: str | None = None,
+    occurred_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Конверт события (contracts/events/envelope.schema.json). Outbox передаёт свои id и время."""
     return {
-        "event_id": str(uuid.uuid4()),
+        "event_id": event_id or str(uuid.uuid4()),
         "type": event_type,
-        "occurred_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "occurred_at": iso_z(occurred_at or datetime.now(UTC)),
         "schema_version": 1,
         "producer": producer,
         "payload": payload,
@@ -66,6 +78,7 @@ class EventBus:
         self._js: JetStreamContext | None = None
         self._ready = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self.last_error: str | None = None
 
     @property
     def connected(self) -> bool:
@@ -116,20 +129,36 @@ class EventBus:
     ) -> dict[str, Any] | None:
         """Публикует событие в конверте. Возвращает конверт или None, если не удалось."""
         msg = envelope(event_type, payload, self.producer)
+        if await self.publish_envelope(subject, msg, retries=retries, wait_connect=True):
+            return msg
+        log.error("event_publish_gave_up", subject=subject, event_id=msg["event_id"])
+        return None
+
+    async def publish_envelope(
+        self, subject: str, msg: dict[str, Any], *, retries: int = 1, wait_connect: bool = False
+    ) -> bool:
+        """Публикует готовый конверт с Nats-Msg-Id = event_id (JetStream отбрасывает повтор).
+
+        wait_connect=False — без соединения сразу False: relay outbox сам решает, когда повторить.
+        """
         data = json.dumps(msg, ensure_ascii=False).encode()
         for attempt in range(1, retries + 1):
             if self._js is None or not self.connected:
+                self.last_error = "нет соединения с NATS"
+                if not wait_connect:
+                    break
                 await asyncio.sleep(0.5 * attempt)
                 continue
             try:
                 await self._js.publish(subject, data, headers={"Nats-Msg-Id": msg["event_id"]}, timeout=5)
                 log.info("event_published", subject=subject, event_id=msg["event_id"])
-                return msg
+                return True
             except Exception as exc:
+                self.last_error = f"{type(exc).__name__}: {exc}"
                 log.warning("event_publish_failed", subject=subject, attempt=attempt, error=str(exc))
-                await asyncio.sleep(0.5 * attempt)
-        log.error("event_publish_gave_up", subject=subject, event_id=msg["event_id"])
-        return None
+                if attempt < retries:
+                    await asyncio.sleep(0.5 * attempt)
+        return False
 
     async def close(self) -> None:
         if self._task is not None and not self._task.done():

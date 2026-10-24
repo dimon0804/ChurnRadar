@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 import asyncpg
 from svckit.errors import ApiError
+from svckit.outbox import add_event
 
 from app.schemas import (
     SourceAccount,
@@ -20,6 +21,9 @@ from app.schemas import (
 
 # Все записи в source.* сериализуются этой блокировкой (снимок и поток изменений).
 SOURCE_LOCK_KEY = 7_340_211_002
+# Событие для scoring пишется в outbox той же транзакцией, что и данные; отправляет его relay.
+OUTBOX_TABLE = "source.outbox"
+SUBJECT_SOURCE_CHANGED = "churn.source.changed"
 # По регламенту услуга в prolong_wait удаляется через 5 дней.
 DELETE_AFTER_PROLONG_WAIT = timedelta(days=5)
 
@@ -55,6 +59,20 @@ class WriteResult:
     @property
     def counts(self) -> dict[str, int]:
         return {"accounts": self.accounts, "services": self.services, "transactions": self.transactions}
+
+
+def source_changed_payload(kind: str, result: WriteResult) -> dict:
+    """payload churn.source.changed (contracts/events/source.changed.schema.json)."""
+    return {
+        "kind": kind,
+        "snapshot_id": result.batch_id,
+        "counts": result.counts,
+        "account_ids": [] if kind == "snapshot" else result.account_ids,
+    }
+
+
+async def _enqueue_source_changed(conn: asyncpg.Connection, kind: str, result: WriteResult) -> None:
+    await add_event(conn, OUTBOX_TABLE, SUBJECT_SOURCE_CHANGED, "source.changed", source_changed_payload(kind, result))
 
 
 def _account_row(a: SourceAccount) -> tuple:
@@ -168,13 +186,16 @@ async def replace_snapshot(
             "UPDATE source.clock SET reference_time = $1, updated_at = now() WHERE id = 1",
             snap.reference_time,
         )
-    return WriteResult(
-        batch_id=batch_id,
-        accounts=len(snap.accounts),
-        services=len(snap.services),
-        transactions=len(snap.transactions),
-        status_changes=len(history),
-    )
+        result = WriteResult(
+            batch_id=batch_id,
+            accounts=len(snap.accounts),
+            services=len(snap.services),
+            transactions=len(snap.transactions),
+            status_changes=len(history),
+        )
+        # сид — тоже полный снимок для scoring
+        await _enqueue_source_changed(conn, "snapshot", result)
+    return result
 
 
 async def apply_changes(pool: asyncpg.Pool, batch: SourceChangeBatch, *, created_by: str | None) -> WriteResult:
@@ -285,11 +306,13 @@ async def apply_changes(pool: asyncpg.Pool, batch: SourceChangeBatch, *, created
             """,
             batch_id, len(batch.accounts), len(batch.services), len(batch.transactions), created_by,
         )
-    return WriteResult(
-        batch_id=batch_id,
-        accounts=len(batch.accounts),
-        services=len(batch.services),
-        transactions=len(batch.transactions),
-        account_ids=sorted(affected),
-        status_changes=len(history),
-    )
+        result = WriteResult(
+            batch_id=batch_id,
+            accounts=len(batch.accounts),
+            services=len(batch.services),
+            transactions=len(batch.transactions),
+            account_ids=sorted(affected),
+            status_changes=len(history),
+        )
+        await _enqueue_source_changed(conn, "changes", result)
+    return result

@@ -30,6 +30,9 @@ class Config:
     advisory_lock_key: int
     chunk_size: int
     workers: int
+    # полный пересчёт держит транзакцию, пока считают воркеры, поэтому лимиты сессии свободнее, чем у api
+    db_statement_timeout_ms: int = 600_000
+    db_idle_in_transaction_timeout_ms: int = 600_000
 
     @classmethod
     def from_env(cls) -> Config:
@@ -51,4 +54,6 @@ class Config:
             advisory_lock_key=int(os.getenv("ADVISORY_LOCK_KEY", "7340001")),
             chunk_size=int(os.getenv("RESCORE_CHUNK_SIZE", "5000")),
             workers=int(os.getenv("SCORING_WORKERS", str(min(4, os.cpu_count() or 1)))),
+            db_statement_timeout_ms=int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "600000")),
+            db_idle_in_transaction_timeout_ms=int(os.getenv("DB_IDLE_IN_TRANSACTION_TIMEOUT_MS", "600000")),
         )

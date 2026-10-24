@@ -938,13 +938,81 @@
       }
     },
     {
+      "type": "timeseries",
+      "title": "Outbox: в очереди",
+      "description": "События ingest и api, записанные в outbox, но ещё не отправленные в NATS. В норме 0; если очередь не уходит дольше 2 минут, срабатывает алерт OutboxStuck.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (service) (outbox_pending_events)",
+          "legendFormat": "{{service}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisPlacement": "auto",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "lineInterpolation": "smooth"
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 23,
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      }
+    },
+    {
       "id": 17,
       "type": "row",
       "title": "Живые обновления (SSE)",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 35,
+        "y": 43,
         "w": 24,
         "h": 1
       },
@@ -1005,7 +1073,7 @@
       "id": 18,
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 44,
         "w": 12,
         "h": 8
       },
@@ -1069,7 +1137,7 @@
       "id": 19,
       "gridPos": {
         "x": 12,
-        "y": 36,
+        "y": 44,
         "w": 12,
         "h": 8
       },
@@ -1085,7 +1153,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 44,
+        "y": 52,
         "w": 24,
         "h": 1
       },
@@ -1146,7 +1214,7 @@
       "id": 21,
       "gridPos": {
         "x": 0,
-        "y": 45,
+        "y": 53,
         "w": 12,
         "h": 7
       },
@@ -1210,7 +1278,7 @@
       "id": 22,
       "gridPos": {
         "x": 12,
-        "y": 45,
+        "y": 53,
         "w": 12,
         "h": 7
       },

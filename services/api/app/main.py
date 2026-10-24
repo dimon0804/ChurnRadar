@@ -16,6 +16,7 @@ from svckit.errors import ApiError, RequestIdMiddleware, install_error_handlers
 from svckit.health import install_probes
 from svckit.logs import configure_logging
 from svckit.metrics import HttpMetricsMiddleware, check_metrics_token, render
+from svckit.outbox import OutboxRelay
 
 from app import metrics, model_settings, queries
 from app.config import settings
@@ -23,7 +24,6 @@ from app.docs import router as docs_router
 
 log = structlog.get_logger()
 
-SUBJECT_SETTINGS_CHANGED = "churn.settings.changed"
 FORWARDED_HEADERS = ("x-user-id", "x-user-name", "x-user-roles", "x-request-id")
 
 
@@ -33,29 +33,34 @@ AdminUser = Annotated[User, Depends(make_require_admin(current_user))]
 Pool = Annotated[Any, Depends(get_pool)]
 
 
-async def publish_settings_changed(request: Request, state: dict[str, Any]) -> None:
-    bus: EventBus | None = getattr(request.app.state, "bus", None)
-    if bus is None:
-        return
-    sent = await bus.publish(
-        SUBJECT_SETTINGS_CHANGED,
-        "settings.changed",
-        {"version": state["version"], "updated_by": state.get("updated_by")},
-    )
-    if sent is None:
-        log.error("settings_event_lost", version=state["version"])
+def kick_relay(request: Request) -> None:
+    """settings.changed уже лежит в outbox вместе с новой версией — будим relay."""
+    relay: OutboxRelay | None = getattr(request.app.state, "relay", None)
+    if relay is not None:
+        relay.kick()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging(settings.log_level, "api")
-    app.state.pool = await create_pool(settings.database_url, settings.db_pool_min, settings.db_pool_max)
+    app.state.pool = await create_pool(
+        settings.database_url, settings.db_pool_min, settings.db_pool_max,
+        statement_timeout_ms=settings.db_statement_timeout_ms,
+        idle_in_transaction_timeout_ms=settings.db_idle_in_transaction_timeout_ms,
+    )
     app.state.bus = EventBus(settings.nats_url, producer="api")
     await app.state.bus.start(wait_s=settings.nats_wait_on_start_s)
+    app.state.relay = OutboxRelay(
+        app.state.pool, app.state.bus, model_settings.OUTBOX_TABLE,
+        metrics=metrics.outbox, batch_size=settings.outbox_batch_size, interval_s=settings.outbox_interval_s,
+        backoff_max_s=settings.outbox_backoff_max_s, retention_s=settings.outbox_retention_s,
+    )
+    app.state.relay.start()
     app.state.http = httpx.AsyncClient(base_url=settings.simulator_url, timeout=settings.simulator_timeout_s)
     log.info("api_started")
     yield
     await app.state.http.aclose()
+    await app.state.relay.stop()
     await app.state.bus.close()
     await app.state.pool.close()
 
@@ -123,7 +128,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         state, changed = await model_settings.patch_settings(pool, patch, user.name)
         if changed:
             log.info("settings_changed", version=state["version"], user=user.name)
-            await publish_settings_changed(request, state)
+            kick_relay(request)
         return state
 
     @app.post("/api/v1/model/settings/reset", tags=["model"])
@@ -131,7 +136,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         state, changed = await model_settings.reset_settings(pool, user.name)
         if changed:
             log.info("settings_reset", version=state["version"], user=user.name)
-            await publish_settings_changed(request, state)
+            kick_relay(request)
         return state
 
     @app.get("/api/v1/model/settings/history", tags=["model"])

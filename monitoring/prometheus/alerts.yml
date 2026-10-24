@@ -73,6 +73,18 @@ groups:
             Ingest принимал изменения за последние 5 минут, а последний пересчёт оценок был
             больше 30 секунд назад. Проверьте воркеры scoring и NATS.
 
+      - alert: OutboxStuck
+        expr: max by (service) (outbox_oldest_pending_seconds) > 120
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "События {{ $labels.service }} застряли в outbox: старейшему {{ $value | humanizeDuration }}"
+          description: >-
+            Данные сохранены, но событие для пересчёта не уходит в NATS дольше двух минут.
+            Пока очередь не разойдётся, scoring не знает об изменениях. Проверьте NATS и логи
+            {{ $labels.service }} (outbox_publish_paused, outbox_relay_error).
+
       - alert: HighErrorRate
         expr: |
           sum by (service) (rate(traefik_service_requests_total{code=~"5.."}[5m]))

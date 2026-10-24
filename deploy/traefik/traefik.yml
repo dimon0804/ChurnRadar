@@ -1,6 +1,10 @@
 entryPoints:
   web:
     address: ":8080"
+    # перед шлюзом на сервере стоит nginx (через docker-прокси он приходит из 172.16/12):
+    # его X-Real-IP и X-Forwarded-For принимаем, иначе лимит входа считал бы всех одним адресом
+    forwardedHeaders:
+      trustedIPs: ["127.0.0.1/32", "172.16.0.0/12"]
     transport:
       respondingTimeouts:
         # SSE connections stay open for hours; the 60s default read timeout of v3 cuts them

@@ -34,9 +34,17 @@ postgresql:
 nats:
   persistence:
     size: 512Mi
+  jetstream:
+    maxFile: 400M
 redis:
   persistence:
     size: 256Mi
 
 gateway:
   traefikNamespace: traefik
+
+# в kind бэкап включён, чтобы CronJob и его NetworkPolicy проверялись вместе со всем остальным
+backup:
+  enabled: true
+  persistence:
+    size: 512Mi

@@ -21,6 +21,17 @@ spec:
       port: 8222
       targetPort: monitor
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cr.labels" . | nindent 4 }}
+    {{- $selector | nindent 4 }}
+data:
+  nats.conf: |
+    {{- include "cr.natsConfig" (dict "root" . "name" $name) | nindent 4 }}
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -40,23 +51,29 @@ spec:
         {{- include "cr.labels" . | nindent 8 }}
         {{- $selector | nindent 8 }}
         churn-radar/tier: data
+      annotations:
+        checksum/config: {{ include "cr.natsConfig" (dict "root" . "name" $name) | sha256sum }}
     spec:
       serviceAccountName: {{ include "cr.serviceAccountName" . }}
       automountServiceAccountToken: false
       enableServiceLinks: false
       terminationGracePeriodSeconds: 60
+      {{- with include "cr.priorityClassName" (dict "root" . "value" $n.priorityClassName) }}
+      {{ . }}
+      {{- end }}
       securityContext:
         {{- include "cr.podSecurityContext" (dict "uid" 10001) | nindent 8 }}
       containers:
         - name: nats
           image: "{{ $n.image.repository }}:{{ $n.image.tag }}"
           imagePullPolicy: {{ $n.image.pullPolicy }}
-          args:
-            - --name={{ $name }}
-            - --jetstream
-            - --store_dir=/data
-            - --http_port=8222
-            - --port=4222
+          # порты, store_dir и лимиты JetStream задаются в nats.conf
+          args: ["--config", "/etc/nats/nats.conf"]
+          {{- if $n.goMemLimit }}
+          env:
+            - name: GOMEMLIMIT
+              value: {{ $n.goMemLimit | quote }}
+          {{- end }}
           ports:
             - name: client
               containerPort: 4222
@@ -87,11 +104,17 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-      {{- if not $n.persistence.enabled }}
+            - name: config
+              mountPath: /etc/nats
+              readOnly: true
       volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+        {{- if not $n.persistence.enabled }}
         - name: data
           emptyDir: {}
-      {{- end }}
+        {{- end }}
   {{- if $n.persistence.enabled }}
   volumeClaimTemplates:
     - metadata:
@@ -127,6 +150,9 @@ spec:
     spec:
       restartPolicy: OnFailure
       automountServiceAccountToken: false
+      {{- with include "cr.priorityClassName" (dict "root" . "value" $n.priorityClassName) }}
+      {{ . }}
+      {{- end }}
       securityContext:
         {{- include "cr.podSecurityContext" (dict "uid" 10001) | nindent 8 }}
       containers:

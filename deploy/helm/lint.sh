@@ -33,5 +33,18 @@ render full --set keda.enabled=true --set serviceMonitor.enabled=true --set nats
   --set postgresql.enabled=false --set postgresql.external.url=postgresql://u:p@db.example:5432/churn | validate
 # повторная установка (upgrade) рендерит миграции как pre-upgrade хук
 render upgrade --is-upgrade | validate
+# бэкап во внешнюю БД с готовым PVC, PriorityClass для всех подов
+render backup-external --set backup.enabled=true --set backup.persistence.existingClaim=pg-backups \
+  --set backup.timeZone=Europe/Moscow --set global.priorityClassName=churn-radar-high \
+  --set postgresql.enabled=false --set postgresql.external.url=postgresql://u:p@db.example:5432/churn | validate
+
+# values.schema.json должна отклонять заведомо неверные значения
+for bad in "ingest.strategy.type=BlueGreen" "backup.retention=0" "redis.maxmemoryPolicy=lru"; do
+  if "$helm_bin" lint "$chart" --set "$bad" >/dev/null 2>&1; then
+    echo "schema пропустила неверное значение: $bad" >&2
+    exit 1
+  fi
+done
+echo "==> schema отклоняет неверные значения"
 
 echo "OK"

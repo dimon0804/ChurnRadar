@@ -1,0 +1,120 @@
+{{- if .Values.backup.enabled }}
+{{- $b := .Values.backup }}
+{{- $name := include "cr.componentName" (dict "root" . "component" "backup") }}
+{{- $selector := include "cr.selectorLabels" (dict "root" . "component" "backup") }}
+{{- $claim := default $name $b.persistence.existingClaim }}
+{{- /*
+PVC создаётся хуком, а не обычным ресурсом релиза:
+  - helm --wait ждёт Bound у всех PVC релиза, а со StorageClass WaitForFirstConsumer
+    (kind local-path, GKE, EKS) том привяжется только при первом запуске бэкапа;
+  - хук не входит в манифест релиза, поэтому helm uninstall дампы не удаляет.
+lookup не даёт пересоздавать PVC при upgrade (в helm template он пуст — PVC рендерится).
+*/}}
+{{- if and (not $b.persistence.existingClaim) (not (lookup "v1" "PersistentVolumeClaim" .Release.Namespace $name)) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cr.labels" . | nindent 4 }}
+    {{- $selector | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-20"
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- include "cr.storageClass" $b.persistence.storageClass | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ $b.persistence.size }}
+---
+{{- end }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cr.labels" . | nindent 4 }}
+    {{- $selector | nindent 4 }}
+spec:
+  schedule: {{ $b.schedule | quote }}
+  {{- with $b.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ $b.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: {{ $b.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ $b.failedJobsHistoryLimit }}
+  jobTemplate:
+    metadata:
+      labels:
+        {{- $selector | nindent 8 }}
+    spec:
+      backoffLimit: {{ $b.backoffLimit }}
+      activeDeadlineSeconds: {{ $b.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "cr.labels" . | nindent 12 }}
+            {{- $selector | nindent 12 }}
+            churn-radar/tier: backup
+          annotations:
+            checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "cr.serviceAccountName" . }}
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          {{- with include "cr.priorityClassName" (dict "root" . "value" $b.priorityClassName) }}
+          {{ . }}
+          {{- end }}
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "cr.podSecurityContext" (dict "uid" $b.runAsUser) | nindent 12 }}
+          containers:
+            - name: pg-dump
+              image: "{{ $b.image.repository }}:{{ $b.image.tag }}"
+              imagePullPolicy: {{ $b.image.pullPolicy }}
+              command: ["sh", "-ec"]
+              args:
+                - |
+                  cd "$BACKUP_DIR"
+                  # недописанный дамп от упавшего запуска
+                  rm -f ./*.partial
+                  out="{{ include "cr.fullname" . }}-$(date -u +%Y%m%dT%H%M%SZ).dump"
+                  pg_dump --dbname="$DATABASE_URL" --format=custom --no-owner --file="$out.partial"
+                  mv "$out.partial" "$out"
+                  echo "backup written: $BACKUP_DIR/$out ($(du -h "$out" | cut -f1))"
+                  # старые дампы сверх RETENTION удаляем
+                  ls -1t ./*.dump | tail -n +$((RETENTION + 1)) | xargs -r rm -f --
+                  ls -lh .
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "cr.secretName" . }}
+                      key: DATABASE_URL
+                - name: RETENTION
+                  value: {{ $b.retention | quote }}
+                - name: BACKUP_DIR
+                  value: /backup
+              resources:
+                {{- toYaml $b.resources | nindent 16 }}
+              securityContext:
+                {{- include "cr.containerSecurityContext" (dict "uid" $b.runAsUser) | nindent 16 }}
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: {{ $claim }}
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
+{{- end }}

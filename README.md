@@ -418,6 +418,12 @@ histogram: число клиентов в корзине после пересч
 с probes и PodDisruptionBudget на каждый сервис, HPA по CPU для `api` и `scoring` (от 2 до 6
 реплик), опционально KEDA по лагу консьюмера JetStream, NetworkPolicy с запретом по
 умолчанию, контейнеры без root и с read-only ФС, миграции как pre-install/pre-upgrade hook.
+`simulator` и `ingest` обновляются через Recreate, чтобы на время выката не появлялось
+второго генератора или второго посева. Redis и NATS знают свои лимиты памяти (`maxmemory`,
+лимиты JetStream в `nats.conf`, `GOMEMLIMIT`), у Postgres `/dev/shm` в памяти. `pg_dump`
+по расписанию включается через `backup.enabled` и складывает дампы в отдельный PVC. Значения
+проверяет `values.schema.json`, нужен Kubernetes 1.30 или новее.
+
 Локально чарт поднимается в kind (нужны kind, kubectl и helm):
 
 ```bash
@@ -425,6 +431,10 @@ make k8s-up      # кластер из трёх узлов, сборка обр�
 make k8s-demo    # kubectl scale, нагрузка и HPA, удаление пода под нагрузкой
 make k8s-down
 ```
+
+То же самое каждый PR проверяет в CI: job `helm-kind` собирает образы, ставит чарт в kind,
+гоняет `helm test`, логинится через шлюз, ждёт, пока в сводке появятся клиенты, и вручную
+запускает бэкап. Локально после `make k8s-up` можно прогнать `bash deploy/kind/smoke.sh`.
 
 Нагрузочные сценарии k6 запускаются в контейнере внутри сети Compose и идут через шлюз с
 настоящей авторизацией: рейтинг клиентов до 200 RPS, поток изменений в `ingest`, 500
@@ -513,7 +523,8 @@ e2e-сценарий проходит то, что будет проверять
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) на каждый push и PR гоняет ruff,
 eslint и tsc, hadolint, actionlint и promtool, тесты всех сервисов, сборку образов со сканом
-Trivy, `helm lint` с kubeconform и e2e в Compose. По тегу `v*` образы публикуются в GHCR.
+Trivy, `helm lint` с kubeconform, e2e в Compose и установку чарта в kind (на PR и в `main`).
+По тегу `v*` образы публикуются в GHCR.
 
 ## Конфигурация
 

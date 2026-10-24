@@ -429,13 +429,23 @@ For Kubernetes there is a Helm chart, [`deploy/helm/churn-radar`](deploy/helm/ch
 Deployment with probes and a PodDisruptionBudget for every service, CPU-based HPA for `api` and
 `scoring` (2 to 6 replicas), optional KEDA scaling on JetStream consumer lag, default-deny
 NetworkPolicy, non-root containers with a read-only filesystem, and migrations as a
-pre-install/pre-upgrade hook. Locally the chart runs in kind (you need kind, kubectl and helm):
+pre-install/pre-upgrade hook. `simulator` and `ingest` roll out with Recreate, so an update
+never runs a second generator or a second seed. Redis and NATS know their memory limits
+(`maxmemory`, JetStream limits in `nats.conf`, `GOMEMLIMIT`), and Postgres gets an in-memory
+`/dev/shm`. Scheduled `pg_dump` is switched on with `backup.enabled` and keeps dumps on a
+separate PVC. Values are checked by `values.schema.json`; Kubernetes 1.30 or newer is required.
+
+Locally the chart runs in kind (you need kind, kubectl and helm):
 
 ```bash
 make k8s-up      # three-node cluster, image build, chart install, panel on :8080
 make k8s-demo    # kubectl scale, load and HPA, killing a pod under load
 make k8s-down
 ```
+
+CI checks the same thing on every PR: the `helm-kind` job builds the images, installs the chart
+into kind, runs `helm test`, logs in through the gateway, waits until the summary has customers
+and triggers a backup by hand. Locally, after `make k8s-up`, run `bash deploy/kind/smoke.sh`.
 
 k6 load scenarios run in a container inside the Compose network and go through the gateway
 with real authentication: customer ranking up to 200 RPS, a change stream into `ingest`, and
@@ -525,8 +535,8 @@ demo someone is looking at.
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push and PR: ruff,
 eslint and tsc, hadolint, actionlint and promtool, tests of all services, image builds with a
-Trivy scan, `helm lint` with kubeconform, and e2e in Compose. A `v*` tag publishes the images to
-GHCR.
+Trivy scan, `helm lint` with kubeconform, e2e in Compose, and a chart install into kind (on PRs
+and `main`). A `v*` tag publishes the images to GHCR.
 
 ## Configuration
 

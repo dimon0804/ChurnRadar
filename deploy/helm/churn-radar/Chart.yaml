@@ -2,9 +2,10 @@ apiVersion: v2
 name: churn-radar
 description: ChurnRadar — платформа прогнозирования оттока клиентов (все сервисы, Postgres, Redis, NATS JetStream, маршруты Traefik)
 type: application
-version: 0.1.0
+version: 0.2.0
 appVersion: "0.1.0"
-kubeVersion: ">=1.27.0-0"
+# preStop.sleep (lifecycle sleep action) появился в 1.30
+kubeVersion: ">=1.30.0-0"
 keywords:
   - churn
   - fastapi

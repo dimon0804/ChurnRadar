@@ -14,6 +14,9 @@ global:
   logLevel: info
   # домен кластера для FQDN адресов ForwardAuth и KEDA
   clusterDomain: cluster.local
+  # PriorityClass по умолчанию для всех подов чарта (пусто = не задавать).
+  # Сам PriorityClass чарт не создаёт, он должен уже быть в кластере.
+  priorityClassName: ""
 
 # Секреты с демо-значениями. В проде передавайте свои значения через
 # --set / внешний values-файл или укажите existingSecret.
@@ -39,6 +42,14 @@ serviceAccount:
 appDefaults:
   replicas: 2
   port: 8000
+  # стратегия обновления Deployment. Для Recreate блок rollingUpdate игнорируется.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  # пусто = global.priorityClassName
+  priorityClassName: ""
   image:
     registry: ""
     repository: ""
@@ -124,6 +135,8 @@ appDefaults:
             value: 1
             periodSeconds: 30
   serviceMonitor:
+    # создавать ServiceMonitor для сервиса (при serviceMonitor.enabled)
+    enabled: true
     # передавать METRICS_TOKEN как Bearer при скрейпе
     bearerToken: false
   # сервис доступен снаружи через шлюз (влияет на NetworkPolicy)
@@ -180,6 +193,9 @@ web:
   extraVolumeMounts:
     - name: nginx-cache
       mountPath: /var/cache/nginx
+  # nginx не отдаёт /metrics (там 404), скрейпить нечего
+  serviceMonitor:
+    enabled: false
 
 api:
   enabled: true
@@ -196,6 +212,9 @@ api:
 ingest:
   enabled: true
   replicas: 1
+  # при RollingUpdate на минуту живут два пода, и оба пытаются засеять пустую базу
+  strategy:
+    type: Recreate
   image:
     repository: churn-radar-ingest
   secretKeys: [DATABASE_URL, REDIS_URL, METRICS_TOKEN]
@@ -237,8 +256,11 @@ scoring:
 
 simulator:
   enabled: true
-  # генератор потока изменений должен быть в одном экземпляре
+  # генератор потока изменений должен быть в одном экземпляре,
+  # поэтому старый под гасим до запуска нового
   replicas: 1
+  strategy:
+    type: Recreate
   image:
     repository: churn-radar-simulator
   secretKeys: [DATABASE_URL, REDIS_URL, METRICS_TOKEN]
@@ -324,6 +346,11 @@ postgresql:
       memory: 512Mi
   # uid пользователя postgres в alpine-образе
   runAsUser: 70
+  # /dev/shm в памяти: по умолчанию у контейнера 64Mi, параллельным запросам мало.
+  # Объём учитывается в лимите памяти контейнера.
+  shmSizeLimit: 256Mi
+  # пусто = global.priorityClassName
+  priorityClassName: ""
 
 redis:
   enabled: true
@@ -334,6 +361,12 @@ redis:
     tag: 7-alpine
     pullPolicy: IfNotPresent
   database: 0
+  # --maxmemory держим ниже лимита контейнера: запас нужен на фрагментацию,
+  # буферы клиентов и fork при перезаписи AOF. Как в docker-compose.yml.
+  maxmemory: 96mb
+  # вытесняются только ключи с TTL (кэш), сессии без срока не трогаем
+  maxmemoryPolicy: volatile-lru
+  priorityClassName: ""
   persistence:
     enabled: true
     size: 512Mi
@@ -354,9 +387,15 @@ nats:
     repository: nats
     tag: 2.10-alpine
     pullPolicy: IfNotPresent
+  # лимиты JetStream попадают в nats.conf (max_memory_store / max_file_store).
+  # maxFile не должен превышать размер PVC.
   jetstream:
     maxMemory: 64M
-    maxFile: 1G
+    maxFile: 900M
+  # мягкий лимит памяти Go-рантайма, примерно 90% от resources.limits.memory.
+  # Пусто = не задавать.
+  goMemLimit: 230MiB
+  priorityClassName: ""
   persistence:
     enabled: true
     size: 1Gi
@@ -446,6 +485,43 @@ keda:
   cpu:
     enabled: true
     value: "70"
+
+# Резервные копии Postgres: CronJob с pg_dump в отдельный PVC.
+# Работает и со встроенной, и с внешней БД (берёт DATABASE_URL из общего Secret).
+# Для внешней БД разрешите egress в networkPolicy.extraAppEgress.
+backup:
+  enabled: false
+  schedule: "0 3 * * *"
+  # пусто = часовой пояс kube-controller-manager (обычно UTC)
+  timeZone: ""
+  # сколько последних дампов хранить
+  retention: 7
+  # образ с pg_dump той же мажорной версии, что и сервер
+  image:
+    repository: postgres
+    tag: 16-alpine
+    pullPolicy: IfNotPresent
+  # uid из alpine-образа postgres
+  runAsUser: 70
+  priorityClassName: ""
+  backoffLimit: 2
+  activeDeadlineSeconds: 1800
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  # PVC создаётся один раз хуком и переживает helm uninstall (удалять вручную)
+  persistence:
+    # готовый PVC вместо создаваемого чартом
+    existingClaim: ""
+    size: 2Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
 
 tests:
   image:

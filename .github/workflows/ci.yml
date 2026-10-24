@@ -291,6 +291,84 @@ jobs:
                   -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
           done
 
+  helm-kind:
+    name: Helm install in kind
+    needs: [discover, helm]
+    # полный прогон в kind долгий: только PR и push в main
+    if: >-
+      needs.discover.outputs.has_helm == 'true' && needs.discover.outputs.has_images == 'true' &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CLUSTER_NAME: churn-radar
+      NAMESPACE: churn-radar
+      RELEASE: churn-radar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - uses: docker/setup-buildx-action@v3
+      # открывает ACTIONS_RUNTIME_TOKEN для buildx, чтобы брать кэш слоёв из job build
+      - uses: crazy-max/ghaction-github-runtime@v3
+      - name: Build images (tag :dev, as deploy/kind/up.sh)
+        run: |
+          set -euo pipefail
+          # имя:контекст:Dockerfile — те же образы и контексты, что в up.sh
+          for spec in \
+            auth:services/auth:services/auth/Dockerfile \
+            notifier:services/notifier:services/notifier/Dockerfile \
+            web:.:web/Dockerfile \
+            api:.:services/api/Dockerfile \
+            ingest:.:services/ingest/Dockerfile \
+            simulator:.:services/simulator/Dockerfile \
+            scoring:.:services/scoring/Dockerfile \
+            migrate:.:services/migrate/Dockerfile; do
+            IFS=: read -r name context dockerfile <<<"$spec"
+            echo "::group::churn-radar-$name:dev"
+            docker buildx build --load -t "churn-radar-$name:dev" -f "$dockerfile" \
+              --cache-from "type=gha,scope=$name" "$context"
+            echo "::endgroup::"
+          done
+          # сторонние образы up.sh отдаёт узлам из локального Docker
+          for image in postgres:16-alpine redis:7-alpine nats:2.10-alpine natsio/nats-box:0.17.0; do
+            docker pull -q "$image"
+          done
+      - uses: helm/kind-action@v1.12.0
+        with:
+          version: v0.29.0
+          config: deploy/kind/cluster-ci.yaml
+          cluster_name: churn-radar
+          wait: 120s
+      - name: Install chart (deploy/kind/up.sh)
+        env:
+          SKIP_BUILD: "1"
+          MOCK_CORE: "0"
+          HELM_TIMEOUT: 15m
+        run: bash deploy/kind/up.sh
+      - name: helm test
+        run: helm test "$RELEASE" --namespace "$NAMESPACE" --timeout 5m --logs
+      - name: Smoke via gateway
+        env:
+          BASE_URL: http://localhost:8080
+        run: bash deploy/kind/smoke.sh
+      - name: Backup CronJob runs
+        run: |
+          set -euo pipefail
+          kubectl -n "$NAMESPACE" create job --from="cronjob/$RELEASE-backup" ci-backup
+          kubectl -n "$NAMESPACE" wait --for=condition=complete job/ci-backup --timeout=5m
+          kubectl -n "$NAMESPACE" logs job/ci-backup
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl -n "$NAMESPACE" get all,pvc,networkpolicy -o wide || true
+          kubectl -n "$NAMESPACE" get events --sort-by=.lastTimestamp | tail -n 80 || true
+          kubectl -n "$NAMESPACE" describe pods | tail -n 300 || true
+          for pod in $(kubectl -n "$NAMESPACE" get pods -o name); do
+            echo "::group::logs $pod"
+            kubectl -n "$NAMESPACE" logs "$pod" --all-containers --tail=200 || true
+            echo "::endgroup::"
+          done
+
   e2e:
     name: E2E (compose + Playwright)
     needs: discover

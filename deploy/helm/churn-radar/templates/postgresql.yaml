@@ -62,6 +62,9 @@ spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       terminationGracePeriodSeconds: 60
+      {{- with include "cr.priorityClassName" (dict "root" . "value" $pg.priorityClassName) }}
+      {{ . }}
+      {{- end }}
       securityContext:
         {{- include "cr.podSecurityContext" (dict "uid" $pg.runAsUser) | nindent 8 }}
       containers:
@@ -110,12 +113,22 @@ spec:
               mountPath: /var/run/postgresql
             - name: tmp
               mountPath: /tmp
+            {{- if $pg.shmSizeLimit }}
+            - name: dshm
+              mountPath: /dev/shm
+            {{- end }}
       volumes:
         - name: run
           emptyDir: {}
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        {{- if $pg.shmSizeLimit }}
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ $pg.shmSizeLimit }}
+        {{- end }}
         {{- if not $pg.persistence.enabled }}
         - name: data
           emptyDir: {}

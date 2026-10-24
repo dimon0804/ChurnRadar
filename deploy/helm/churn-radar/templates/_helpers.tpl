@@ -173,3 +173,28 @@ capabilities:
 storageClassName: {{ . | quote }}
 {{- end }}
 {{- end -}}
+
+{{/* nats.conf: (dict "root" $ "name" "<server name>") */}}
+{{- define "cr.natsConfig" -}}
+{{- $js := .root.Values.nats.jetstream -}}
+server_name: {{ .name | quote }}
+port: 4222
+http_port: 8222
+jetstream {
+  store_dir: "/data"
+  {{- with $js.maxMemory }}
+  max_memory_store: {{ . }}
+  {{- end }}
+  {{- with $js.maxFile }}
+  max_file_store: {{ . }}
+  {{- end }}
+}
+{{- end -}}
+
+{{/* priorityClassName: (dict "root" $ "value" "...") — своё значение или global */}}
+{{- define "cr.priorityClassName" -}}
+{{- $v := default .root.Values.global.priorityClassName .value -}}
+{{- if $v -}}
+priorityClassName: {{ $v | quote }}
+{{- end -}}
+{{- end -}}

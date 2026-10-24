@@ -47,6 +47,17 @@ GROUPS: dict[str, GroupSpec] = {
         default_cap=85.0,
         default_enabled=False,
     ),
+    "web": GroupSpec(
+        code="web",
+        title="Поведение на сайте",
+        description=(
+            "Три признака из Яндекс Метрики: страница отмены, давно нет в панели, визитов стало "
+            "меньше. Редкие заходы видны сразу в двух последних, поэтому их вклад ограничен потолком."
+        ),
+        features=("cancel_page_views", "panel_absence", "web_activity_drop"),
+        default_cap=50.0,
+        default_enabled=False,
+    ),
 }
 
 

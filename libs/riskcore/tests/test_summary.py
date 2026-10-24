@@ -131,7 +131,9 @@ def test_forecast_places_decisions_on_right_days(portfolio):
     outcomes = {o.service.id: o for r in results for o in r.services}
     hourly_share = outcomes[2].loss_probability / HORIZON
     day_12 = (AS_OF + timedelta(days=12)).date()
-    assert forecast[day_12]["expected_nonrenewals"] == pytest.approx(outcomes[3].loss_probability + hourly_share)
+    assert forecast[day_12]["expected_nonrenewals"] == pytest.approx(
+        outcomes[3].loss_probability + hourly_share
+    )
     first_day = AS_OF.date() + timedelta(days=1)
     overdue = outcomes[5].loss_probability + outcomes[6].loss_probability
     pending_deletion = (AS_OF - timedelta(days=2) + PROLONG_WAIT_GRACE).date()

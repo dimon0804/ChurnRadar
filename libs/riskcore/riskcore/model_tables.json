@@ -6,8 +6,8 @@
   "accounts": 20000,
   "seed": 42,
   "reference": "2026-10-01T12:00:00Z",
-  "riskcore_sources": "8f3baaa035a9",
-  "simulator_sources": "3b9616ea2ac7"
+  "riskcore_sources": "2ddf6ec1cae8",
+  "simulator_sources": "530c4ad01846"
  },
  "settings": {
   "weights": {
@@ -20,7 +20,10 @@
    "churn_history": 40.0,
    "inactivity": 20.0,
    "bonus_dependency": 15.0,
-   "withdraw_pressure": 10.0
+   "withdraw_pressure": 10.0,
+   "cancel_page_views": 45.0,
+   "panel_absence": 25.0,
+   "web_activity_drop": 20.0
   },
   "groups": {}
  },
@@ -203,7 +206,10 @@
    "churn_history": 1.23291,
    "inactivity": 0.0,
    "bonus_dependency": 0.8445,
-   "withdraw_pressure": -0.16784
+   "withdraw_pressure": -0.16784,
+   "cancel_page_views": 0.0,
+   "panel_absence": 0.0,
+   "web_activity_drop": 0.0
   },
   "inputs": "силы сигналов признаков 0..1 по услуге"
  },
@@ -284,6 +290,27 @@
     0.86764,
     0.06935,
     0.06302,
+    0.0,
+    0.0
+   ],
+   "cancel_page_views": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "panel_absence": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "web_activity_drop": [
+    1.0,
+    0.0,
+    0.0,
     0.0,
     0.0
    ]

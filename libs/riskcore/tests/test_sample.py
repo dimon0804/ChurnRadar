@@ -6,7 +6,7 @@ from collections import Counter
 
 import pytest
 
-from riskcore import build_summary, default_settings, parse_snapshot, score_customers
+from riskcore import build_summary, default_settings, merge_settings, parse_snapshot, score_customers
 
 from .factories import AS_OF
 
@@ -87,13 +87,20 @@ def test_print_sample_table(sample_results, capsys):
         print("\n" + "\n".join(lines))
 
 
-def test_case_numbers_match_readme(sample_results):
-    """Цифры из README и docs/model.md: 4 высокого, 2 среднего, 4 без оценки, €2 297,83."""
+def test_case_numbers_match_readme(sample_results, sample_data):
+    """Цифры из README и docs/model.md: 4 высокого, 2 среднего, 4 без оценки, €1 531,68.
+
+    Деньги по калиброванной вероятности (по умолчанию); по сырой было бы €2 297,83.
+    """
     results, services, settings = sample_results
     levels = Counter(r.risk_level for r in results)
     assert dict(levels) == {"high": 4, "medium": 2, "unknown": 4}
     summary = build_summary(results, services, [], settings, AS_OF)
-    assert summary["expected_loss"] == 229_783
+    assert summary["expected_loss"] == 153_168
+    accounts, _, transactions = parse_snapshot(sample_data)
+    raw_settings = merge_settings({"calibrated": False})
+    raw = score_customers(accounts, services, transactions, raw_settings, AS_OF)
+    assert build_summary(raw, services, [], raw_settings, AS_OF)["expected_loss"] == 229_783
     stats = summary["risk_scores"]
     scores = [r.risk_score for r in results if r.risk_score is not None]
     assert stats["scored"] == 6

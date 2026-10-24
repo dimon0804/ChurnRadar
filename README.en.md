@@ -570,6 +570,8 @@ is what enforces it: a direct request gets 403.
 | Draft and send an email to a customer | `POST /api/v1/customers/{id}/email/draft`, `POST /api/v1/customers/{id}/email` | — | ✓ | ✓ |
 | Bulk campaign: preview and start | `POST /api/v1/mail/campaigns/preview`, `POST /api/v1/mail/campaigns` | — | ✓ | ✓ |
 | Edit and reset email templates | `PUT /api/v1/mail/templates/{code}`, `POST …/reset` | — | — | ✓ |
+| Company name in the email signature | `PUT /api/v1/mail/settings` | — | — | ✓ |
+| Preview a template on a real customer | `POST /api/v1/mail/preview/{code}` | ✓ | ✓ | ✓ |
 | CAC and margin | `PUT /api/v1/analytics/marketing/settings` | — | — | ✓ |
 | Model: edit, what-if, reset | `PATCH /api/v1/model/settings`, `POST …/preview`, `POST …/reset` | — | — | ✓ |
 | Data: snapshot and change stream | `PUT /api/v1/source/snapshot`, `POST /api/v1/source/events` | — | — | ✓ |
@@ -1027,6 +1029,8 @@ types are generated from it. Main resources:
 | `POST /api/v1/customers/{id}/email/draft`, `POST …/email` | an email from a template: draft and sending over SMTP |
 | `POST /api/v1/mail/campaigns` (plus `…/preview`, `GET …/{id}`) | background mailing with repeat protection and progress |
 | `GET/PUT /api/v1/mail/templates` | email templates, only admins can edit |
+| `POST /api/v1/mail/preview/{code}` | a template draft rendered on a real customer, with the same substitutions as sending |
+| `GET/PUT /api/v1/mail/settings` | company name for the email signature (`{{company}}`), only admins can edit |
 | `GET /api/v1/mail/stats` | how many emails were sent and how many customers they helped |
 | `GET/POST /api/v1/playbooks`, `GET/PUT/DELETE …/{id}` | retention playbooks, editing is admin only |
 | `POST /api/v1/playbooks/preview`, `POST …/{id}/run` | who the rule hits now; run without waiting for a recalculation |

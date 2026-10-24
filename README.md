@@ -558,6 +558,8 @@ Secret через `secrets.alerts.existingSecret`, остальное — в `al
 | Черновик и отправка письма клиенту | `POST /api/v1/customers/{id}/email/draft`, `POST /api/v1/customers/{id}/email` | — | ✓ | ✓ |
 | Массовая рассылка: предпросмотр и запуск | `POST /api/v1/mail/campaigns/preview`, `POST /api/v1/mail/campaigns` | — | ✓ | ✓ |
 | Править и сбрасывать шаблоны писем | `PUT /api/v1/mail/templates/{code}`, `POST …/reset` | — | — | ✓ |
+| Название компании в подписи писем | `PUT /api/v1/mail/settings` | — | — | ✓ |
+| Предпросмотр шаблона на настоящем клиенте | `POST /api/v1/mail/preview/{code}` | ✓ | ✓ | ✓ |
 | CAC и маржа | `PUT /api/v1/analytics/marketing/settings` | — | — | ✓ |
 | Модель: правка, «что если», сброс | `PATCH /api/v1/model/settings`, `POST …/preview`, `POST …/reset` | — | — | ✓ |
 | Данные: снимок и поток изменений | `PUT /api/v1/source/snapshot`, `POST /api/v1/source/events` | — | — | ✓ |
@@ -1007,6 +1009,8 @@ Swagger UI открывается по адресу http://localhost:8080/api/v1
 | `POST /api/v1/customers/{id}/email/draft`, `POST …/email` | письмо по шаблону: черновик и отправка через SMTP |
 | `POST /api/v1/mail/campaigns` (и `…/preview`, `GET …/{id}`) | рассылка в фоне с защитой от повторов и прогрессом |
 | `GET/PUT /api/v1/mail/templates` | шаблоны писем, правка только у admin |
+| `POST /api/v1/mail/preview/{code}` | черновик шаблона на данных настоящего клиента: те же подстановки, что при отправке |
+| `GET/PUT /api/v1/mail/settings` | название компании для подписи писем (`{{company}}`), правка только у admin |
 | `GET /api/v1/mail/stats` | сколько писем отправлено и скольким клиентам это помогло |
 | `GET/POST /api/v1/playbooks`, `GET/PUT/DELETE …/{id}` | сценарии удержания, правка только у admin |
 | `POST /api/v1/playbooks/preview`, `POST …/{id}/run` | кого заденет правило сейчас; запуск без ожидания пересчёта |

@@ -314,7 +314,7 @@ async def test_company_setting_and_template_preview_on_real_customer(env):
 
     draft = {"subject": "{{service}} ждёт оплаты", "body": "Баланс {{balance}}\n\nкоманда {{company}}"}
     preview = (
-        await client.post("/api/v1/mail/templates/prolong_wait/preview", json=draft, headers=ANALYST)
+        await client.post("/api/v1/mail/preview/prolong_wait", json=draft, headers=ANALYST)
     ).json()
     # у клиента 1 наибольшая потеря и главная причина «ждёт оплаты» — ему этот шаблон и уйдёт
     assert preview["customer_id"] == 1 and preview["to"] == "anna@example.test"
@@ -328,18 +328,18 @@ async def test_company_setting_and_template_preview_on_real_customer(env):
 
     # причины «не хватит денег» нет ни у кого — пример не выдумываем
     nobody = (
-        await client.post("/api/v1/mail/templates/insufficient_funds/preview", json=draft, headers=ANALYST)
+        await client.post("/api/v1/mail/preview/insufficient_funds", json=draft, headers=ANALYST)
     ).json()
     assert nobody["customer_id"] is None and nobody["applicable"] is False
 
     chosen = (
         await client.post(
-            "/api/v1/mail/templates/insufficient_funds/preview", json={**draft, "customer_id": 3}, headers=ANALYST
+            "/api/v1/mail/preview/insufficient_funds", json={**draft, "customer_id": 3}, headers=ANALYST
         )
     ).json()
     assert chosen["customer_id"] == 3 and chosen["applicable"] is False
     bad = await client.post(
-        "/api/v1/mail/templates/general/preview", json={**draft, "body": "{{nope}}"}, headers=ANALYST
+        "/api/v1/mail/preview/general", json={**draft, "body": "{{nope}}"}, headers=ANALYST
     )
     assert bad.status_code == 422
 

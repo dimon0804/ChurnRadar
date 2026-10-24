@@ -231,7 +231,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
     ) -> dict[str, Any]:
         return await mail_templates.save_template(pool, code, patch, user.name)
 
-    @app.post("/api/v1/mail/templates/{code}/preview", tags=["mail"])
+    @app.post("/api/v1/mail/preview/{code}", tags=["mail"])
     async def preview_mail_template(
         code: str, _: CurrentUser, pool: Pool, draft: Annotated[mail_templates.TemplatePreview, Body()]
     ) -> dict[str, Any]:

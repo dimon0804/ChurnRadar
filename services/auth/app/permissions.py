@@ -19,9 +19,12 @@ UNSAFE_RULES: tuple[tuple[str, str], ...] = (
     ("/api/v1/source", "admin"),
     ("/api/v1/simulator", "admin"),
     ("/api/v1/mail/templates", "admin"),
+    ("/api/v1/mail/settings", "admin"),
     ("/api/v1/analytics/marketing/settings", "admin"),
     ("/api/v1/alerts/preferences/users", "admin"),
     ("/api/v1/auth/users", "admin"),
+    # предпросмотр шаблона на клиенте ничего не меняет — смотреть может любой вошедший
+    ("/api/v1/mail/preview", "analyst"),
     # работа с клиентами: письма, рассылки, отметки «связались/решено/отложить»
     ("/api/v1/mail", "marketer"),
     ("/api/v1/customers", "marketer"),

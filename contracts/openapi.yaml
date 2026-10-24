@@ -724,7 +724,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /api/v1/mail/templates/{code}/preview:
+  /api/v1/mail/preview/{code}:
     post:
       tags: [mail]
       summary: Черновик шаблона на данных настоящего клиента

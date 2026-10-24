@@ -9,6 +9,7 @@ FAILED = Counter("alerts_failed_total", "Неудачные попытки до�
 DROPPED = Counter("alerts_dropped_total", "Доставки, брошенные после всех попыток", ["channel"])
 RAISED = Counter("alerts_raised_total", "Созданные оповещения", ["kind"])
 SUPPRESSED = Counter("alerts_suppressed_total", "Оповещения, придержанные анти-спамом", ["kind"])
+BULK_FOLDED = Counter("alerts_bulk_folded_total", "Оповещения по клиентам, свёрнутые в сводную запись")
 PENDING = Gauge("alerts_delivery_pending", "Доставки в очереди")
 EVENTS = Counter("alerts_events_total", "Полученные события scores.updated", ["result"])
 ERRORS = Counter("alerts_processing_errors_total", "Ошибки обработки", ["stage"])

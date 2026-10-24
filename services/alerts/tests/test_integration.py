@@ -261,3 +261,87 @@ async def test_webhook_unreachable_counts_failures(seeded: Any) -> None:
         assert FAILED.labels(channel="webhook")._value.get() - failed_before == 2
     finally:
         await stack.stop()
+
+
+async def _baseline(stack: Stack) -> None:
+    first = scores_updated([], 21_500, full=True)
+    await stack.publish(first)
+    await wait_for(lambda: stack.processed(first["event_id"]), what="исходный срез")
+
+
+async def test_hundred_transitions_fold_into_one_record_and_one_webhook(seeded: Any, webhook: WebhookServer) -> None:
+    async with seeded.acquire() as conn:
+        for cid in range(100, 200):
+            await put_score(conn, cid, "medium", 1_000)
+    stack = Stack(seeded, make_config(webhook_url=webhook.url, bulk_threshold=20))
+    await stack.start()
+    try:
+        await _baseline(stack)
+        # пересчёт после смены модели: сотня клиентов разом ушла в высокий риск
+        async with seeded.acquire() as conn:
+            for cid in range(100, 200):
+                await put_score(conn, cid, "high", 1_000 + cid * 10)
+        event = scores_updated(list(range(100, 200)), 400_000)
+        await stack.publish(event)
+        await wait_for(lambda: stack.processed(event["event_id"]), what="пачка")
+
+        feed = await stack.feed()
+        assert [r["kind"] for r in feed] == ["bulk"]
+        assert feed[0]["customer_id"] is None
+        assert "в высоком риске 101 клиент (было 1)" in feed[0]["message"]
+        assert "Самые дорогие: #199 (€29,90), #198 (€29,80), #197 (€29,70)." in feed[0]["message"]
+
+        await wait_for(lambda: _true(len(webhook.requests) == 1), what="webhook")
+        body = webhook.requests[0]["body"]
+        assert [a["kind"] for a in body["alerts"]] == ["bulk"]
+        assert body["alerts"][0]["url"] == "https://churn.example/customers?level=high&sort=expected_loss&order=desc"
+        async with seeded.acquire() as conn:
+            assert await conn.fetchval("SELECT count(*) FROM alerts.deliveries") == 1
+            # состояние перебазировано: все сто запомнены как высокий риск
+            assert await conn.fetchval("SELECT count(*) FROM alerts.customer_state WHERE risk_level = 'high'") == 101
+
+        # следующий пересчёт без изменений — ни отложенных оповещений, ни новой доставки
+        again = scores_updated([], 400_000, full=True)
+        await stack.publish(again)
+        await wait_for(lambda: stack.processed(again["event_id"]), what="повторный пересчёт")
+        await asyncio.sleep(0.3)
+        assert len(await stack.feed()) == 1
+        assert len(webhook.requests) == 1
+    finally:
+        await stack.stop()
+
+
+async def test_snapshot_new_customers_only_in_summary(seeded: Any) -> None:
+    stack = Stack(seeded, make_config())
+    await stack.start()
+    try:
+        await _baseline(stack)
+        # новый снимок: три новых клиента сразу в высоком риске, порог (20) не превышен
+        async with seeded.acquire() as conn:
+            for cid in (501, 502, 503):
+                await put_score(conn, cid, "high", 5_000)
+        event = scores_updated([], 36_500, full=True)
+        await stack.publish(event)
+        await wait_for(lambda: stack.processed(event["event_id"]), what="снимок")
+        feed = await stack.feed()
+        assert [r["kind"] for r in feed] == ["bulk"]
+        assert feed[0]["message"].startswith("Загружены новые данные: в высоком риске 4 клиента (было 1)")
+    finally:
+        await stack.stop()
+
+
+async def test_single_new_customer_from_stream_is_individual(seeded: Any) -> None:
+    stack = Stack(seeded, make_config())
+    await stack.start()
+    try:
+        await _baseline(stack)
+        async with seeded.acquire() as conn:
+            await put_score(conn, 777, "high", 5_000)
+        event = scores_updated([777], 22_000)
+        await stack.publish(event)
+        await wait_for(lambda: stack.processed(event["event_id"]), what="событие")
+        feed = await stack.feed()
+        assert [(r["kind"], r["customer_id"]) for r in feed] == [("high_risk", 777)]
+        assert feed[0]["message"].startswith("Новый клиент #777 (user777@example.com) сразу в высоком риске")
+    finally:
+        await stack.stop()

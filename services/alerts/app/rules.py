@@ -19,9 +19,21 @@ class Thresholds:
     cooldown: timedelta
 
 
+# куда ведёт запись без клиента: список высокого риска, для сводной — самые дорогие сверху
+HIGH_RISK_PATH = "/customers?level=high"
+BULK_PATH = "/customers?level=high&sort=expected_loss&order=desc"
+
+
+def feed_path(kind: str, customer_id: int | None) -> str:
+    """Путь в панели для записи ленты: карточка клиента или отфильтрованный список."""
+    if customer_id is not None:
+        return f"/customers/{customer_id}"
+    return BULK_PATH if kind == "bulk" else HIGH_RISK_PATH
+
+
 @dataclass(frozen=True, slots=True)
 class Alert:
-    kind: str  # high_risk | loss_jump | total_loss_jump
+    kind: str  # high_risk | loss_jump | total_loss_jump | bulk
     message: str
     customer_id: int | None = None
     email: str | None = None
@@ -31,9 +43,7 @@ class Alert:
     prev_loss: int | None = None
 
     def link(self, public_url: str) -> str:
-        if self.customer_id is None:
-            return f"{public_url}/customers?level=high"
-        return f"{public_url}/customers/{self.customer_id}"
+        return public_url + feed_path(self.kind, self.customer_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +198,47 @@ def evaluate_total(
     return alert, TotalState(current, current, now), False
 
 
+# --- массовые изменения ------------------------------------------------------------------------
+
+
+def is_bulk(alerts: Sequence[Alert], *, full: bool, threshold: int) -> bool:
+    """Сворачивать ли оповещения по клиентам в одну сводную запись.
+
+    Да, если их больше порога (загрузили снимок, поменяли модель), и всегда, если полный
+    пересчёт принёс новых клиентов: это снимок, а не одиночный клиент из потока изменений.
+    """
+    if len(alerts) > threshold:
+        return True
+    return full and any(a.customer_id is not None and a.prev_level is None for a in alerts)
+
+
+def bulk_alert(
+    folded: Sequence[Alert],
+    *,
+    full: bool,
+    high_now: int,
+    high_before: int,
+    total_now: int | None,
+    total_before: int | None,
+    top_n: int = 3,
+) -> Alert:
+    """Одна запись вместо пачки: сколько в высоком риске, как сдвинулась потеря, кто дороже всех."""
+    head = "Загружены новые данные" if full else "Много изменений за один пересчёт"
+    clients = _plural(high_now, ("клиент", "клиента", "клиентов"))
+    message = f"{head}: в высоком риске {high_now} {clients} (было {high_before})"
+    if total_now is not None and total_before is not None:
+        message += f", ожидаемая потеря {money(total_before)} → {money(total_now)}"
+    message += "."
+    top = sorted(
+        (a for a in folded if a.customer_id is not None and a.risk_level == HIGH),
+        key=lambda a: a.expected_loss or 0,
+        reverse=True,
+    )[:top_n]
+    if top:
+        message += " Самые дорогие: " + ", ".join(f"#{a.customer_id} ({money(a.expected_loss)})" for a in top) + "."
+    return Alert(kind="bulk", message=message, expected_loss=total_now, prev_loss=total_before)
+
+
 # --- сообщения для внешних каналов -------------------------------------------------------------
 
 
@@ -207,13 +258,13 @@ def batch_text(alerts: Sequence[Alert], public_url: str, max_items: int) -> str:
     n = len(alerts)
     lines = [f"ChurnRadar: {n} {_plural(n, ('оповещение', 'оповещения', 'оповещений'))}"]
     # общая потеря и переходы в высокий риск важнее, их — первыми
-    order = {"total_loss_jump": 0, "high_risk": 1, "loss_jump": 2}
+    order = {"bulk": 0, "total_loss_jump": 1, "high_risk": 2, "loss_jump": 3}
     shown = sorted(alerts, key=lambda a: order.get(a.kind, 9))[:max_items]
     for alert in shown:
         lines.append(f"• {alert.message} {alert.link(public_url)}")
     rest = n - len(shown)
     if rest > 0:
-        lines.append(f"…и ещё {rest}: {public_url}/customers?level=high")
+        lines.append(f"…и ещё {rest}: {public_url}{BULK_PATH}")
     return "\n".join(lines)
 
 

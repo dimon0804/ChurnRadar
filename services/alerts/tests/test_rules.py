@@ -9,8 +9,11 @@ from app.rules import (
     Thresholds,
     TotalState,
     batch_text,
+    bulk_alert,
     evaluate_customers,
     evaluate_total,
+    feed_path,
+    is_bulk,
     money,
     webhook_payload,
 )
@@ -134,7 +137,7 @@ def test_batch_text_orders_and_truncates() -> None:
     assert lines[0] == "ChurnRadar: 14 оповещений"
     assert lines[1].startswith("• итог") and lines[1].endswith(f"{URL}/customers?level=high")
     assert lines[2] == f"• m1 {URL}/customers/1"
-    assert lines[-1] == f"…и ещё 11: {URL}/customers?level=high"
+    assert lines[-1] == f"…и ещё 11: {URL}/customers?level=high&sort=expected_loss&order=desc"
 
 
 def test_webhook_payload_shape() -> None:
@@ -163,3 +166,45 @@ def test_webhook_payload_shape() -> None:
         "message": "текст",
         "url": f"{URL}/customers/5",
     }
+
+
+def _transition(cid: int, loss: int, *, new: bool = False) -> Alert:
+    return Alert(
+        kind="high_risk",
+        customer_id=cid,
+        risk_level="high",
+        prev_level=None if new else "medium",
+        expected_loss=loss,
+        message=f"m{cid}",
+    )
+
+
+def test_is_bulk() -> None:
+    few = [_transition(i, 100) for i in range(20)]
+    assert not is_bulk(few, full=False, threshold=20)
+    assert not is_bulk(few, full=True, threshold=20)
+    assert is_bulk([*few, _transition(99, 100)], full=False, threshold=20)
+    # новые клиенты в полном пересчёте — это снимок, даже если их мало
+    assert is_bulk([_transition(1, 100, new=True)], full=True, threshold=20)
+    # одиночный новый клиент из потока изменений — обычное оповещение
+    assert not is_bulk([_transition(1, 100, new=True)], full=False, threshold=20)
+
+
+def test_bulk_alert_message_and_link() -> None:
+    folded = [_transition(i, i * 1_000, new=True) for i in range(1, 101)]
+    alert = bulk_alert(folded, full=True, high_now=104, high_before=4, total_now=1_000_000, total_before=200_000)
+    assert alert.kind == "bulk" and alert.customer_id is None
+    assert alert.message == (
+        "Загружены новые данные: в высоком риске 104 клиента (было 4), ожидаемая потеря €2 000 → €10 000. "
+        "Самые дорогие: #100 (€1 000), #99 (€990), #98 (€980)."
+    )
+    assert alert.link(URL) == f"{URL}/customers?level=high&sort=expected_loss&order=desc"
+    partial = bulk_alert(folded[:2], full=False, high_now=1, high_before=0, total_now=None, total_before=None)
+    assert partial.message.startswith("Много изменений за один пересчёт: в высоком риске 1 клиент (было 0).")
+
+
+def test_feed_path() -> None:
+    assert feed_path("high_risk", 7) == "/customers/7"
+    assert feed_path("loss_jump", 7) == "/customers/7"
+    assert feed_path("total_loss_jump", None) == "/customers?level=high"
+    assert feed_path("bulk", None) == "/customers?level=high&sort=expected_loss&order=desc"

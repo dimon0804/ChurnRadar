@@ -144,6 +144,15 @@ async def save_states(conn: asyncpg.Connection, states: Sequence[StateRow]) -> N
     )
 
 
+async def count_high_state(conn: asyncpg.Connection) -> int:
+    """Сколько клиентов было в высоком риске по запомненному состоянию (до обновления)."""
+    return int(await conn.fetchval("SELECT count(*) FROM alerts.customer_state WHERE risk_level = 'high'"))
+
+
+async def count_high_scores(conn: asyncpg.Connection) -> int:
+    return int(await conn.fetchval("SELECT count(*) FROM scoring.customer_scores WHERE risk_level = 'high'"))
+
+
 async def total_loss_from_summary(conn: asyncpg.Connection) -> int | None:
     """Если в событии нет summary.expected_loss — берём из сводки scoring."""
     value = await conn.fetchval("SELECT (data->>'expected_loss')::bigint FROM scoring.summary WHERE id = 1")

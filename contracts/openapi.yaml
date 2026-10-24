@@ -566,7 +566,9 @@ paths:
       description: |
         Отдаёт сервис alerts. Новые записи сверху. Оповещение появляется, когда клиент перешёл
         в высокий риск, его ожидаемая потеря выросла больше порога или выросла общая ожидаемая
-        потеря. `latest_id` — id самой свежей записи, по нему панель считает новые.
+        потеря. Массовое изменение (снимок, больше `ALERTS_BULK_THRESHOLD` клиентов за пересчёт)
+        приходит одной сводной записью `bulk`. `latest_id` — id самой свежей записи, по нему
+        панель считает новые.
       operationId: listAlerts
       parameters:
         - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
@@ -574,7 +576,7 @@ paths:
         - { name: customer_id, in: query, schema: { type: integer, minimum: 1 } }
         - name: kind
           in: query
-          schema: { type: string, enum: [high_risk, loss_jump, total_loss_jump] }
+          schema: { type: string, enum: [high_risk, loss_jump, total_loss_jump, bulk] }
       responses:
         '200':
           description: Страница ленты
@@ -1576,8 +1578,8 @@ components:
       required: [id, kind, message, link]
       properties:
         id: { type: integer }
-        kind: { type: string, enum: [high_risk, loss_jump, total_loss_jump] }
-        customer_id: { type: [integer, 'null'], description: 'null у total_loss_jump' }
+        kind: { type: string, enum: [high_risk, loss_jump, total_loss_jump, bulk] }
+        customer_id: { type: [integer, 'null'], description: 'null у total_loss_jump и bulk' }
         email: { type: [string, 'null'] }
         risk_level: { type: [string, 'null'] }
         prev_level: { type: [string, 'null'] }
@@ -1585,7 +1587,7 @@ components:
         prev_loss: { type: [integer, 'null'], description: 'евроценты, точка отсчёта роста' }
         message: { type: string }
         created_at: { type: [string, 'null'], format: date-time }
-        link: { type: string, description: 'путь в панели: /customers/{id} или /customers?level=high' }
+        link: { type: string, description: 'путь в панели: /customers/{id}, для сводных — отфильтрованный список /customers?level=high...' }
 
     AlertPage:
       type: object

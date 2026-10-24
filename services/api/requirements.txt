@@ -9,5 +9,5 @@ structlog==24.4.0
 httpx==0.28.1
 fastapi-swagger==0.4.64
 reportlab==4.4.4
-pillow==12.3.0
+pillow==13.0.0
 tzdata==2025.2

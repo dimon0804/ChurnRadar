@@ -16,6 +16,8 @@ const ModelPage = lazy(() => import('@/pages/model'))
 const DataPage = lazy(() => import('@/pages/data'))
 const ModelQualityPage = lazy(() => import('@/pages/model-quality'))
 const MarketingPage = lazy(() => import('@/pages/marketing'))
+const UsersPage = lazy(() => import('@/pages/users'))
+const ProfilePage = lazy(() => import('@/pages/profile'))
 
 function PageFallback() {
   return (
@@ -115,6 +117,8 @@ export const router = createBrowserRouter([
       },
       { path: 'model', element: <AdminOnly><ModelPage /></AdminOnly> },
       { path: 'data', element: <AdminOnly><DataPage /></AdminOnly> },
+      { path: 'users', element: <AdminOnly><UsersPage /></AdminOnly> },
+      { path: 'profile', element: <Lazy><ProfilePage /></Lazy> },
       {
         path: 'quality',
         element: (

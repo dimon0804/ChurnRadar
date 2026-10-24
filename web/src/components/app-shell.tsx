@@ -1,6 +1,20 @@
-import { Activity, Database, FileCode2, LayoutDashboard, LogOut, Megaphone, Moon, ShieldCheck, SlidersHorizontal, Sun, Users } from 'lucide-react'
+import {
+  Activity,
+  CircleUserRound,
+  Database,
+  FileCode2,
+  LayoutDashboard,
+  LogOut,
+  Megaphone,
+  Moon,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sun,
+  UserCog,
+  Users,
+} from 'lucide-react'
 import type { ReactNode } from 'react'
-import { NavLink, Outlet } from 'react-router'
+import { Link, NavLink, Outlet } from 'react-router'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
   DropdownMenu,
@@ -37,6 +51,7 @@ const NAV: NavItem[] = [
   { to: '/model', label: 'Модель', icon: <SlidersHorizontal />, adminOnly: true },
   { to: '/quality', label: 'Качество модели', icon: <ShieldCheck /> },
   { to: '/data', label: 'Данные', icon: <Database />, adminOnly: true },
+  { to: '/users', label: 'Пользователи', icon: <UserCog />, adminOnly: true },
 ]
 
 export function Logo({ className }: { className?: string }) {
@@ -146,6 +161,12 @@ function UserMenu() {
           </p>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link to="/profile">
+            <CircleUserRound />
+            Профиль: почта и пароль
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuItem asChild>
           <a href={SWAGGER_PATH} target="_blank" rel="noopener noreferrer">
             <FileCode2 />

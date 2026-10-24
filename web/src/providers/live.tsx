@@ -25,6 +25,8 @@ interface LiveContextValue {
 const LiveContext = createContext<LiveContextValue | null>(null)
 
 const STREAM_URL = '/api/v1/stream'
+/** Служебное SSE-событие notifier: клиенту нужно перечитать все данные */
+const RESYNC_EVENT = 'resync'
 const HIGHLIGHT_MS = 2600
 const BACKOFF_MS = [1000, 2000, 4000, 8000, 15000]
 
@@ -126,6 +128,9 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           retryTimer = window.setTimeout(connect, delay)
         }
       }
+
+      // notifier мог потерять события (обрыв NATS, неизвестный Last-Event-ID) — перечитываем всё
+      source.addEventListener(RESYNC_EVENT, invalidateAll)
 
       for (const type of LIVE_EVENT_TYPES) {
         source.addEventListener(type, (event) => {

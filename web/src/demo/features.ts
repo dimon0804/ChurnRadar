@@ -107,6 +107,13 @@ export const FEATURES: Feature[] = [
     target: { kind: 'step', step: 'call-today' },
   },
   {
+    id: 'marketing',
+    title: 'Маркетинговые метрики',
+    extra: true,
+    detail: 'MRR, ARPU, LTV, отток клиентов и выручки, LTV/CAC и окупаемость, сегменты по риску и словарь терминов простыми словами.',
+    target: { kind: 'step', step: 'marketing' },
+  },
+  {
     id: 'what-if',
     title: 'Режим «Что если»',
     extra: true,

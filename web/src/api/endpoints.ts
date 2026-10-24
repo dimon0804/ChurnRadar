@@ -7,6 +7,9 @@ import type {
   CustomerDetail,
   CustomerPage,
   LoginRequest,
+  Marketing,
+  MarketingSettings,
+  MarketingSettingsUpdate,
   ModelQuality,
   ModelSettings,
   ModelSettingsPatch,
@@ -31,6 +34,9 @@ export const api = {
     request<CustomerPage>('/api/v1/customers', { query, signal }),
   customer: (id: number, signal?: AbortSignal) => request<CustomerDetail>(`/api/v1/customers/${id}`, { signal }),
   summary: (signal?: AbortSignal) => request<Summary>('/api/v1/analytics/summary', { signal }),
+  marketing: (signal?: AbortSignal) => request<Marketing>('/api/v1/analytics/marketing', { signal }),
+  putMarketingSettings: (body: MarketingSettingsUpdate) =>
+    request<MarketingSettings>('/api/v1/analytics/marketing/settings', { method: 'PUT', body }),
 
   callToday: (query: { limit?: number; marked?: boolean }, signal?: AbortSignal) =>
     request<CallToday>('/api/v1/call-today', { query, signal }),
@@ -69,6 +75,8 @@ export const queryKeys = {
   callToday: (marked: boolean) => ['customers', 'call-today', { marked }] as const,
   customerAction: (id: number) => ['customer', id, 'action'] as const,
   summary: ['summary'] as const,
+  // под префиксом summary: после пересчёта обновляется вместе со сводкой
+  marketing: ['summary', 'marketing'] as const,
   settings: ['settings'] as const,
   history: ['settings-history'] as const,
   modelQuality: ['model-quality'] as const,

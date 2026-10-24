@@ -10,8 +10,8 @@ keywords:
   - fastapi
   - nats
   - traefik
-home: https://github.com/dimon0804/churn-radar
+home: https://github.com/dimon0804/ChurnRadar
 sources:
-  - https://github.com/dimon0804/churn-radar
+  - https://github.com/dimon0804/ChurnRadar
 maintainers:
   - name: ChurnRadar team

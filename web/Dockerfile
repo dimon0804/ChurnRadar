@@ -18,9 +18,14 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
+# базовый образ отстаёт от исправлений alpine (openssl), подтягиваем их при сборке
+USER root
+# hadolint ignore=DL3017
+RUN apk upgrade --no-cache
+
 LABEL org.opencontainers.image.title="churn-radar-web" \
       org.opencontainers.image.description="ChurnRadar: веб-панель маркетолога" \
-      org.opencontainers.image.source="https://github.com/dimon0804/churn-radar"
+      org.opencontainers.image.source="https://github.com/dimon0804/ChurnRadar"
 
 COPY web/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY web/nginx/security-headers.conf /etc/nginx/security-headers.conf

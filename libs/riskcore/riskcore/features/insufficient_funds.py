@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime
 
 from ..base import Recommendation, ServiceFeature, Signal
 from ..context import ServiceContext
@@ -19,7 +20,9 @@ class InsufficientFunds(ServiceFeature):
         "Автопродление включено, но баланса и разблокированных бонусов не хватит на продления "
         "клиента в горизонте. Продления оплачиваются по очереди, поэтому сигнал получают только "
         "те услуги, чьи продления придутся на момент, когда деньги уже кончились; продления, "
-        "которые успеют оплатиться, признак не трогает. Сила равна доле недостающей суммы."
+        "которые успеют оплатиться, признак не трогает. Сила равна доле недостающей суммы. "
+        "Если выручку услуги ограничивает платёжеспособность клиента, объяснение называет и сумму "
+        "продлений по прайсу, и сумму, от которой считается потеря."
     )
     group = "finance"
     default_weight = 55.0
@@ -39,20 +42,10 @@ class InsufficientFunds(ServiceFeature):
         value = min(max(funds.shortfall / funds.upcoming_renewals_cost, 0.0), 1.0)
         name = ctx.service.name
         date = format_date(funds.shortfall_at)
-        partial = (
-            f" (без оплаты останутся продления на {format_eur(uncovered)} из {format_eur(cost)})"
-            if uncovered < cost
-            else ""
-        )
         bonus = math.ceil(funds.shortfall * TOPUP_BONUS_SHARE / 100) * 100
         return Signal(
             value=value,
-            explanation=(
-                f"На продления за {ctx.horizon_days} дн. нужно {format_eur(funds.upcoming_renewals_cost)}, "
-                f"а на балансе {format_eur(funds.spendable)}: не хватит {format_eur(funds.shortfall)}, "
-                f"деньги закончатся {date}, "
-                f"и оплатить {name} будет нечем{partial}"
-            ),
+            explanation=_explain(ctx, funds.shortfall_at, cost, uncovered),
             facts={
                 "service": name,
                 "date": date,
@@ -72,3 +65,46 @@ class InsufficientFunds(ServiceFeature):
                 f"иначе {signal.facts['service']} не продлится."
             ),
         )
+
+
+def _explain(ctx: ServiceContext, shortfall_at: datetime, cost: int, uncovered: int) -> str:
+    """Коротко: когда кончатся деньги и от какой суммы считаем потерю.
+
+    Дата та же, что «Баланса хватит» в блоке денег: оба считаются по графику автосписаний.
+    Если выручку услуги ограничила платёжеспособность клиента, прайсовая сумма продлений
+    больше той, от которой считается потеря, и это нужно сказать прямо.
+    """
+    funds = ctx.funds
+    account = ctx.account_ctx
+    name = ctx.service.name
+    horizon = ctx.horizon_days
+    date = format_date(shortfall_at)
+    paid = sum(plan.cost_before(shortfall_at) for plan in account.renewal_plans)
+    if paid <= 0:
+        text = (
+            f"На балансе {format_eur(funds.spendable)}: не хватит уже на продление {date}, "
+            f"оплатить {name} будет нечем."
+        )
+    else:
+        text = (
+            f"На балансе {format_eur(funds.spendable)}: на автопродления хватит до {date}, "
+            f"дальше {name} оплатить будет нечем"
+        )
+        if uncovered < cost and not ctx.revenue_capped:
+            text += f" (без оплаты останутся продления на {format_eur(uncovered)} из {format_eur(cost)})"
+        text += "."
+    if not ctx.revenue_capped:
+        return (
+            f"{text} Всего на продления за {horizon} дн. нужно {format_eur(funds.upcoming_renewals_cost)}, "
+            f"не хватает {format_eur(funds.shortfall)}."
+        )
+    if ctx.horizon_revenue > account.payment_capacity:
+        basis = "цена одного продления"
+    else:
+        basis = "столько он может заплатить: баланс плюс обычные пополнения"
+    rate = account.replenishment_rate
+    pays = f"вносит около {format_eur(rate)} в месяц" if rate >= 100 else "почти не пополняет баланс"
+    return (
+        f"{text} По прайсу продления {name} за {horizon} дн. стоят {format_eur(cost)}, "
+        f"но клиент {pays}, поэтому потерю считаем от {format_eur(ctx.horizon_revenue)} ({basis})."
+    )

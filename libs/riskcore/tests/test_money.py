@@ -92,7 +92,58 @@ def test_customer_money_block():
     outcomes = [o for o in result.services if o.probability is not None]
     assert money["expected_loss"] == round(sum(o.probability * o.revenue for o in outcomes))
     assert money["exposure"] == sum(round(o.revenue) for o in outcomes if o.level in ("medium", "high"))
-    assert money["balance_coverage_days"] == pytest.approx(6_000 / (4_000 / 30), abs=0.05)
+    # Баланс тратится только на автопродления по графику: €7 в неделю с 100-го дня, на €60 хватит
+    # восьми продлений, девятое (100 + 8 недель) уже не оплатится.
+    run_out = AS_OF + timedelta(days=100 + 7 * 8)
+    assert money["funds_run_out_at"] == run_out.isoformat().replace("+00:00", "Z")
+    assert money["balance_coverage_days"] == pytest.approx(156.0)
     assert "€40" in money["explanation"]
+    assert f"до {run_out:%d.%m.%Y} (на 156 дн.)" in money["explanation"]
     service = next(s for s in result.detail["services"] if s["id"] == 1)
     assert service["monthly_price"] == 3_000
+
+
+def test_coverage_and_shortfall_date_are_one_calculation():
+    """«Баланса хватит» в блоке денег и дата в причине insufficient_funds — один и тот же момент."""
+    account = make_account(balance=2_000, total_replenished=0)
+    services = [make_service(id=1, payment_term="week", price=700, expires_in_days=2)]
+    [result] = score_customers([account], services, [], default_settings(), AS_OF)
+    money = result.detail["money"]
+    # €20 хватит на два недельных продления (2-й и 9-й день), третье на 16-й день не оплатится.
+    run_out = AS_OF + timedelta(days=16)
+    assert money["funds_run_out_at"] == run_out.isoformat().replace("+00:00", "Z")
+    assert money["balance_coverage_days"] == pytest.approx(16.0)
+    [reason] = [r for r in result.reasons if r["code"] == "insufficient_funds"]
+    assert f"хватит до {run_out:%d.%m.%Y}" in reason["title"]
+    assert f"до {run_out:%d.%m.%Y}" in money["explanation"]
+
+
+def test_coverage_looks_past_horizon():
+    account = make_account(balance=10_000)
+    services = [make_service(id=1, price=3_000, expires_in_days=40)]
+    [result] = score_customers([account], services, [], default_settings(), AS_OF)
+    money = result.detail["money"]
+    # Продления на 40-й, 70-й, 101-й день и т.д. (по календарным месяцам); €100 хватит на три.
+    assert money["balance_coverage_days"] is not None and money["balance_coverage_days"] > 30
+    assert not [r for r in result.reasons if r["code"] == "insufficient_funds"]
+
+
+def test_coverage_without_autoprolong_or_beyond_a_year():
+    manual = make_service(id=1, auto_prolong=False, expires_in_days=10)
+    [result] = score_customers([make_account()], [manual], [], default_settings(), AS_OF)
+    assert result.detail["money"]["balance_coverage_days"] is None
+    assert result.detail["money"]["funds_run_out_at"] is None
+    assert "Автопродление выключено" in result.detail["money"]["explanation"]
+
+    rich = make_account(balance=10_000_000)
+    [result] = score_customers([rich], [make_service(id=1)], [], default_settings(), AS_OF)
+    assert result.detail["money"]["balance_coverage_days"] is None
+    assert "больше чем на год" in result.detail["money"]["explanation"]
+
+
+def test_funds_run_out_inside_horizon_reuses_shortfall():
+    from riskcore.money import funds_run_out
+
+    moment = AS_OF + timedelta(days=3)
+    assert funds_run_out([], AS_OF, 0, 30, moment) == moment
+    assert funds_run_out([make_service(auto_prolong=False)], AS_OF, 0, 30, None) is None

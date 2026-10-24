@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from .money import (
     RenewalPlan,
     collectible_revenue,
+    funds_run_out,
     horizon_revenue,
     monthly_price,
     payment_capacity,
@@ -23,9 +24,18 @@ SECONDS_PER_DAY = 86_400
 
 @dataclass(frozen=True, slots=True)
 class Funds:
+    """Деньги клиента против графика автопродлений.
+
+    shortfall_at — первое продление внутри горизонта, на которое денег уже нет. runs_out_at —
+    тот же момент, но с поиском дальше горизонта (до года): из него считается, на сколько
+    дней хватит баланса. Внутри горизонта оба момента совпадают.
+    """
+
     spendable: int
     upcoming_renewals_cost: int
     shortfall_at: datetime | None
+    runs_out_at: datetime | None = None
+    has_renewals: bool = False
 
     @property
     def shortfall(self) -> int:
@@ -114,10 +124,13 @@ def build_account_context(
     plans = tuple(plan for s in live if (plan := renewal_plan(s, as_of, horizon_days)) is not None)
     spendable = account.spendable
     rate = replenishment_rate(account.total_replenished, _lifetime_days(all_services, transactions, as_of))
+    shortfall_at = shortfall_moment(list(plans), spendable)
     funds = Funds(
         spendable=spendable,
         upcoming_renewals_cost=sum(plan.cost for plan in plans),
-        shortfall_at=shortfall_moment(list(plans), spendable),
+        shortfall_at=shortfall_at,
+        runs_out_at=funds_run_out(live, as_of, spendable, horizon_days, shortfall_at),
+        has_renewals=any(s.auto_prolong and s.price > 0 for s in live),
     )
     return AccountContext(
         account=account,

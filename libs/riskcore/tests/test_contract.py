@@ -101,6 +101,10 @@ def test_summary_matches_schema(openapi, scored):
     assert set(summary) <= strict(openapi, "Summary")
     for point in summary["timeline"]:
         validate(openapi, "TimelinePoint", point)
+    schema = openapi["components"]["schemas"]["Summary"]["properties"]
+    for row in summary["top_reasons"]:
+        assert set(row) <= set(schema["top_reasons"]["items"]["properties"])
+    assert set(summary["risk_scores"]) <= set(schema["risk_scores"]["properties"])
 
 
 def test_model_settings_match_schema(openapi):

@@ -85,3 +85,45 @@ def test_print_sample_table(sample_results, capsys):
         )
     with capsys.disabled():
         print("\n" + "\n".join(lines))
+
+
+def test_case_numbers_match_readme(sample_results):
+    """Цифры из README и docs/model.md: 4 высокого, 2 среднего, 4 без оценки, €2 297,83."""
+    results, services, settings = sample_results
+    levels = Counter(r.risk_level for r in results)
+    assert dict(levels) == {"high": 4, "medium": 2, "unknown": 4}
+    summary = build_summary(results, services, [], settings, AS_OF)
+    assert summary["expected_loss"] == 229_783
+    stats = summary["risk_scores"]
+    scores = [r.risk_score for r in results if r.risk_score is not None]
+    assert stats["scored"] == 6
+    assert stats["avg"] == pytest.approx(sum(scores) / 6)
+
+
+def test_customer_5_money_is_consistent(sample_results):
+    """Дата в причине «не хватит денег» и «баланса хватит» в блоке денег — один расчёт."""
+    results, _, _ = sample_results
+    result = next(r for r in results if r.customer_id == 5)
+    money = result.detail["money"]
+    [reason] = [r for r in result.reasons if r["code"] == "insufficient_funds"]
+    assert money["funds_run_out_at"] == "2026-10-21T10:00:00Z"
+    assert money["balance_coverage_days"] == pytest.approx(1.8)
+    assert "хватит до 21.10.2026" in reason["title"]
+    assert "до 21.10.2026" in money["explanation"]
+    # почасовой сервер: по прайсу тысячи евро, потеря считается от того, что клиент может заплатить
+    assert "По прайсу продления service-0025" in reason["title"]
+    assert "потерю считаем от €506,78" in reason["title"]
+    assert "€4 696,68" not in reason["title"]
+
+
+def test_reasons_have_short_labels(sample_results):
+    results, _, _ = sample_results
+    for result in results:
+        titles = {f["code"]: f["title"] for f in result.detail["features"]}
+        for reason in result.reasons:
+            assert reason["label"] and len(reason["label"]) < len(reason["title"])
+            if reason["code"] in titles:
+                assert reason["label"] == titles[reason["code"]]
+        for service in result.detail["services"]:
+            for reason in service["reasons"]:
+                assert reason["label"] == titles[reason["code"]]

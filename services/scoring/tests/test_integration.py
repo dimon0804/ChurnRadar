@@ -42,7 +42,14 @@ async def test_full_rescore_creates_settings_scores_and_summary(db_pool, sample_
     assert summary["customers_total"] == 10
     assert sum(summary["by_level"].values()) == 10
     assert summary["model_version"] == 1
-    assert {"timeline", "top_reasons", "money_explanation"} <= summary.keys()
+    assert {"timeline", "top_reasons", "money_explanation", "risk_scores"} <= summary.keys()
+    # агрегаты score лежат в сводке, чтобы /metrics не перебирал клиентов
+    async with db_pool.acquire() as conn:
+        scores = [r["risk_score"] for r in await conn.fetch("SELECT risk_score FROM scoring.customer_scores")]
+    scored = [s for s in scores if s is not None]
+    assert summary["risk_scores"]["scored"] == len(scored)
+    assert summary["risk_scores"]["avg"] == pytest.approx(sum(scored) / len(scored))
+    assert summary["risk_scores"]["max"] == pytest.approx(max(scored))
 
 
 async def test_settings_from_db_are_used(db_pool, sample_data) -> None:  # type: ignore[no-untyped-def]
@@ -261,5 +268,5 @@ async def test_chunked_full_equals_single_chunk(db_pool, sample_data) -> None:  
             rows_parts = [tuple(r) for r in await conn.fetch(query)]
         assert rows_parts == rows_whole, workers
         assert parts is not None
-        for key in ("by_level", "expected_loss", "exposure", "top_reasons", "timeline"):
+        for key in ("by_level", "expected_loss", "exposure", "top_reasons", "timeline", "risk_scores"):
             assert parts.summary[key] == whole.summary[key], (workers, key)

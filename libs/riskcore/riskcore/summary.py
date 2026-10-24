@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -15,8 +16,9 @@ from .text import format_percent
 from .types import PROLONG_WAIT_GRACE, Service, Settings, StatusChange, ensure_utc, isoformat_z
 
 FACT_DAYS = 30
-TOP_REASONS_PER_CUSTOMER = 3
 AT_RISK_LEVELS = ("medium", "high")
+# Верхние границы корзин распределения score: 10, 20, ..., 100.
+RISK_SCORE_BUCKETS = tuple(range(10, 101, 10))
 
 
 def decision_moment(service: Service) -> datetime | None:
@@ -100,17 +102,25 @@ def build_timeline(
 
 
 def _top_reasons(results: Sequence[CustomerResult]) -> list[dict[str, Any]]:
+    """Главные причины по базе. Клиенты и деньги считаются по одному правилу.
+
+    customers — у скольких оценённых клиентов причина есть в разложении score (features[]),
+    primary_customers — у скольких она главная (первая в reasons), expected_loss — сколько
+    ожидаемых потерь на неё приходится у этих же клиентов. Причин без клиентов в списке нет.
+    """
     customers: Counter[str] = Counter()
+    primary: Counter[str] = Counter()
     loss: dict[str, float] = defaultdict(float)
     for result in results:
-        for reason in result.reasons[:TOP_REASONS_PER_CUSTOMER]:
-            if result.risk_score is not None:
-                customers[reason["code"]] += 1
+        if result.risk_score is None:
+            continue
         for total in result.feature_totals:
+            customers[total.code] += 1
             loss[total.code] += total.loss
+        if result.reasons:
+            primary[result.reasons[0]["code"]] += 1
 
-    codes = set(customers) | {code for code, value in loss.items() if value > 0}
-    ranked = sorted(codes, key=lambda code: (-round(loss.get(code, 0.0)), -customers[code], code))
+    ranked = sorted(customers, key=lambda code: (-round(loss[code]), -customers[code], code))
     rows: list[dict[str, Any]] = []
     for code in ranked:
         feature = get_feature(code)
@@ -119,10 +129,26 @@ def _top_reasons(results: Sequence[CustomerResult]) -> list[dict[str, Any]]:
                 "code": code,
                 "title": feature.title if feature else code,
                 "customers": customers[code],
-                "expected_loss": round(loss.get(code, 0.0)),
+                "primary_customers": primary[code],
+                "expected_loss": round(loss[code]),
             }
         )
     return rows
+
+
+def _risk_scores(results: Sequence[CustomerResult]) -> dict[str, Any]:
+    """Распределение score оценённых клиентов: среднее, максимум и накопленные корзины.
+
+    buckets[i].count — сколько клиентов со score не выше le (как le у гистограмм Prometheus),
+    по этим числам api отдаёт churn_risk_score_bucket.
+    """
+    scores = sorted(r.risk_score for r in results if r.risk_score is not None)
+    return {
+        "scored": len(scores),
+        "avg": sum(scores) / len(scores) if scores else None,
+        "max": scores[-1] if scores else None,
+        "buckets": [{"le": le, "count": bisect_right(scores, le)} for le in RISK_SCORE_BUCKETS],
+    }
 
 
 def _money_explanation(revenue: float, expected: float, exposure: float, horizon_days: int) -> str:
@@ -166,6 +192,7 @@ def build_summary(
         "horizon_days": settings.horizon_days,
         "money_explanation": _money_explanation(revenue, expected, exposure, settings.horizon_days),
         "top_reasons": _top_reasons(results),
+        "risk_scores": _risk_scores(results),
         "timeline": build_timeline(outcomes, status_history, as_of, settings.horizon_days),
         "scored_at": isoformat_z(scored_at or as_of),
         "model_version": settings.version,

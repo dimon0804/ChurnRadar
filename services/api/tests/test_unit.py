@@ -168,7 +168,14 @@ async def test_metrics_values_in_euro(client, app):
                     "services_at_risk": 4,
                     "services_total": 9,
                     "monthly_revenue_total": 99900,
+                    "revenue_at_risk_share": 0.25,
                     "horizon_days": 30,
+                    "risk_scores": {
+                        "scored": 2,
+                        "avg": 57.5,
+                        "max": 84.25,
+                        "buckets": [{"le": le, "count": (le >= 40) + (le >= 90)} for le in range(10, 101, 10)],
+                    },
                 },
                 "model_version": 7,
                 "scored_at": NOW,
@@ -188,6 +195,27 @@ async def test_metrics_values_in_euro(client, app):
     line = next(ln for ln in text.splitlines() if ln.startswith("churn_last_scored_timestamp_seconds "))
     assert float(line.split()[1]) == NOW.timestamp()
     assert "http_request_duration_seconds_bucket" in text
+    assert "churn_revenue_at_risk_ratio 0.25" in text
+    assert "churn_risk_score_avg 57.5" in text
+    assert "churn_risk_score_max 84.25" in text
+    assert "churn_risk_score_customers 2.0" in text
+    assert "# TYPE churn_risk_score_bucket gauge" in text
+    assert 'churn_risk_score_bucket{le="30"} 0.0' in text
+    assert 'churn_risk_score_bucket{le="40"} 1.0' in text
+    assert 'churn_risk_score_bucket{le="100"} 2.0' in text
+    assert 'churn_risk_score_bucket{le="+Inf"} 2.0' in text
+
+
+async def test_metrics_without_risk_scores_in_old_summary(client, app):
+    """Сводка, посчитанная до появления risk_scores, не ломает /metrics: корзины на месте, нули."""
+    app.state.pool = FakePool(
+        {"FROM scoring.summary": {"data": {"customers_total": 1}, "model_version": 1, "scored_at": NOW}}
+    )
+    resp = await client.get("/metrics", headers={"Authorization": "Bearer churn-metrics-token"})
+    assert resp.status_code == 200
+    assert "churn_risk_score_avg 0.0" in resp.text
+    assert 'churn_risk_score_bucket{le="10"} 0.0' in resp.text
+    assert 'churn_risk_score_bucket{le="+Inf"} 0.0' in resp.text
 
 
 async def test_summary_empty_when_not_scored(client, app):

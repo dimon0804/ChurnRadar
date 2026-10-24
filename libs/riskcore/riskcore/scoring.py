@@ -10,10 +10,17 @@ from datetime import datetime
 from typing import Any
 
 from .base import Feature, Signal
-from .context import AccountContext, ServiceContext, build_account_context, build_service_context
+from .context import (
+    SECONDS_PER_DAY,
+    AccountContext,
+    ServiceContext,
+    build_account_context,
+    build_service_context,
+)
 from .money import format_eur, horizon_revenue
 from .recommendations import action_for, build_recommendations
 from .registry import account_features, service_features
+from .text import format_date
 from .types import (
     GONE_STATUSES,
     Account,
@@ -34,6 +41,12 @@ TRANSACTIONS_LIMIT = 50
 UNKNOWN_NO_SERVICES = "Нет действующих услуг: клиент уже ушёл или ещё не купил"
 UNKNOWN_ALL_GONE = "Все услуги клиента удалены или заблокированы"
 UNKNOWN_NOT_PAID = "Нет платных услуг: оценивать нечего"
+# Короткие подписи причин «нет оценки» для таблиц, как title у признаков.
+UNKNOWN_LABELS = {
+    "no_live_services": "Нет услуг",
+    "all_services_gone": "Уже ушёл",
+    "no_paid_services": "Нет платных услуг",
+}
 
 
 def noisy_or(strengths: Iterable[float]) -> float:
@@ -98,6 +111,7 @@ class ServiceOutcome:
             {
                 "code": hit.feature.code,
                 "title": hit.signal.explanation,
+                "label": hit.feature.title,
                 "contribution": 100.0 * hit.contribution,
                 "service_id": s.id,
                 "action": action_for(hit.feature, hit.signal).title,
@@ -152,6 +166,7 @@ class FeatureTotal:
         return {
             "code": self.code,
             "title": self.top_hit.signal.explanation,
+            "label": self.feature.title,
             "contribution": self.points,
             "service_id": self.service_id,
             "action": action_for(self.feature, self.top_hit.signal).title,
@@ -355,24 +370,42 @@ def _feature_totals(live: Sequence[ServiceOutcome], total_revenue: float) -> lis
     return totals
 
 
+def _coverage_text(ctx: AccountContext) -> tuple[float | None, str]:
+    """На сколько дней хватит баланса — по тому же графику автосписаний, что и признак
+    «не хватит денег», поэтому дата здесь и в причине всегда одна."""
+    funds = ctx.funds
+    if funds.runs_out_at is None:
+        if not funds.has_renewals:
+            return None, "Автопродление выключено, по графику с баланса ничего не спишется."
+        # дальше COVERAGE_LIMIT_DAYS (год) график не строим
+        return None, "Баланса хватит на автопродления больше чем на год."
+    days = max((funds.runs_out_at - ctx.as_of).total_seconds() / SECONDS_PER_DAY, 0.0)
+    date = format_date(funds.runs_out_at)
+    if days < 1:
+        return days, f"Баланса не хватит уже на ближайшее автопродление ({date})."
+    return days, f"Баланса хватит на автопродления до {date} (на {math.floor(days)} дн.)."
+
+
 def _money(
     monthly_revenue: float,
     expected_loss: float,
     exposure: float,
-    spendable: int,
-    horizon_days: int,
+    ctx: AccountContext,
     capped: int = 0,
 ) -> dict[str, Any]:
+    horizon_days = ctx.horizon_days
     coverage: float | None = None
     revenue = horizon_revenue(monthly_revenue, horizon_days)
     if monthly_revenue <= 0:
         explanation = "Действующих платных услуг нет, терять сейчас нечего."
+        runs_out_at = None
     else:
-        coverage = spendable / (monthly_revenue / 30)
+        coverage, coverage_text = _coverage_text(ctx)
+        runs_out_at = ctx.funds.runs_out_at
         explanation = (
             f"За {horizon_days} дн. клиент приносит {format_eur(revenue)}. "
             f"С учётом риска по каждой услуге ожидаем потерять {format_eur(expected_loss)}. "
-            f"Денег на балансе хватит примерно на {math.floor(coverage)} дн."
+            f"{coverage_text}"
         )
         if capped:
             explanation += (
@@ -384,6 +417,7 @@ def _money(
         "exposure": round(exposure),
         "expected_loss": round(expected_loss),
         "balance_coverage_days": None if coverage is None else round(coverage, 1),
+        "funds_run_out_at": None if runs_out_at is None else isoformat_z(runs_out_at),
         "explanation": explanation,
     }
 
@@ -449,7 +483,13 @@ def score_account(
         score = None
         totals = []
         reasons = [
-            {"code": unknown_reason[0], "title": unknown_reason[1], "contribution": 0.0, "service_id": None}
+            {
+                "code": unknown_reason[0],
+                "title": unknown_reason[1],
+                "label": UNKNOWN_LABELS[unknown_reason[0]],
+                "contribution": 0.0,
+                "service_id": None,
+            }
         ]
         features = []
 
@@ -459,7 +499,7 @@ def score_account(
         "services": [o.to_api() for o in outcomes],
         "features": features,
         "transactions": _transactions_api(ctx.transactions),
-        "money": _money(monthly, expected, exposure, ctx.spendable, settings.horizon_days, capped),
+        "money": _money(monthly, expected, exposure, ctx, capped),
         "recommendations": [r.to_api() for r in recommendations],
         "next_action": recommendations[0].to_api() if recommendations else None,
     }

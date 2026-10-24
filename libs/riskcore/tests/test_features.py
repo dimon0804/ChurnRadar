@@ -166,6 +166,28 @@ class TestInsufficientFunds:
         recommendation = feature("insufficient_funds").recommend(signal)
         assert "бонус €48" in (recommendation.detail or "")
 
+    def test_capped_revenue_is_explained(self):
+        # Почасовой сервер по прайсу стоит €684 в месяц, а клиент вносит около €100 в месяц.
+        account = make_account(balance=5_000, total_replenished=120_000)
+        service = make_service(payment_term="hour", price=95, created_days_ago=360, expires_in_days=0.5 / 24)
+        ctx = service_ctx(service, account)
+        assert ctx.revenue_capped
+        signal = feature("insufficient_funds").compute(ctx)
+        assert signal is not None
+        assert ctx.funds.shortfall_at is not None
+        assert f"хватит до {ctx.funds.shortfall_at:%d.%m.%Y}" in signal.explanation
+        assert "По прайсу продления service-0001 за 30 дн. стоят €684" in signal.explanation
+        assert "вносит около €100 в месяц" in signal.explanation
+        assert "потерю считаем от €150" in signal.explanation
+        # прайсовую нехватку в тысячи евро в тексте причины больше не выводим
+        assert "не хватает" not in signal.explanation
+
+    def test_empty_balance_says_first_renewal_fails(self):
+        service = make_service(price=10_000, expires_in_days=5)
+        signal = feature("insufficient_funds").compute(service_ctx(service, make_account(balance=0)))
+        assert signal is not None
+        assert "не хватит уже на продление" in signal.explanation
+
     def test_shortfall_moment_is_exact(self):
         service = make_service(payment_term="hour", price=100, expires_in_days=0.5 / 24)
         ctx = service_ctx(service, make_account(balance=24_050))

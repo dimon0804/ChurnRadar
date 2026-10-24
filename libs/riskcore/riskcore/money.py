@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import calendar
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from .types import PaymentTerm, Service
 
 EPSILON = timedelta(microseconds=1)
+# Насколько вперёд смотрим, когда считаем, на сколько дней хватит баланса.
+COVERAGE_LIMIT_DAYS = 365
 FIXED_PERIODS: dict[str, timedelta] = {"hour": timedelta(hours=1), "week": timedelta(days=7)}
 CALENDAR_PERIODS: dict[str, int] = {"month": 1, "quarter_year": 3, "half_year": 6, "year": 12}
 
@@ -149,6 +152,25 @@ def shortfall_moment(plans: list[RenewalPlan], spendable: int) -> datetime | Non
             low = middle
     moments = [moment for plan in plans if (moment := plan.next_after(low)) is not None and moment <= high]
     return min(moments, default=high)
+
+
+def funds_run_out(
+    services: Iterable[Service],
+    as_of: datetime,
+    spendable: int,
+    horizon_days: int,
+    shortfall_at: datetime | None,
+) -> datetime | None:
+    """Когда баланса не хватит на очередное автопродление, если смотреть дальше горизонта.
+
+    Тот же расчёт, что и для признака «не хватит денег»: продления списываются по графику,
+    по очереди. Внутри горизонта момент уже известен (shortfall_at), иначе смотрим на год
+    вперёд. None — автопродлений нет или денег хватит дольше.
+    """
+    if shortfall_at is not None or horizon_days >= COVERAGE_LIMIT_DAYS:
+        return shortfall_at
+    plans = [plan for s in services if (plan := renewal_plan(s, as_of, COVERAGE_LIMIT_DAYS)) is not None]
+    return shortfall_moment(plans, spendable)
 
 
 def format_eur(cents: float) -> str:

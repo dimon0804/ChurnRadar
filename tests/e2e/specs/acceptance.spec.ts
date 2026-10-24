@@ -180,6 +180,8 @@ test('8. /metrics: с токеном показатели совпадают с 
     'churn_services_at_risk',
     'churn_model_version',
     'churn_last_scored_timestamp_seconds',
+    'churn_risk_score_avg',
+    'churn_risk_score_bucket',
   ]) {
     expect(text, name).toContain(name)
   }
@@ -189,6 +191,8 @@ test('8. /metrics: с токеном показатели совпадают с 
   const metric = (re: RegExp) => Number(text.match(re)?.[1])
   expect(metric(/^churn_customers_by_risk_level\{level="high"\}\s+(\S+)/m)).toBe(summary.by_level.high)
   expect(metric(/^churn_expected_loss_eur\s+(\S+)/m)).toBeCloseTo(summary.expected_loss / 100, 1)
+  expect(metric(/^churn_risk_score_avg\s+(\S+)/m)).toBeCloseTo(summary.risk_scores.avg ?? 0, 6)
+  expect(metric(/^churn_risk_score_bucket\{le="\+Inf"\}\s+(\S+)/m)).toBe(summary.risk_scores.scored)
 })
 
 test('9. Swagger открывается', async ({ page }) => {

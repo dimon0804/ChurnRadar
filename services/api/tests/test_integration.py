@@ -203,7 +203,10 @@ async def test_summary_empty_then_filled(client):
     data = {"customers_total": 7, "by_level": {"high": 2, "medium": 2, "low": 1, "unknown": 2},
             "services_total": 7, "services_at_risk": 4, "expected_loss": 12050, "exposure": 12050,
             "monthly_revenue_total": 7000, "revenue_at_risk_share": 0.5, "horizon_days": 30,
-            "money_explanation": "x", "top_reasons": [], "timeline": []}
+            "money_explanation": "x", "top_reasons": [], "timeline": [],
+            "risk_scores": {"scored": 5, "avg": 61.25, "max": 90.5,
+                            "buckets": [{"le": le, "count": min(5, max(0, (le - 40) // 10))}
+                                        for le in range(10, 101, 10)]}}
     conn = await asyncpg.connect(DB_URL)
     await conn.execute("INSERT INTO scoring.summary (id, data, model_version, scored_at) VALUES (1, $1::jsonb, 3, $2)",
                        json.dumps(data), SCORED_AT)
@@ -216,6 +219,14 @@ async def test_summary_empty_then_filled(client):
     assert "churn_expected_loss_eur 120.5" in metrics.text
     assert 'churn_customers_by_risk_level{level="unknown"} 2.0' in metrics.text
     assert "churn_model_version 3.0" in metrics.text
+    # risk-score в /metrics — те же числа, что risk_scores в сводке API
+    stats = filled["risk_scores"]
+    assert f"churn_risk_score_avg {stats['avg']}" in metrics.text
+    assert f"churn_risk_score_max {stats['max']}" in metrics.text
+    for bucket in stats["buckets"]:
+        assert f'churn_risk_score_bucket{{le="{bucket["le"]}"}} {float(bucket["count"])}' in metrics.text
+    assert f'churn_risk_score_bucket{{le="+Inf"}} {float(stats["scored"])}' in metrics.text
+    assert "churn_revenue_at_risk_ratio 0.5" in metrics.text
 
 
 async def test_settings_flow(client):

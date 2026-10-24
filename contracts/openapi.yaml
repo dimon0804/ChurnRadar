@@ -400,6 +400,12 @@ paths:
         `churn_customers_by_risk_level{level="high|medium|low|unknown"}`,
         `churn_expected_loss_eur`, `churn_exposure_eur`, `churn_services_at_risk`,
         `churn_model_version`, `churn_last_scored_timestamp_seconds`.
+
+        Риск-скор клиентов (те же числа, что `risk_scores` в `/api/v1/analytics/summary`):
+        `churn_risk_score_avg`, `churn_risk_score_max`, `churn_risk_score_customers`,
+        `churn_risk_score_bucket{le="10|20|…|100|+Inf"}` — снимок распределения на момент
+        последнего пересчёта (gauge, накопленные корзины), а также доля выручки под риском
+        `churn_revenue_at_risk_ratio`.
       operationId: metrics
       security:
         - metricsToken: []
@@ -544,6 +550,10 @@ components:
       properties:
         code: { type: string, description: Код признака из реестра модели, examples: [autoprolong_off_expiring] }
         title: { type: string, description: Объяснение по-русски для маркетолога }
+        label:
+          type: string
+          description: 'Короткое название причины (название признака, для «нет оценки» — короткая подпись): для таблиц и списков, где длинный title не помещается'
+          examples: [Не хватит денег на продление]
         contribution: { type: number, description: 'Вклад в score, пунктов из 100' }
         service_id: { type: [integer, 'null'], format: int64, description: 'К какой услуге относится, если относится' }
         action: { type: string, description: 'Что сделать маркетологу по этой причине, коротко и с цифрами из данных' }
@@ -570,7 +580,16 @@ components:
         horizon_revenue: { type: integer, description: 'Выручка с живых услуг за горизонт, по которой взвешивается score, евроценты' }
         exposure: { type: integer, description: 'Максимум, что можно потерять за горизонт, если уйдут все услуги под риском, евроценты' }
         expected_loss: { type: integer, description: 'Ожидаемая потеря за горизонт с учётом вероятности и покрытия балансом, евроценты' }
-        balance_coverage_days: { type: [number, 'null'], description: 'На сколько дней хватит денег на балансе для текущих услуг' }
+        balance_coverage_days:
+          type: [number, 'null']
+          description: >-
+            На сколько дней хватит баланса и разблокированных бонусов на автопродления по их
+            фактическому графику (тот же расчёт, что дата в причине insufficient_funds). null —
+            платных автопродлений нет или денег на них хватит больше чем на год (см. explanation)
+        funds_run_out_at:
+          type: [string, 'null']
+          format: date-time
+          description: 'Когда баланса не хватит на очередное автопродление; null — в пределах года не кончится или автопродлений нет'
         explanation: { type: string }
 
     CustomerSummary:
@@ -725,14 +744,33 @@ components:
         money_explanation: { type: string }
         top_reasons:
           type: array
+          description: 'Причины риска по базе, по убыванию ожидаемых потерь. Причин без клиентов в списке нет'
           items:
             type: object
             required: [code, title, customers]
             properties:
               code: { type: string }
               title: { type: string }
-              customers: { type: integer }
-              expected_loss: { type: integer }
+              customers: { type: integer, description: 'У скольких оценённых клиентов причина есть в разложении score' }
+              primary_customers: { type: integer, description: 'У скольких клиентов эта причина главная (первая в reasons)' }
+              expected_loss: { type: integer, description: 'Ожидаемые потери, которые приходятся на причину у этих клиентов, евроценты' }
+        risk_scores:
+          type: object
+          description: 'Распределение risk_score оценённых клиентов (без unknown); из него же /metrics отдаёт churn_risk_score_*'
+          required: [scored, avg, max, buckets]
+          properties:
+            scored: { type: integer, description: 'Сколько клиентов оценено' }
+            avg: { type: [number, 'null'], minimum: 0, maximum: 100, description: 'Средний score; null, если оценённых нет' }
+            max: { type: [number, 'null'], minimum: 0, maximum: 100 }
+            buckets:
+              type: array
+              description: 'Накопленные корзины 10, 20, …, 100: count — клиентов со score не выше le'
+              items:
+                type: object
+                required: [le, count]
+                properties:
+                  le: { type: number }
+                  count: { type: integer }
         timeline:
           type: array
           items: { $ref: '#/components/schemas/TimelinePoint' }

@@ -118,9 +118,45 @@ def test_totals(portfolio):
 def test_top_reasons(portfolio):
     results, _, summary = portfolio
     rows = {r["code"]: r for r in summary["top_reasons"]}
+    scored = [r for r in results if r.risk_score is not None]
     for code, row in rows.items():
-        in_top3 = sum(1 for r in results if code in [x["code"] for x in r.reasons[:3]])
-        assert row["customers"] == in_top3
+        having = [r for r in scored if code in {t.code for t in r.feature_totals}]
+        assert row["customers"] == len(having) > 0
+        primary = sum(1 for r in scored if r.reasons and r.reasons[0]["code"] == code)
+        assert row["primary_customers"] == primary <= row["customers"]
+        # деньги считаются по тем же клиентам, что и количество
+        loss = sum(t.loss for r in having for t in r.feature_totals if t.code == code)
+        assert row["expected_loss"] == round(loss)
         assert row["title"]
+    assert sum(r["primary_customers"] for r in rows.values()) == sum(1 for r in scored if r.reasons)
     total_loss = sum(o.expected_loss for r in results for o in r.services if o.probability is not None)
     assert sum(r["expected_loss"] for r in summary["top_reasons"]) == pytest.approx(total_loss, abs=len(rows))
+
+
+def test_top_reasons_never_show_zero_customers(portfolio):
+    _, _, summary = portfolio
+    assert summary["top_reasons"]
+    assert all(row["customers"] > 0 for row in summary["top_reasons"])
+    losses = [row["expected_loss"] for row in summary["top_reasons"]]
+    assert losses == sorted(losses, reverse=True)
+
+
+def test_risk_scores_distribution(portfolio):
+    results, _, summary = portfolio
+    stats = summary["risk_scores"]
+    scores = [r.risk_score for r in results if r.risk_score is not None]
+    assert stats["scored"] == len(scores) == 2
+    assert stats["avg"] == pytest.approx(sum(scores) / len(scores))
+    assert stats["max"] == pytest.approx(max(scores))
+    assert [b["le"] for b in stats["buckets"]] == list(range(10, 101, 10))
+    for bucket in stats["buckets"]:
+        assert bucket["count"] == sum(1 for s in scores if s <= bucket["le"])
+    assert stats["buckets"][-1]["count"] == stats["scored"]
+
+
+def test_risk_scores_without_scored_customers():
+    settings = default_settings()
+    results = score_customers([make_account(id=1)], [], [], settings, AS_OF)
+    stats = build_summary(results, [], [], settings, AS_OF)["risk_scores"]
+    assert stats["scored"] == 0 and stats["avg"] is None and stats["max"] is None
+    assert all(b["count"] == 0 for b in stats["buckets"])

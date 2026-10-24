@@ -33,6 +33,7 @@ evaluate the project.
 - [Adding a new feature](#adding-a-new-feature)
 - [Case requirements](#case-requirements)
 - [Metrics and monitoring](#metrics-and-monitoring)
+- [Reliability](#reliability)
 - [Scaling and Kubernetes](#scaling-and-kubernetes)
 - [API](#api)
 - [Development and tests](#development-and-tests)
@@ -418,6 +419,29 @@ Every service also exposes its own metrics (`scoring_runs_total`, `scoring_durat
 together with the PostgreSQL, Redis and NATS exporters. Alert rules are in
 [`monitoring/prometheus/alerts.yml`](monitoring/prometheus/alerts.yml); Grafana dashboards are
 provisioned automatically from [`monitoring/grafana/`](monitoring/grafana/).
+
+## Reliability
+
+We checked not only that everything works, but also what happens when something breaks. Every
+scenario can be replayed on a running stack: `bash scripts/chaos.sh` (or `nats`, `api`,
+`scoring` one at a time).
+
+| What breaks | What happens | How it is checked |
+|---|---|---|
+| NATS is down while data is written | `ingest` and `api` put the event into an outbox in the same transaction as the data. The relay sends it once NATS is back, exactly once (`Nats-Msg-Id` = `event_id`) | `chaos.sh nats`, ingest/api/svckit integration tests |
+| An `api` replica dies | Traefik routes to the other replica, the panel keeps answering | `chaos.sh api`: 20 of 20 requests in 10 s |
+| A `scoring` replica dies mid-rescore | Unacked messages go to the other replica after `ack_wait` (60 s). Rescoring is atomic, a half-written one rolls back | `chaos.sh scoring` |
+| `scoring` gets SIGTERM | Stops taking new batches, finishes the current one within 45 s, returns the rest with `nak` | scoring integration test |
+| An event keeps failing the rescore | After 10 attempts with 1/5/30/120 s pauses it goes to `churn.dlq.scoring` and stops blocking others | scoring integration test, `scoring_dead_letters_total` |
+| A database error in the worker | The worker logs it and retries. If a background task still dies, `/readyz` returns 503 and the pod restarts | scoring unit tests |
+| Two `scoring` replicas rescore at once | `pg_advisory_xact_lock` with `lock_timeout`: one computes, the other waits or retries later | scoring integration test |
+| The same event delivered twice | Idempotency by `event_id` (`processed_events` in the same transaction as results) | scoring integration test |
+| `notifier` loses NATS | After reconnecting the panel receives `resync` and reloads everything | notifier Go tests, web test |
+| `ingest` rejects a simulator batch | The simulator reloads its world from the database instead of drifting | simulator tests |
+| A stuck Postgres query | Server-side `statement_timeout` and `idle_in_transaction_session_timeout` | svckit integration test |
+
+Anything stuck shows up in Grafana on the «Outbox: в очереди» panel, and alerts fire:
+`OutboxStuck`, `ScoringLagHigh`, `ScoringStale`, `ServiceDown`, `HighErrorRate`.
 
 ## Scaling and Kubernetes
 

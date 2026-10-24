@@ -1042,6 +1042,15 @@ together with the PostgreSQL, Redis and NATS exporters. Alert rules are in
 [`monitoring/prometheus/alerts.yml`](monitoring/prometheus/alerts.yml); Grafana dashboards are
 provisioned automatically from [`monitoring/grafana/`](monitoring/grafana/).
 
+`scoring` also watches for model staleness: after every full rescore it compares the feature
+distribution with the calibration reference and exports PSI as `churn_feature_psi{feature}`
+(plus `churn_feature_psi_services`, the number of paid services in the calculation). The same
+numbers are stored in the summary under `drift`. When a feature's PSI stays above 0.25 for
+15 minutes, the `ModelDrift` alert fires and alerts posts a `model_drift` event ("the model is
+out of date") to the journal and the team channel. The fix is to rerun `python -m tools.calibration`.
+Grafana shows it on the "Дрейф признаков (PSI)" panel of the churn dashboard. Without a
+reference or with fewer than 200 paid services PSI is not computed and there are no series.
+
 ## Reliability
 
 We checked not only that everything works, but also what happens when something breaks. Every

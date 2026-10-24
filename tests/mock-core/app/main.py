@@ -14,7 +14,7 @@ from . import metrics
 from .config import Config
 from .core import Core
 from .model_settings import SettingsValidationError
-from .schemas import ModelSettingsPatch, SimulatorCommand, SourceChangeBatch, SourceSnapshot
+from .schemas import ModelSettingsPatch, RollbackRequest, SimulatorCommand, SourceChangeBatch, SourceSnapshot
 from .scoring import CustomerResult, ServiceResult
 from .store import DataIntegrityError
 from .timeutil import iso
@@ -339,6 +339,27 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
     @app.post("/api/v1/model/settings/reset")
     async def reset_settings(user: Optional[str] = Depends(require_admin)):
         return await core.reset_settings(user)
+
+    @app.post("/api/v1/model/settings/rollback")
+    async def rollback_settings(body: RollbackRequest, user: Optional[str] = Depends(require_admin)):
+        try:
+            return await core.rollback_settings(body.version, user)
+        except LookupError:
+            raise ApiError(404, "not_found", f"Версии {body.version} нет в журнале настроек")
+
+    @app.get("/api/v1/model/settings/compare")
+    async def compare_settings(
+        from_: int = Query(..., alias="from", ge=1),
+        to: int = Query(..., ge=1),
+        user: Optional[str] = Depends(require_admin),
+    ):
+        try:
+            body = core.settings.compare(from_, to)
+        except LookupError as exc:
+            raise ApiError(404, "not_found", f"Версии {exc.args[0]} нет в журнале настроек")
+        # предпросмотра «что если» в заглушке нет, поэтому эффект не считается — как при недоступном сервисе оценки
+        body["impact"] = None
+        return body
 
     @app.get("/api/v1/model/settings/history")
     async def settings_history(limit: int = Query(50, ge=1, le=200)):

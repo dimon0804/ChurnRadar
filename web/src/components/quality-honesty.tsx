@@ -226,7 +226,7 @@ function ReliabilityCard({ h, scenario, colors }: { h: QualityHonesty; scenario:
   )
 }
 
-function BrierCard({ h }: { h: QualityHonesty }) {
+export function BrierCard({ h }: { h: QualityHonesty }) {
   const rows = brierRows(h)
   const fit = SCENARIO_LABEL[h.calibration.fit_scenario]
   return (
@@ -265,7 +265,7 @@ function BrierCard({ h }: { h: QualityHonesty }) {
   )
 }
 
-function ChallengerCard({ h, scenario }: { h: QualityHonesty; scenario: ScenarioKey }) {
+export function ChallengerCard({ h, scenario }: { h: QualityHonesty; scenario: ScenarioKey }) {
   const verdict = useMemo(() => challengerVerdict(h), [h])
   const best = (metric: 'service_roc_auc' | 'customer_roc_auc' | 'customer_lift_top10' | 'service_brier', low = false) => {
     const vals = HONESTY_METHODS.map((m) => methodOf(h, scenario, m)?.[metric]).filter((v): v is number => typeof v === 'number')
@@ -330,7 +330,7 @@ function ChallengerCard({ h, scenario }: { h: QualityHonesty; scenario: Scenario
   )
 }
 
-function GroupsCard({ h }: { h: QualityHonesty }) {
+export function HonestyGroupsCard({ h }: { h: QualityHonesty }) {
   const rows = useMemo(() => groupRows(h), [h])
   if (rows.length === 0) return null
   return (
@@ -421,7 +421,7 @@ export function HonestySection({ honesty, scenario }: { honesty: QualityHonesty;
         </div>
       )}
       {hasScenario && <ChallengerCard h={h} scenario={scenario} />}
-      <GroupsCard h={h} />
+      <HonestyGroupsCard h={h} />
       {typeof h.calibration.services === 'number' && (
         <p className="px-1 text-xs text-subtle-foreground">
           Расчёт на {formatInt(h.calibration.services)} услугах.{' '}

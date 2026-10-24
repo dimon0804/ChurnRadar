@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertCircle, CheckCircle2, History, Loader2, RotateCcw } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Loader2, RotateCcw } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { errorMessage } from '@/api/client'
 import { api, queryKeys } from '@/api/endpoints'
-import type { FeatureWeight, ModelSettings, ModelSettingsPatch, SettingsChange, Summary } from '@/api/types'
+import type { FeatureWeight, ModelSettings, ModelSettingsPatch, Summary } from '@/api/types'
 import { AnimatedNumber } from '@/components/animated-number'
 import { FlashOverlay } from '@/components/flash'
+import { CalibrationCard, CalibrationMismatch, GroupsCard } from '@/components/model-honesty-settings'
 import { PageHeader } from '@/components/page-header'
+import { SettingsHistoryCard } from '@/components/settings-history'
 import { EmptyState, ErrorState } from '@/components/states'
 import { ConfirmDialog } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
@@ -19,10 +21,11 @@ import { FeatureLossChart, WhatIfLevelsChart } from '@/components/charts/model-c
 import { useSettingsPreview, WhatIfBar, WhatIfChanges } from '@/components/what-if'
 import { useChangeStamp, usePreviousDistinct } from '@/hooks/use-change-stamp'
 import { useNow } from '@/hooks/use-now'
-import { formatAgo, formatDateTime, formatDecimal, formatDuration, formatInt, formatMoney, formatShare, NBSP, plural } from '@/lib/format'
+import { formatAgo, formatDecimal, formatDuration, formatInt, formatMoney, formatShare, NBSP, plural } from '@/lib/format'
 import { groupLabel } from '@/lib/labels'
 import { applyPatch, clamp, groupWeights, isEmptyPatch, mergePatch, weightStep } from '@/lib/settings'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/providers/auth'
 import { useLive } from '@/providers/live'
 
 const DEBOUNCE_MS = 400
@@ -241,71 +244,6 @@ function HorizonCard({ s, onChange }: { s: ModelSettings; onChange: (days: numbe
   )
 }
 
-function describeChange(change: SettingsChange['changes'][number], titles: Map<string, string>): string {
-  const fmt = (v: unknown) =>
-    typeof v === 'number' ? formatDecimal(v, 1) : typeof v === 'boolean' ? (v ? 'вкл.' : 'выкл.') : v === null || v === undefined ? '—' : String(v)
-  const parts = change.path.split('.')
-  if (parts[0] === 'weights' && parts.length >= 3) {
-    const code = parts.slice(1, -1).join('.')
-    const field = parts.at(-1)
-    const title = titles.get(code) ?? code
-    if (field === 'enabled') return `«${title}» ${change.new ? 'включён' : 'выключен'}`
-    return `«${title}»: ${fmt(change.old)} → ${fmt(change.new)}`
-  }
-  if (change.path === 'thresholds.medium') return `Порог среднего риска: ${fmt(change.old)} → ${fmt(change.new)}`
-  if (change.path === 'thresholds.high') return `Порог высокого риска: ${fmt(change.old)} → ${fmt(change.new)}`
-  if (change.path === 'horizon_days') return `Горизонт прогноза: ${fmt(change.old)} → ${fmt(change.new)} дн.`
-  if (change.path === 'reset' || change.path === '*') return 'Сброс к значениям по умолчанию'
-  return `${change.path}: ${fmt(change.old)} → ${fmt(change.new)}`
-}
-
-function HistoryCard({ titles }: { titles: Map<string, string> }) {
-  const history = useQuery({ queryKey: queryKeys.history, queryFn: ({ signal }) => api.settingsHistory(30, signal) })
-  const items = history.data?.items ?? []
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>История изменений</CardTitle>
-        <CardDescription>Кто и что менял в модели</CardDescription>
-      </CardHeader>
-      <CardContent className="pt-2">
-        {history.isPending ? (
-          <div className="space-y-3 pt-2">
-            {Array.from({ length: 4 }, (_, i) => (
-              <Skeleton key={i} className="h-10" />
-            ))}
-          </div>
-        ) : history.isError ? (
-          <ErrorState error={history.error} onRetry={() => void history.refetch()} className="py-6" />
-        ) : items.length === 0 ? (
-          <EmptyState icon={<History />} title="Изменений пока не было" className="py-6" />
-        ) : (
-          <ol className="max-h-[420px] overflow-y-auto pr-1 pl-1">
-            {items.map((h) => (
-              <li key={h.version} className="relative border-l border-border py-2 pl-4 before:absolute before:top-3.5 before:-left-[3.5px] before:size-1.5 before:rounded-full before:bg-subtle-foreground">
-                <p className="flex flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground num">
-                  <span className="font-medium text-foreground">v{h.version}</span>
-                  <span>{formatDateTime(h.changed_at)}</span>
-                  <span className="truncate">· {h.changed_by ?? 'система'}</span>
-                </p>
-                <ul className="mt-1 space-y-0.5">
-                  {(h.changes ?? []).slice(0, 6).map((c, i) => (
-                    <li key={i} className="text-[13px] leading-5 break-words">
-                      {describeChange(c, titles)}
-                    </li>
-                  ))}
-                  {(h.changes?.length ?? 0) > 6 && <li className="text-xs text-muted-foreground">и ещё {(h.changes?.length ?? 0) - 6}</li>}
-                  {(h.changes?.length ?? 0) === 0 && <li className="text-[13px] text-muted-foreground">Без изменений значений</li>}
-                </ul>
-              </li>
-            ))}
-          </ol>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
 /** Одна итоговая цифра над редактором: значение, подсветка после пересчёта и сдвиг относительно прошлого. */
 function ImpactStat({
   label,
@@ -476,9 +414,10 @@ export default function ModelPage() {
     },
     onError: (error) => setSave({ kind: 'error', message: errorMessage(error) }),
   })
-  const reset = useMutation({
-    mutationFn: api.resetSettings,
-    onSuccess: (data) => {
+  const { isAdmin } = useAuth()
+  const replaced = useCallback(
+    (data: ModelSettings) => {
+      window.clearTimeout(timer.current)
       pending.current = {}
       setDraft(null)
       queryClient.setQueryData(queryKeys.settings, data)
@@ -486,6 +425,11 @@ export default function ModelPage() {
       setSave({ kind: 'idle' })
       void queryClient.invalidateQueries({ queryKey: queryKeys.history })
     },
+    [queryClient],
+  )
+  const reset = useMutation({
+    mutationFn: api.resetSettings,
+    onSuccess: replaced,
     onError: (error) => setSave({ kind: 'error', message: errorMessage(error) }),
   })
 
@@ -553,6 +497,7 @@ export default function ModelPage() {
   )
 
   const titles = useMemo(() => new Map((current?.weights ?? []).map((w) => [w.code, w.title])), [current?.weights])
+  const groupTitles = useMemo(() => new Map((current?.groups ?? []).map((g) => [g.code, g.title])), [current?.groups])
   const groups = useMemo(() => groupWeights(current?.weights ?? []), [current?.weights])
   const enabledCount = current?.weights.filter((w) => w.enabled).length ?? 0
 
@@ -624,6 +569,12 @@ export default function ModelPage() {
             </div>
           </div>
 
+          {!whatIf && (
+            <div className="mb-4">
+              <CalibrationMismatch s={current} />
+            </div>
+          )}
+
           <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
             <div className="space-y-4">
               {groups.length === 0 ? (
@@ -653,6 +604,7 @@ export default function ModelPage() {
                   </Card>
                 ))
               )}
+              <GroupsCard s={current} titles={titles} onChange={(code, p) => change({ groups: [{ code, ...p }] })} />
               <p className="px-1 text-xs text-subtle-foreground">
                 Включено {enabledCount} из {current.weights.length} {plural(current.weights.length, ['признака', 'признаков', 'признаков'])}. Новые признаки
                 появляются здесь сами, как только их добавят в модель.
@@ -664,7 +616,15 @@ export default function ModelPage() {
               {!whatIf && <FeatureLossChart weights={current.weights} />}
               <ThresholdsCard s={current} onChange={(t) => change({ thresholds: t })} />
               <HorizonCard s={current} onChange={(d) => change({ horizon_days: d })} />
-              <HistoryCard titles={titles} />
+              <CalibrationCard s={current} onChange={(calibrated) => change({ calibrated })} />
+              <SettingsHistoryCard
+                titles={titles}
+                groupTitles={groupTitles}
+                currentVersion={current.version}
+                isAdmin={isAdmin}
+                disabled={whatIf}
+                onRolledBack={replaced}
+              />
             </div>
           </div>
         </>

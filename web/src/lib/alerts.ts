@@ -16,6 +16,7 @@ export const KIND_LABEL: Record<AlertKind, string> = {
   loss_jump: 'Рост потери',
   total_loss_jump: 'Общая потеря',
   bulk: 'Массовое изменение',
+  model_drift: 'Модель устарела',
 }
 
 /** Подписи личных уведомлений: тип события плюс сводка и проверка канала. */

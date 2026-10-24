@@ -130,6 +130,33 @@ function Hero({ c }: { c: CustomerDetail }) {
           {countLabel(c.services_total, ['услуги', 'услуг', 'услуг'])}
         </p>
       </div>
+      <Probability c={c} />
+    </div>
+  )
+}
+
+/** Калиброванная вероятность рядом со score: score — очередь, вероятность — сколько денег реально под угрозой. */
+function Probability({ c }: { c: CustomerDetail }) {
+  const p = c.calibrated_probability
+  const challenger = c.challenger_score
+  if (typeof p !== 'number' && typeof challenger !== 'number') return null
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded-xl border border-border bg-card px-5 py-3 sm:col-span-2" data-testid="customer-probability">
+      {typeof p === 'number' && (
+        <Tooltip content="Score — это ранжирование: кому звонить первым. Вероятность — калиброванная: её сверили с тем, сколько клиентов с таким score на самом деле не продлили услуги. Деньги считаются по ней.">
+          <p tabIndex={0} className="text-sm outline-none">
+            <span className="text-muted-foreground">Вероятность потерять выручку за горизонт: </span>
+            <span className="font-semibold num" data-role="value">
+              {formatShare(p, p < 0.1 ? 1 : 0)}
+            </span>
+          </p>
+        </Tooltip>
+      )}
+      {typeof challenger === 'number' && (
+        <p className="text-xs text-subtle-foreground num" title="Контрольная модель на тех же признаках, только для сравнения">
+          Логистическая регрессия: score {formatScore(challenger)}
+        </p>
+      )}
     </div>
   )
 }
@@ -158,6 +185,17 @@ function Reasons({ c, services }: { c: CustomerDetail; services: Map<number, Ser
                   >
                     {shortReasonTitle(r, titles)}
                   </Link>
+                  {r.correlation_group && (
+                    <Tooltip content="Признак входит в группу: вместе с соседями по группе он даёт не больше потолка, чтобы одна проблема не считалась дважды.">
+                      <span
+                        tabIndex={0}
+                        className="ml-2 inline-flex rounded-full bg-muted px-2 py-px align-[1px] text-[11px] font-medium text-muted-foreground outline-none"
+                        data-testid="reason-group"
+                      >
+                        {r.correlation_group_title ?? r.correlation_group}
+                      </span>
+                    </Tooltip>
+                  )}
                   <p className="text-sm leading-6 text-muted-foreground">{r.title}</p>
                   {svc && <p className="truncate text-xs text-muted-foreground">Услуга: {svc.name}</p>}
                 </div>
@@ -389,6 +427,9 @@ function Services({ services }: { services: ServiceRisk[] }) {
                       content={
                         <span>
                           {typeof s.risk_score === 'number' && <span className="mb-1 block font-medium num">Риск {formatScore(s.risk_score)} из 100</span>}
+                          {typeof s.calibrated_probability === 'number' && (
+                            <span className="mb-1 block num">Не продлят с вероятностью {formatShare(s.calibrated_probability, 0)}</span>
+                          )}
                           {s.reasons?.[0]?.title ?? (s.risk_level === 'unknown' ? 'Оценки нет' : 'Сигналов ухода нет')}
                         </span>
                       }

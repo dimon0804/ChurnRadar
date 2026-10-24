@@ -119,6 +119,13 @@ class Core:
             self.settings.reset(user)
             return self._settings_changed(user)
 
+    async def rollback_settings(self, version: int, user: Optional[str]) -> Dict[str, Any]:
+        """LookupError — версии нет в журнале."""
+        async with self.lock:
+            if not self.settings.rollback(version, user):
+                return self.settings.to_api()
+            return self._settings_changed(user)
+
     def _settings_changed(self, user: Optional[str]) -> Dict[str, Any]:
         self.bus.publish("settings.changed", {"version": self.settings.version, "updated_by": user})
         duration = self._rescore_full("settings")

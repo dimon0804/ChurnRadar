@@ -127,3 +127,25 @@ tests:
             exp_annotations:
               summary: "Коннектор billing не обновлял данные 20m 0s"
               description: "Источник billing включён, но успешного запуска не было дольше трёх интервалов расписания (плюс 5 минут запаса). Данные из него в панели устаревают. Откройте «Данные» → «Источники»: там последняя ошибка и история запусков. Частые причины — источник недоступен, истёк токен (CONNECTOR_TOKEN_*), ни одна реплика ingest не стала исполнителем (connector_leader)."
+
+  # дрейф: prolong_wait уехал и держится; low_balance выскочил за порог на 10 минут и вернулся.
+  # У второй реплики scoring старое значение prolong_wait ниже — max by (feature) берёт большее.
+  - interval: 1m
+    input_series:
+      - series: 'churn_feature_psi{job="scoring",instance="a",feature="prolong_wait"}'
+        values: '0.05x5 0.41x30'
+      - series: 'churn_feature_psi{job="scoring",instance="b",feature="prolong_wait"}'
+        values: '0.05x35'
+      - series: 'churn_feature_psi{job="scoring",instance="a",feature="low_balance"}'
+        values: '0.02x5 0.3x10 0.08x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ModelDrift
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: ModelDrift
+        exp_alerts:
+          - exp_labels: {severity: warning, team: model, feature: prolong_wait}
+            exp_annotations:
+              summary: "Признак prolong_wait ушёл от эталона калибровки: PSI 0.41"
+              description: "Распределение признаков ушло от эталона калибровки, модель устарела: вероятности и ожидаемая потеря могут заметно врать. Перезапустите python -m tools.calibration на свежих данных и выкатите новую model_tables.json. Меньше 0,1 — норма, 0,1–0,25 — заметный сдвиг, выше 0,25 — пора перекалибровать."

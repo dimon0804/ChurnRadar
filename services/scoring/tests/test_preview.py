@@ -184,7 +184,7 @@ async def test_endpoint_maps_superseded_and_timeout() -> None:
         def __init__(self, exc: Exception) -> None:
             self.exc = exc
 
-        async def preview(self, settings):  # type: ignore[no-untyped-def]
+        async def preview(self, settings, baseline=None):  # type: ignore[no-untyped-def]
             raise self.exc
 
     body = {"settings": riskcore.default_settings().to_storage()}

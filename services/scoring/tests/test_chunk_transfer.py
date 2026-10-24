@@ -62,5 +62,7 @@ def test_results_survive_pickle(sample_data) -> None:  # type: ignore[no-untyped
         (r.paid_total, r.payments, r.first_seen) for r in slim
     ]
     with_marketing = engine.build_summary(back_slim, services, [], settings, REFERENCE)
-    assert with_marketing["marketing"] == riskcore.build_marketing(slim, [], settings.horizon_days, REFERENCE)
+    # маркетинг считается по доле ожидаемой потери (for_money), а не по ранжирующему score
+    money = [r.for_money() for r in slim]
+    assert with_marketing["marketing"] == riskcore.build_marketing(money, [], settings.horizon_days, REFERENCE)
     assert with_marketing["marketing"]["mrr"] == with_marketing["monthly_revenue_total"]

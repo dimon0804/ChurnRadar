@@ -31,6 +31,12 @@ def test_settings_endpoints_match_contract(client, contract):
     contract.response("/api/v1/model/settings/reset", "post", "200", reset)
     history = client.get("/api/v1/model/settings/history").json()
     contract.response("/api/v1/model/settings/history", "get", "200", history)
+    rolled = client.post("/api/v1/model/settings/rollback", json={"version": 2}, headers=ADMIN).json()
+    contract.response("/api/v1/model/settings/rollback", "post", "200", rolled)
+    compared = client.get("/api/v1/model/settings/compare", params={"from": 1, "to": 3}, headers=ADMIN).json()
+    contract.response("/api/v1/model/settings/compare", "get", "200", compared)
+    missing = client.post("/api/v1/model/settings/rollback", json={"version": 99}, headers=ADMIN).json()
+    contract.response("/api/v1/model/settings/rollback", "post", "404", missing)
 
 
 def test_source_endpoints_match_contract(client, contract, sample_data):

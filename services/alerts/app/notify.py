@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from .catalog import EventPref
 from .rules import BULK_PATH, HIGH_RISK_PATH, money, plural
@@ -154,6 +155,37 @@ def check_stale(
         "Источник прислал изменения, а scoring их не обработал. Панель показывает устаревшие оценки: "
         "проверьте сервис scoring и шину NATS.",
         "/data",
+    )
+
+
+DRIFT_ALERT = 0.25  # тот же порог, что riskcore.drift.ALERT; alerts не тянет riskcore ради одной константы
+DRIFT_PATH = "/quality"
+
+
+def check_model_drift(drift: dict[str, Any] | None, top_n: int = 5) -> Notice | None:
+    """summary["drift"] от scoring: сообщаем, когда PSI хотя бы одного признака выше 0,25."""
+    if not isinstance(drift, dict) or drift.get("status") != "alert":
+        return None
+    features = drift.get("features") or {}
+    moved = sorted(
+        ((code, float(v)) for code, v in features.items() if isinstance(v, int | float) and v > DRIFT_ALERT),
+        key=lambda item: -item[1],
+    )
+    if not moved:
+        return None
+    names = ", ".join(code for code, _ in moved[:3]) + ("…" if len(moved) > 3 else "")
+    lines = tuple(f"{code}: PSI {value:.2f}".replace(".", ",", 1) for code, value in moved[:top_n])
+    if len(moved) > top_n:
+        lines += (f"…и ещё {len(moved) - top_n}",)
+    n = len(moved)
+    return Notice(
+        "model_drift",
+        f"Модель устарела: {n} {plural(n, ('признак ушёл', 'признака ушли', 'признаков ушли'))} от эталона",
+        f"Распределение признаков ({names}) заметно отличается от базы, на которой калибровали модель "
+        "(PSI выше 0,25). Вероятности и ожидаемая потеря сейчас могут врать: перезапустите калибровку "
+        "командой python -m tools.calibration.",
+        DRIFT_PATH,
+        lines,
     )
 
 

@@ -1828,7 +1828,7 @@ paths:
         - { name: customer_id, in: query, schema: { type: integer, minimum: 1 } }
         - name: kind
           in: query
-          schema: { type: string, enum: [loss_growth, big_customer_high, risk_share, high_count_growth, stale_data, high_risk, loss_jump, total_loss_jump, bulk] }
+          schema: { type: string, enum: [loss_growth, big_customer_high, risk_share, high_count_growth, stale_data, model_drift, high_risk, loss_jump, total_loss_jump, bulk] }
       responses:
         '200':
           description: Страница ленты
@@ -3805,6 +3805,17 @@ components:
             total: { type: integer, description: 'Сколько услуг в статусе deleted' }
             last_date: { type: [string, 'null'], format: date, description: 'Дата последнего удаления; null, если удалённых нет' }
             last_estimated: { type: boolean, description: 'Дата последнего удаления — оценка по окончанию оплаты, а не замеченная смена статуса' }
+        drift:
+          type: object
+          description: 'Дрейф признаков: PSI распределения сил сигналов по платным услугам против эталона калибровки. Считается при полном пересчёте; меньше 0,1 — без изменений, больше 0,25 — модель пора перекалибровать'
+          required: [services, status, features]
+          properties:
+            services: { type: integer, description: 'Сколько платных услуг попало в расчёт' }
+            status: { type: string, enum: [ok, warn, alert, too_few, no_reference], description: 'too_few — услуг меньше 200, no_reference — нет эталона; в обоих случаях features пустой' }
+            features:
+              type: object
+              description: 'PSI по коду признака'
+              additionalProperties: { type: number, minimum: 0 }
         scored_at: { type: [string, 'null'], format: date-time }
         model_version: { type: integer }
 
@@ -4584,7 +4595,7 @@ components:
       required: [id, kind, message, link]
       properties:
         id: { type: integer }
-        kind: { type: string, enum: [loss_growth, big_customer_high, risk_share, high_count_growth, stale_data, high_risk, loss_jump, total_loss_jump, bulk] }
+        kind: { type: string, enum: [loss_growth, big_customer_high, risk_share, high_count_growth, stale_data, model_drift, high_risk, loss_jump, total_loss_jump, bulk] }
         customer_id: { type: [integer, 'null'], description: 'null у total_loss_jump и bulk' }
         email: { type: [string, 'null'] }
         risk_level: { type: [string, 'null'] }

@@ -1,9 +1,4 @@
-# локальные инструменты
-CLAUDE.md
-AGENTS.md
-.claude/
-.cursor/
-.playwright-mcp/
+# редакторы
 .vscode/
 .idea/
 

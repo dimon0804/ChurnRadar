@@ -116,6 +116,7 @@ services:
     environment:
       <<: *common-env
       INGEST_URL: http://ingest:8002
+      SNAPSHOT_REFERENCE: ${SNAPSHOT_REFERENCE:-null}
     ports:
       - "127.0.0.1:8003:8003"
     depends_on:

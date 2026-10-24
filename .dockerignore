@@ -11,9 +11,5 @@
 **/coverage
 .env
 .env.*
-CLAUDE.md
-AGENTS.md
-.claude
-.playwright-mcp
 docs
 deploy

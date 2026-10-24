@@ -14,7 +14,7 @@ from svckit.errors import ApiError
 
 from . import repository as repo
 from .bot import deep_link
-from .catalog import PERIODS_H, Prefs, PrefsError, catalog_json, parse_prefs, prefs_from_row, prefs_to_json
+from .catalog import CHANNELS, PERIODS_H, Prefs, PrefsError, catalog_json, parse_prefs, prefs_from_row, prefs_to_json
 from .config import Config
 from .fanout import Fanout, describe
 from .notify import probe_notice
@@ -156,7 +156,8 @@ def install_prefs_routes(app: FastAPI, config: Config, state: Any, current_user:
         for row in rows:
             prefs = prefs_from_row(row)
             enabled = [code for code, p in prefs.events.items() if p.enabled and p.channels]
-            channels = sorted({c for p in prefs.events.values() if p.enabled for c in p.channels})
+            used = {c for p in prefs.events.values() if p.enabled for c in p.channels}
+            channels = [c for c in CHANNELS if c in used]
             items.append(
                 {
                     "username": prefs.username,

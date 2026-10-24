@@ -16,7 +16,7 @@ import asyncio
 import json
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import asyncpg
@@ -156,26 +156,62 @@ def _changes(before: Sequence[CustomerResult], after: Sequence[CustomerResult]) 
     return changes
 
 
-def compute(data: _Input) -> dict[str, Any]:
-    """CPU-часть: два расчёта riskcore и сравнение. Выполняется в потоке."""
+@dataclass(frozen=True, slots=True)
+class _Before:
+    """«Было» на снимке: от ползунков не зависит, поэтому считается один раз на снимок."""
+
+    results: list[CustomerResult]
+    totals: dict[str, Any]
+
+
+def _factor(data: _Input, sample: int) -> float:
+    return 1.0 if data.exact or sample == 0 else data.customers_total / sample
+
+
+def _before(data: _Input) -> _Before:
     src = data.source
-    before = riskcore.score_customers(src.accounts, src.services, src.transactions, data.current, data.as_of)
+    results = riskcore.score_customers(src.accounts, src.services, src.transactions, data.current, data.as_of)
+    factor = _factor(data, len(results))
+    return _Before(results, _totals(results, src.services, data.current, data.as_of, factor, data.customers_total))
+
+
+def _compare(data: _Input, before: _Before | None) -> tuple[dict[str, Any], _Before]:
+    """CPU-часть: «станет» (и «было», если его ещё нет) и сравнение. Выполняется в потоке."""
+    if before is None:
+        before = _before(data)
+    src = data.source
     after = riskcore.score_customers(src.accounts, src.services, src.transactions, data.proposed, data.as_of)
-    sample = len(before)
-    factor = 1.0 if data.exact or sample == 0 else data.customers_total / sample
-    changes = _changes(before, after)
-    return {
+    sample = len(after)
+    changes = _changes(before.results, after)
+    result = {
         "model_version": data.version,
         "exact": data.exact,
         "customers_total": data.customers_total,
         "sample_size": sample,
-        "before": _totals(before, src.services, data.current, data.as_of, factor, data.customers_total),
-        "after": _totals(after, src.services, data.proposed, data.as_of, factor, data.customers_total),
+        "before": before.totals,
+        "after": _totals(after, src.services, data.proposed, data.as_of, _factor(data, sample), data.customers_total),
         "changes_total": len(changes),
         "into_high": sum(1 for c in changes if c["level_after"] == "high"),
         "out_of_high": sum(1 for c in changes if c["level_before"] == "high"),
         "changes": changes[:CHANGES_LIMIT],
     }
+    return result, before
+
+
+def compute(data: _Input) -> dict[str, Any]:
+    return _compare(data, None)[0]
+
+
+async def _snapshot_key(conn: asyncpg.Connection) -> tuple[Any, ...] | None:
+    """Версия настроек и отметка последнего пересчёта: пока они те же, снимок и «было» те же.
+
+    Новые данные приходят в scoring событием и сразу запускают пересчёт, а он меняет отметку.
+    """
+    stamp = await repo.summary_stamp(conn)
+    if stamp is None:
+        return None
+    version = await conn.fetchval("SELECT version FROM scoring.settings WHERE id = 1")
+    return (version, *stamp)
 
 
 class Previewer:
@@ -183,6 +219,8 @@ class Previewer:
 
     Ползунок шлёт запросы чаще, чем считается выборка на большой базе. Без этого правила
     запросы выстраивались бы в очередь и ответ отставал бы от ползунка на секунды.
+    Снимок данных и «было» держим в памяти до следующего пересчёта: пока пользователь
+    двигает ползунки, на каждый запрос считается только «станет».
     """
 
     def __init__(self, pool: asyncpg.Pool, *, sample_size: int = 2000, timeout_s: float = 20.0) -> None:
@@ -191,6 +229,7 @@ class Previewer:
         self._timeout_s = timeout_s
         self._lock = asyncio.Lock()
         self._latest = 0
+        self._cache: tuple[tuple[Any, ...], _Input, _Before] | None = None
 
     async def preview(self, proposed: Mapping[str, Any]) -> dict[str, Any]:
         self._latest += 1
@@ -201,8 +240,16 @@ class Previewer:
             started = time.perf_counter()
             async with asyncio.timeout(self._timeout_s):
                 async with self._pool.acquire() as conn:
-                    data = await _load(conn, proposed, self._sample_size)
-                result = await asyncio.to_thread(compute, data)
+                    key = await _snapshot_key(conn)
+                    cached = self._cache if key is not None and self._cache and self._cache[0] == key else None
+                    before: _Before | None = None
+                    if cached is None:
+                        data = await _load(conn, proposed, self._sample_size)
+                    else:
+                        _, base, before = cached
+                        data = replace(base, proposed=riskcore.merge_settings(dict(proposed), version=base.version + 1))
+                result, before = await asyncio.to_thread(_compare, data, before)
+            self._cache = None if key is None else (key, data, before)
             result["duration_ms"] = round((time.perf_counter() - started) * 1000, 1)
             log.info(
                 "preview_done",
@@ -210,6 +257,7 @@ class Previewer:
                 sample=result["sample_size"],
                 total=result["customers_total"],
                 changes=result["changes_total"],
+                cached=cached is not None,
                 duration_ms=result["duration_ms"],
             )
             return result

@@ -138,8 +138,18 @@ async def test_only_latest_waiting_request_is_computed(monkeypatch) -> None:  # 
             return _Ctx()
 
     monkeypatch.setattr(pv, "_load", fake_load)
-    monkeypatch.setattr(pv, "compute", lambda data: {"n": data["n"], "exact": True, "sample_size": 0,
-                                                     "customers_total": 0, "changes_total": 0})
+    async def no_key(conn):  # type: ignore[no-untyped-def]
+        return None
+
+    monkeypatch.setattr(pv, "_snapshot_key", no_key)
+    monkeypatch.setattr(
+        pv,
+        "_compare",
+        lambda data, before: (
+            {"n": data["n"], "exact": True, "sample_size": 0, "customers_total": 0, "changes_total": 0},
+            None,
+        ),
+    )
     previewer = pv.Previewer(_Pool())  # type: ignore[arg-type]
     first = asyncio.create_task(previewer.preview({"n": 1}))
     await asyncio.sleep(0)
@@ -294,3 +304,40 @@ async def test_preview_sample_on_bigger_base(db_pool, sample_data) -> None:  # t
     # одна и та же выборка от запроса к запросу
     again = await pv.Previewer(db_pool, sample_size=4).preview(copy.deepcopy(proposed))
     assert again["after"] == sampled["after"] and again["changes"] == sampled["changes"]
+
+
+@pytest.mark.integration
+async def test_snapshot_is_reused_until_next_rescore(db_pool, sample_data, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    async with db_pool.acquire() as conn:
+        await load_snapshot(conn, sample_data, REFERENCE)
+    scorer = Scorer(db_pool, lock_key=993)
+    await scorer.run(full=True)
+
+    loads = 0
+    real_load = pv._load
+
+    async def counting_load(*args):  # type: ignore[no-untyped-def]
+        nonlocal loads
+        loads += 1
+        return await real_load(*args)
+
+    monkeypatch.setattr(pv, "_load", counting_load)
+    previewer = pv.Previewer(db_pool)
+    first = await previewer.preview(_storage(short_commitment=100))
+    second = await previewer.preview(_storage(short_commitment=0))
+    assert loads == 1  # ползунок двигается — снимок и «было» те же
+    assert second["before"] == first["before"]
+    assert second["after"] != first["after"]
+    # прямой расчёт без кэша даёт то же самое
+    fresh = await pv.Previewer(db_pool).preview(_storage(short_commitment=0))
+    assert {k: v for k, v in fresh.items() if k != "duration_ms"} == {
+        k: v for k, v in second.items() if k != "duration_ms"
+    }
+
+    # данные изменились и пересчитались — снимок перечитывается
+    async with db_pool.acquire() as conn:
+        await conn.execute("UPDATE source.accounts SET balance = balance + 1000 WHERE id = 1")
+    await scorer.run(full=True)
+    loads = 0
+    await previewer.preview(_storage(short_commitment=0))
+    assert loads == 1

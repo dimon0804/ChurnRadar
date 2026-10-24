@@ -19,6 +19,8 @@ tags:
     description: Вход, сессия, OIDC
   - name: customers
     description: Клиенты и их оценки риска
+  - name: actions
+    description: Кому позвонить сегодня и отметки работы с клиентом
   - name: analytics
     description: Сводные показатели и денежная оценка
   - name: model
@@ -190,6 +192,129 @@ paths:
               schema: { $ref: '#/components/schemas/CustomerDetail' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/customers/export.csv:
+    get:
+      tags: [customers]
+      summary: Выгрузка клиентов в CSV для рассылки и Excel
+      description: |
+        Те же фильтры и сортировка, что у списка, но без страниц: все подходящие клиенты
+        (до 100 000 строк). Файл в UTF-8 с BOM, разделитель «;», дробная часть через
+        запятую — так его без мастера импорта открывает русский Excel. Суммы в евро.
+
+        Колонки: ID, Email, Уровень риска, Риск (баллы), Ожидаемая потеря (€), Баланс (€),
+        Пополнения всего (€), Главная причина, Что сделать, Статус.
+      operationId: exportCustomers
+      parameters:
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [id, email, balance, total_replenished, risk_score, expected_loss]
+            default: risk_score
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - name: level
+          in: query
+          description: Фильтр по уровням через запятую, например `high,medium`
+          schema: { type: string }
+        - name: search
+          in: query
+          description: Поиск по email (подстрока) или точному ID
+          schema: { type: string }
+        - name: worklist
+          in: query
+          description: 'Только очередь «Кому позвонить сегодня»: есть оценка, есть потеря, нет действующей отметки'
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: CSV-файл
+          headers:
+            Content-Disposition:
+              schema: { type: string, examples: ['attachment; filename="churnradar-clients-2026-10-24.csv"'] }
+          content:
+            text/csv:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/customers/{id}/action:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      tags: [actions]
+      summary: Отметка работы с клиентом и журнал отметок
+      operationId: getCustomerAction
+      responses:
+        '200':
+          description: Текущая отметка и последние 20 записей журнала
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerActionState' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [actions]
+      summary: Отметить клиента «Сделано» или «Отложить»
+      description: |
+        Доступно любому вошедшему пользователю, в том числе аналитику: отметка не меняет
+        ни данные, ни модель, только очередь звонков. Кто и когда отметил, пишется в журнал.
+
+        «Сделано» прячет клиента из очереди, пока его ожидаемая потеря или уровень риска
+        не вырастут по сравнению с моментом отметки. «Отложить» прячет до даты.
+      operationId: putCustomerAction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CustomerActionUpdate' }
+      responses:
+        '200':
+          description: Отметка сохранена
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerActionState' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [actions]
+      summary: Снять отметку — клиент возвращается в очередь
+      operationId: deleteCustomerAction
+      responses:
+        '200':
+          description: Отметка снята (если её не было — ничего не меняется)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerActionState' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/call-today:
+    get:
+      tags: [actions]
+      summary: Кому позвонить сегодня
+      description: |
+        Клиенты с оценкой риска (не unknown) и ненулевой ожидаемой потерей, по убыванию
+        ожидаемой потери: первым идёт тот, на ком можно спасти больше всего денег.
+        Клиенты с действующей отметкой «Сделано» или «Отложить» в очередь не попадают;
+        `marked=true` показывает как раз их.
+      operationId: callToday
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 5 } }
+        - { name: marked, in: query, schema: { type: boolean, default: false } }
+      responses:
+        '200':
+          description: Очередь звонков
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CallToday' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
 
   /api/v1/analytics/summary:
     get:
@@ -633,6 +758,89 @@ components:
         page_size: { type: integer }
         scored_at: { type: [string, 'null'], format: date-time }
         model_version: { type: integer }
+
+    CustomerAction:
+      type: object
+      required: [status, snoozed_until, note, updated_at, updated_by, expected_loss_at_mark, risk_level_at_mark, active, returned]
+      properties:
+        status: { type: string, enum: [done, snoozed] }
+        snoozed_until: { type: [string, 'null'], format: date-time, description: 'До какого момента отложен; null для done' }
+        note: { type: [string, 'null'] }
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: [string, 'null'] }
+        expected_loss_at_mark: { type: integer, description: 'Ожидаемая потеря в момент отметки, евроценты' }
+        risk_level_at_mark: { $ref: '#/components/schemas/RiskLevel' }
+        active:
+          type: boolean
+          description: 'Отметка сейчас прячет клиента из очереди. false — отложка истекла или после «Сделано» риск вырос'
+        returned: { type: boolean, description: 'После «Сделано» потеря или уровень риска выросли — клиент снова в очереди' }
+
+    CustomerActionUpdate:
+      type: object
+      additionalProperties: false
+      required: [status]
+      description: 'Для snoozed нужно ровно одно из snooze_days и snoozed_until; для done — ни одного'
+      properties:
+        status: { type: string, enum: [done, snoozed] }
+        snooze_days: { type: integer, minimum: 1, maximum: 365 }
+        snoozed_until: { type: string, format: date-time, description: 'В будущем, не дальше чем через 365 дней' }
+        note: { type: string, maxLength: 500 }
+
+    CustomerActionLogEntry:
+      type: object
+      required: [status, snoozed_until, note, expected_loss, changed_at, changed_by]
+      properties:
+        status: { type: string, enum: [done, snoozed, cleared] }
+        snoozed_until: { type: [string, 'null'], format: date-time }
+        note: { type: [string, 'null'] }
+        expected_loss: { type: [integer, 'null'], description: 'Ожидаемая потеря клиента в момент записи, евроценты' }
+        changed_at: { type: string, format: date-time }
+        changed_by: { type: [string, 'null'] }
+
+    CustomerActionState:
+      type: object
+      required: [customer_id, action, history]
+      properties:
+        customer_id: { type: integer, format: int64 }
+        action:
+          oneOf:
+            - { $ref: '#/components/schemas/CustomerAction' }
+            - { type: 'null' }
+        history:
+          type: array
+          description: Журнал от новых записей к старым
+          items: { $ref: '#/components/schemas/CustomerActionLogEntry' }
+
+    CallTodayItem:
+      type: object
+      required: [id, email, risk_level, risk_score, expected_loss, main_reason, next_action, action]
+      properties:
+        id: { type: integer, format: int64 }
+        email: { type: string }
+        risk_level: { $ref: '#/components/schemas/RiskLevel' }
+        risk_score: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        expected_loss: { type: integer, description: евроценты }
+        main_reason: { type: [string, 'null'], description: Заголовок главной причины риска }
+        next_action:
+          description: Главное действие из карточки клиента
+          oneOf:
+            - { $ref: '#/components/schemas/Recommendation' }
+            - { type: 'null' }
+        action:
+          oneOf:
+            - { $ref: '#/components/schemas/CustomerAction' }
+            - { type: 'null' }
+
+    CallToday:
+      type: object
+      required: [items, queue_total, queue_expected_loss, marked_total]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CallTodayItem' }
+        queue_total: { type: integer, description: Сколько клиентов в очереди всего (без отмеченных) }
+        queue_expected_loss: { type: integer, description: Ожидаемая потеря по всей очереди, евроценты }
+        marked_total: { type: integer, description: Сколько клиентов сейчас спрятано отметками }
 
     ServiceRisk:
       type: object

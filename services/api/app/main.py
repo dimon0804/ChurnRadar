@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 import httpx
 import structlog
 from fastapi import Body, Depends, FastAPI, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from svckit.auth import User, make_current_user, make_require_admin
 from svckit.bus import EventBus
 from svckit.db import create_pool, db_ready, get_pool
@@ -18,7 +19,7 @@ from svckit.logs import configure_logging
 from svckit.metrics import HttpMetricsMiddleware, check_metrics_token, render
 from svckit.outbox import OutboxRelay
 
-from app import metrics, model_settings, queries
+from app import actions, metrics, model_settings, queries
 from app.config import settings
 from app.docs import router as docs_router
 
@@ -104,9 +105,60 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
             search=search, page=page, page_size=page_size,
         )
 
+    # объявлен до /customers/{customer_id}, иначе «export.csv» попадёт в customer_id
+    @app.get("/api/v1/customers/export.csv", tags=["customers"])
+    async def export_customers(
+        _: CurrentUser,
+        pool: Pool,
+        sort: queries.SortField = "risk_score",
+        order: queries.SortOrder = "desc",
+        level: str | None = None,
+        search: Annotated[str | None, Query(max_length=320)] = None,
+        worklist: bool = False,
+    ) -> Response:
+        rows = await actions.export_rows(
+            pool, sort=sort, order=order, levels=queries.parse_levels(level), search=search, worklist=worklist,
+        )
+        name = actions.export_filename(datetime.now(UTC))
+        return Response(
+            actions.render_csv(rows),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"},
+        )
+
     @app.get("/api/v1/customers/{customer_id}", tags=["customers"])
     async def get_customer(customer_id: int, _: CurrentUser, pool: Pool) -> dict[str, Any]:
         return await queries.get_customer(pool, customer_id)
+
+    # --- кому позвонить сегодня -------------------------------------------------------
+    # Отмечать может и аналитик: со списком работает маркетинг, а отметка не меняет ни
+    # данные, ни модель — только очередь звонков. Кто и когда отметил, видно в журнале.
+    @app.get("/api/v1/call-today", tags=["actions"])
+    async def call_today(
+        _: CurrentUser,
+        pool: Pool,
+        limit: Annotated[int, Query(ge=1, le=100)] = 5,
+        marked: bool = False,
+    ) -> dict[str, Any]:
+        return await actions.call_today(pool, limit=limit, marked=marked)
+
+    @app.get("/api/v1/customers/{customer_id}/action", tags=["actions"])
+    async def get_customer_action(customer_id: int, _: CurrentUser, pool: Pool) -> dict[str, Any]:
+        return await actions.get_action(pool, customer_id)
+
+    @app.put("/api/v1/customers/{customer_id}/action", tags=["actions"])
+    async def put_customer_action(
+        customer_id: int, user: CurrentUser, pool: Pool, update: Annotated[actions.ActionUpdate, Body()]
+    ) -> dict[str, Any]:
+        state = await actions.set_action(pool, customer_id, update, user.name)
+        log.info("customer_action_set", customer_id=customer_id, status=update.status, user=user.name)
+        return state
+
+    @app.delete("/api/v1/customers/{customer_id}/action", tags=["actions"])
+    async def delete_customer_action(customer_id: int, user: CurrentUser, pool: Pool) -> dict[str, Any]:
+        state = await actions.clear_action(pool, customer_id, user.name)
+        log.info("customer_action_cleared", customer_id=customer_id, user=user.name)
+        return state
 
     # --- analytics ---------------------------------------------------------------
     @app.get("/api/v1/analytics/summary", tags=["analytics"])

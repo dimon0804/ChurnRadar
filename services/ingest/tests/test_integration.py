@@ -130,7 +130,8 @@ async def test_migrator_is_idempotent(env):
     applied = await migrator.run(DB_URL, [str(REPO_ROOT / "db" / "core"), "/no/such/dir"], connect_timeout_s=5)
     assert applied == []
     rows = await fetch("SELECT name FROM public.schema_migrations")
-    assert [r["name"] for r in rows] == ["core/001_core.sql", "core/002_outbox.sql"]
+    expected = sorted(f"core/{p.name}" for p in (REPO_ROOT / "db" / "core").glob("*.sql"))
+    assert sorted(r["name"] for r in rows) == expected
 
 
 async def test_seed_on_start_and_event(running):

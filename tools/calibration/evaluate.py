@@ -171,7 +171,7 @@ def roc_points(table: Accounts, target: str) -> dict[str, Any]:
 
 
 def threshold_metrics(table: Accounts) -> dict[str, dict[str, Any]]:
-    """Точность и полнота, если звонить всем с уровнем high (или medium и выше)."""
+    """Точность и полнота, если писать всем с уровнем high (или medium и выше)."""
     out: dict[str, dict[str, Any]] = {}
     for name, flagged_levels in (("high", ("high",)), ("medium_plus", ("medium", "high"))):
         flagged = np.isin(table.level, flagged_levels)

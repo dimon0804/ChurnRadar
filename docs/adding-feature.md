@@ -46,7 +46,7 @@ class NewCustomer(AccountFeature):
         return Recommendation(
             code=self.code,
             title=f"Клиент с нами {signal.facts['days']} дн.: провести онбординг",
-            detail="Позвонить и помочь настроить сервер.",
+            detail="Написать и предложить помощь с настройкой сервера.",
         )
 ```
 

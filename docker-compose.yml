@@ -24,6 +24,8 @@ x-app-env: &app-env
   SMTP_SECURITY: ${SMTP_SECURITY:-none}
   SMTP_FROM: ${SMTP_FROM:-care@churnradar.example}
   SMTP_FROM_NAME: ${SMTP_FROM_NAME:-ChurnRadar}
+  # куда придут ответы клиентов, если у сотрудника нет почты в профиле; пусто — SMTP_FROM
+  SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
 
 x-app-hardening: &app-hardening
   read_only: true

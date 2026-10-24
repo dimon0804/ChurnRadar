@@ -8,16 +8,17 @@ http:
           X-User-Name: ""
           X-User-Roles: ""
           X-Auth-Method: ""
+          X-User-Email: ""
 
     auth:
       forwardAuth:
         address: http://auth:8000/internal/verify
-        authResponseHeaders: [X-User-Id, X-User-Name, X-User-Roles, X-Auth-Method]
+        authResponseHeaders: [X-User-Id, X-User-Name, X-User-Roles, X-User-Email, X-Auth-Method]
 
     auth-page:
       forwardAuth:
         address: http://auth:8000/internal/verify?redirect=1
-        authResponseHeaders: [X-User-Id, X-User-Name, X-User-Roles, X-Auth-Method]
+        authResponseHeaders: [X-User-Id, X-User-Name, X-User-Roles, X-User-Email, X-Auth-Method]
 
     metrics-auth:
       forwardAuth:

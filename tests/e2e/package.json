@@ -1,0 +1,14 @@
+{
+  "name": "churn-radar-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.52.0",
+    "@types/node": "22.15.3",
+    "typescript": "5.8.3"
+  }
+}

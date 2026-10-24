@@ -153,7 +153,11 @@ risk and the number of customers per level would become, and a list shows who wo
 or out of high risk. "Применить" saves as usual, "Отменить" puts everything back. scoring
 computes the preview with the same code as the real rescoring, so the numbers match after you
 apply. Above 2000 customers it scores a sample, and the panel says plainly that the totals are
-approximate (the threshold is `PREVIEW_SAMPLE_SIZE` on scoring).
+approximate (the threshold is `PREVIEW_SAMPLE_SIZE` on scoring). scoring keeps the snapshot and
+the "before" side in memory until the next rescoring, so on 100 thousand customers the first
+answer takes a few seconds and every further slider move about a second. If a full rescoring
+of a large base is running at that moment, the preview may not fit into `PREVIEW_TIMEOUT_S`
+(20 s); the panel then offers to retry.
 
 ![Weight editor](docs/img/screens/model.png)
 

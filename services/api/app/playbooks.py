@@ -27,7 +27,7 @@ import structlog
 from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import Response
 from pydantic import ValidationError
-from svckit.auth import User, make_current_user, make_require_admin
+from svckit.auth import User, make_current_user, make_require_role
 from svckit.db import get_pool
 from svckit.errors import ApiError
 from svckit.mail import MailConfig
@@ -826,7 +826,8 @@ _current_user = make_current_user(settings)
 CurrentUser = Annotated[User, Depends(_current_user)]
 # Писать клиентам от имени сценария может тот же, кто правит шаблоны. Роли маркетолога ещё
 # нет — когда появится, достаточно поменять эту зависимость.
-Writer = Annotated[User, Depends(make_require_admin(_current_user))]
+# сценарии ведёт маркетолог: это его письма клиентам, только по правилам
+Writer = Annotated[User, Depends(make_require_role(_current_user, "marketer"))]
 Pool = Annotated[Any, Depends(get_pool)]
 
 router = APIRouter(prefix="/api/v1/playbooks", tags=["playbooks"])

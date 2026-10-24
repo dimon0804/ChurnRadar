@@ -25,6 +25,8 @@ MATRIX = [
     ("POST", "/api/v1/customers/7/email", "marketer"),
     ("POST", "/api/v1/mail/campaigns/preview", "marketer"),
     ("POST", "/api/v1/mail/campaigns", "marketer"),
+    ("POST", "/api/v1/playbooks", "marketer"),
+    ("PATCH", "/api/v1/playbooks/3", "marketer"),
     ("PUT", "/api/v1/mail/templates/general", "admin"),
     ("POST", "/api/v1/mail/templates/general/reset", "admin"),
     ("PUT", "/api/v1/analytics/marketing/settings", "admin"),

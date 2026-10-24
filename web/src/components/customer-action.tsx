@@ -62,7 +62,9 @@ export function ActionButtons({
         <Check />
         Сделано
       </Button>
-      <DropdownMenu>
+      {/* не модальное: после выбора строка исчезает вместе с кнопкой, и модальное меню
+          оставляло бы остальную страницу скрытой от скринридеров (aria-hidden) */}
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size={size} disabled={disabled}>
             <AlarmClock />

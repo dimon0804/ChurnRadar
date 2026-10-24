@@ -363,6 +363,11 @@ async def test_call_today_marks_and_export(client):
     assert first["next_action"] == {"code": "prolong_wait", "title": "Позвонить"}
     assert len((await client.get("/api/v1/call-today", headers=ANALYST)).json()["items"]) == 5
     assert len((await client.get("/api/v1/call-today?limit=2", headers=ANALYST)).json()["items"]) == 2
+    # короткое название причины (label) предпочитаем длинному объяснению
+    await _sql("""UPDATE scoring.customer_scores SET reasons = jsonb_set(reasons, '{0,label}', '"Ждёт"')
+                  WHERE customer_id = 3""")
+    items = (await client.get("/api/v1/call-today?limit=10", headers=ANALYST)).json()["items"]
+    assert next(i for i in items if i["id"] == 3)["main_reason"] == "Ждёт"
 
     # аналитик отмечает «Сделано» — клиент уходит из очереди в «отмеченные»
     done = await client.put("/api/v1/customers/1/action", json={"status": "done", "note": " позвонили "}, headers=ANALYST)

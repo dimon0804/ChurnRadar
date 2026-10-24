@@ -172,7 +172,7 @@ CANDIDATE_SQL = "cs.risk_level <> 'unknown' AND cs.expected_loss > 0"
 
 _LIST_COLUMNS = (
     "cs.customer_id, cs.email, cs.risk_level, cs.risk_score, cs.expected_loss, "
-    "cs.reasons -> 0 ->> 'title' AS main_reason, "
+    "COALESCE(NULLIF(cs.reasons -> 0 ->> 'label', ''), cs.reasons -> 0 ->> 'title') AS main_reason, "
     "COALESCE(cs.detail -> 'next_action', cs.detail -> 'recommendations' -> 0) AS next_action"
 )
 
@@ -419,7 +419,7 @@ async def export_rows(
     sql = (
         "SELECT cs.*, " + ACTION_COLUMNS + " FROM ("
         "SELECT customer_id, email, balance, total_replenished, risk_score, risk_level, expected_loss, "
-        "reasons -> 0 ->> 'title' AS main_reason, "
+        "COALESCE(NULLIF(reasons -> 0 ->> 'label', ''), reasons -> 0 ->> 'title') AS main_reason, "
         "COALESCE(detail -> 'next_action', detail -> 'recommendations' -> 0) AS next_action "
         f"FROM scoring.customer_scores{where}) cs "
         "LEFT JOIN scoring.customer_actions a ON a.customer_id = cs.customer_id"

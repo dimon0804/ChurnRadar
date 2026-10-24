@@ -27,7 +27,7 @@ class Suspended(ServiceFeature):
     def recommend(self, signal: Signal) -> Recommendation:
         return Recommendation(
             code=self.code,
-            title=f"Сервер {signal.facts['service']} выключен: позвонить и узнать причину",
+            title=f"Сервер {signal.facts['service']} выключен: написать и узнать причину",
             detail=(
                 f"Клиент платит около {signal.facts.get('monthly', '')} в месяц за сервер, "
                 "которым не пользуется: предложить тариф дешевле или паузу вместо отказа."

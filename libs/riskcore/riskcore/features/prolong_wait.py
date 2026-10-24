@@ -68,6 +68,6 @@ class ProlongWait(ServiceFeature):
             )
         return Recommendation(
             code=self.code,
-            title=f"Срочный звонок: {signal.facts['service']} {when}",
+            title=f"Срочно написать: {signal.facts['service']} {when}",
             detail=detail,
         )

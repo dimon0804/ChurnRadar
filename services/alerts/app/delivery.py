@@ -71,7 +71,7 @@ class Dispatcher:
                     pass
                 PENDING.set(await repo.pending_count(self._pool))
                 if time.monotonic() - last_prune > PRUNE_EVERY_S:
-                    await repo.prune(self._pool, self._retention)
+                    await repo.prune(self._pool, self._retention, timedelta(days=8))
                     last_prune = time.monotonic()
             except Exception:
                 log.exception("delivery_loop_failed")
@@ -94,7 +94,7 @@ class Dispatcher:
             return
         attempt = delivery.attempts + 1
         try:
-            await channel.send(delivery.payload, batch_id=delivery.batch_id)
+            await channel.send(delivery.payload, batch_id=delivery.batch_id, recipient=delivery.recipient)
         except DeliveryError as exc:
             FAILED.labels(channel=delivery.channel).inc()
             give_up = not exc.retryable or attempt >= self._max_attempts

@@ -90,7 +90,7 @@ async def test_feed_list(monkeypatch: pytest.MonkeyPatch) -> None:
     assert body["channels"] == {"feed": True, "webhook": True, "telegram": False}
     assert body["items"][0]["link"] == "/customers/42"
     assert body["items"][0]["created_at"] == "2026-10-19T15:00:00.000Z"
-    assert body["items"][1]["link"] == "/customers?level=high"
+    assert body["items"][1]["link"] == "/"
 
     # ответ совпадает со схемой AlertPage из contracts/openapi.yaml
     jsonschema = pytest.importorskip("jsonschema")
@@ -101,3 +101,28 @@ async def test_feed_list(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert (await _get(app, "/api/v1/alerts?page_size=500", USER)).status_code == 422
     assert (await _get(app, "/api/v1/alerts?kind=other", USER)).status_code == 422
+
+
+async def _call(app, method: str, path: str, headers: dict[str, str] | None = None):  # type: ignore[no-untyped-def]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://s") as c:
+        return await c.request(method, path, headers=headers)
+
+
+async def test_preferences_require_user_and_admin() -> None:
+    state = State()
+    state.pool = SimpleNamespace()
+    app = create_http_app(Config(), state)
+    assert (await _call(app, "GET", "/api/v1/alerts/preferences")).status_code == 401
+    assert (await _call(app, "GET", "/api/v1/alerts/notifications")).status_code == 401
+    # чужие настройки — только администратору
+    assert (await _call(app, "GET", "/api/v1/alerts/preferences/users", USER)).status_code == 403
+    assert (await _call(app, "DELETE", "/api/v1/alerts/preferences/users/anna", USER)).status_code == 403
+
+
+async def test_telegram_link_without_bot_is_honest() -> None:
+    state = State()
+    state.pool = SimpleNamespace()
+    app = create_http_app(Config(), state)
+    resp = await _call(app, "POST", "/api/v1/alerts/telegram/link", USER)
+    assert resp.status_code == 409
+    assert "бот не настроен" in resp.json()["error"]["message"]

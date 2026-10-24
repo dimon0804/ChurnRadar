@@ -1,13 +1,15 @@
-"""Каналы доставки: webhook (JSON POST) и Telegram Bot API. Одна попытка на вызов, повторы — в delivery."""
+"""Каналы доставки: webhook, Telegram Bot API, почта. Одна попытка на вызов, повторы — в delivery."""
 
 from __future__ import annotations
 
 import hashlib
 import hmac
 import json
+import smtplib
 from typing import Any, Protocol
 
 import httpx
+from svckit.mail import Mail, MailConfig, MailDisabled, send_mail
 
 from .config import Config
 
@@ -23,7 +25,7 @@ class DeliveryError(Exception):
 class Channel(Protocol):
     name: str
 
-    async def send(self, payload: dict[str, Any], *, batch_id: str) -> None: ...
+    async def send(self, payload: dict[str, Any], *, batch_id: str, recipient: str | None = None) -> None: ...
 
 
 def _check(response: httpx.Response, what: str) -> None:
@@ -47,7 +49,7 @@ class WebhookChannel:
         self._secret = secret
         self._timeout = timeout_s
 
-    async def send(self, payload: dict[str, Any], *, batch_id: str) -> None:
+    async def send(self, payload: dict[str, Any], *, batch_id: str, recipient: str | None = None) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode()
         headers = {
             "Content-Type": "application/json; charset=utf-8",
@@ -64,31 +66,85 @@ class WebhookChannel:
         _check(response, "webhook")
 
 
-class TelegramChannel:
-    name = "telegram"
+class TelegramApi:
+    """Минимальный клиент Bot API: sendMessage, getMe, getUpdates. Токен в URL, поэтому в тексты
+    ошибок попадает только тип исключения."""
 
-    def __init__(
-        self, client: httpx.AsyncClient, token: str, chat_id: str, *, api_url: str, timeout_s: float = 10.0
-    ) -> None:
+    def __init__(self, client: httpx.AsyncClient, token: str, *, api_url: str, timeout_s: float = 10.0) -> None:
         self._client = client
         self._token = token
-        self._chat_id = chat_id
         self._api_url = api_url.rstrip("/")
         self._timeout = timeout_s
 
-    async def send(self, payload: dict[str, Any], *, batch_id: str) -> None:
-        url = f"{self._api_url}/bot{self._token}/sendMessage"
-        body = {
-            "chat_id": self._chat_id,
-            "text": str(payload.get("text", ""))[:4000],  # лимит Telegram — 4096 символов
-            "disable_web_page_preview": True,
-        }
+    async def call(self, method: str, body: dict[str, Any] | None = None, *, timeout: float | None = None) -> Any:
+        url = f"{self._api_url}/bot{self._token}/{method}"
         try:
-            response = await self._client.post(url, json=body, timeout=self._timeout)
+            response = await self._client.post(url, json=body or {}, timeout=timeout or self._timeout)
         except httpx.HTTPError as exc:
-            # в тексте исключения httpx может оказаться URL с токеном
             raise DeliveryError(f"Telegram недоступен: {type(exc).__name__}") from exc
         _check(response, "Telegram")
+        data = response.json()
+        if not data.get("ok"):
+            raise DeliveryError(f"Telegram: {data.get('description', 'ошибка')}", retryable=False)
+        return data.get("result")
+
+    async def send_message(
+        self, chat_id: str | int, text: str, *, parse_mode: str | None = None, button: dict[str, str] | None = None
+    ) -> None:
+        body: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": text[:4000],  # лимит Telegram — 4096 символов
+            "disable_web_page_preview": True,
+        }
+        if parse_mode:
+            body["parse_mode"] = parse_mode
+        if button:
+            body["reply_markup"] = {"inline_keyboard": [[{"text": button["text"], "url": button["url"]}]]}
+        await self.call("sendMessage", body)
+
+
+class TelegramChannel:
+    """Личный чат пользователя (recipient = chat id) или общий чат команды (TELEGRAM_CHAT_ID)."""
+
+    name = "telegram"
+
+    def __init__(self, api: TelegramApi, team_chat_id: str = "") -> None:
+        self._api = api
+        self._team_chat_id = team_chat_id
+
+    async def send(self, payload: dict[str, Any], *, batch_id: str, recipient: str | None = None) -> None:
+        chat_id = recipient or self._team_chat_id
+        if not chat_id:
+            raise DeliveryError("нет чата для отправки", retryable=False)
+        await self._api.send_message(
+            chat_id, str(payload.get("text", "")), parse_mode=payload.get("parse_mode"), button=payload.get("button")
+        )
+
+
+class EmailChannel:
+    name = "email"
+
+    def __init__(self, config: MailConfig) -> None:
+        self._config = config
+
+    async def send(self, payload: dict[str, Any], *, batch_id: str, recipient: str | None = None) -> None:
+        if not recipient:
+            raise DeliveryError("не указан адрес", retryable=False)
+        mail = Mail(
+            to=recipient,
+            subject=str(payload.get("subject", "ChurnRadar")),
+            text=str(payload.get("text", "")),
+            html=payload.get("html"),
+            headers={"X-ChurnRadar-Batch-Id": batch_id},
+        )
+        try:
+            await send_mail(self._config, mail)
+        except MailDisabled as exc:
+            raise DeliveryError("почта не настроена (SMTP_HOST)", retryable=False) from exc
+        except smtplib.SMTPRecipientsRefused as exc:
+            raise DeliveryError(f"адрес не принят: {recipient}", retryable=False) from exc
+        except (OSError, smtplib.SMTPException) as exc:
+            raise DeliveryError(f"SMTP: {type(exc).__name__}: {exc}") from exc
 
 
 def build_channels(config: Config, client: httpx.AsyncClient) -> dict[str, Channel]:
@@ -97,12 +153,11 @@ def build_channels(config: Config, client: httpx.AsyncClient) -> dict[str, Chann
         channels["webhook"] = WebhookChannel(
             client, config.webhook_url, secret=config.webhook_secret, timeout_s=config.webhook_timeout_s
         )
-    if config.telegram_enabled:
-        channels["telegram"] = TelegramChannel(
-            client,
-            config.telegram_bot_token,
-            config.telegram_chat_id,
-            api_url=config.telegram_api_url,
-            timeout_s=config.telegram_timeout_s,
+    if config.telegram_bot_token:
+        api = TelegramApi(
+            client, config.telegram_bot_token, api_url=config.telegram_api_url, timeout_s=config.telegram_timeout_s
         )
+        channels["telegram"] = TelegramChannel(api, config.telegram_chat_id)
+    if config.mail.enabled:
+        channels["email"] = EmailChannel(config.mail)
     return channels

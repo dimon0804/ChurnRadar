@@ -1,4 +1,4 @@
-"""Потребитель JetStream: churn.scores.updated → правила → лента и очередь доставки."""
+"""Потребитель JetStream: churn.scores.updated → критические события → подписчики и журнал."""
 
 from __future__ import annotations
 
@@ -22,18 +22,9 @@ from svckit.logs import get_logger
 from . import repository as repo
 from .config import Config
 from .events import SUBJECT_SCORES, InvalidEvent, ScoresEvent, coalesce, parse_event, unique_new
-from .metrics import BULK_FOLDED, DEAD_LETTERS, ERRORS, EVENTS, LAST_EVENT, RAISED, RETRIES, SENT, SUPPRESSED
-from .rules import (
-    Alert,
-    Thresholds,
-    TotalState,
-    batch_text,
-    bulk_alert,
-    evaluate_customers,
-    evaluate_total,
-    is_bulk,
-    webhook_payload,
-)
+from .fanout import Fanout
+from .metrics import DEAD_LETTERS, ERRORS, EVENTS, LAST_EVENT, RETRIES, SENT
+from .rules import JournalEntry
 
 log = get_logger("alerts.worker")
 
@@ -107,10 +98,11 @@ def utcnow() -> datetime:
 
 @dataclass(slots=True)
 class Outcome:
-    batch_id: str | None = None
-    alerts: list[Alert] = field(default_factory=list)
+    journal: list[JournalEntry] = field(default_factory=list)
+    personal: int = 0
     baseline: bool = False
     duplicates: int = 0
+    queued_external: bool = False
 
 
 class BatchProcessor:
@@ -130,11 +122,7 @@ class BatchProcessor:
         self._on_enqueued = on_enqueued
         self._dead_letter = dead_letter
         self._now = now
-        self._thresholds = Thresholds(
-            loss_jump_cents=config.loss_jump_cents,
-            total_loss_jump_pct=config.total_loss_jump_pct,
-            cooldown=timedelta(seconds=config.cooldown_s),
-        )
+        self._fanout = Fanout(config)
 
     async def handle(self, messages: Sequence[Message]) -> Outcome | None:
         events: list[ScoresEvent] = []
@@ -167,12 +155,13 @@ class BatchProcessor:
             with contextlib.suppress(Exception):
                 await msg.ack()
         LAST_EVENT.set_to_current_time()
-        if outcome.alerts:
+        if outcome.queued_external:
             self._on_enqueued()
         return outcome
 
     async def _process(self, events: list[ScoresEvent]) -> Outcome:
         now = self._now()
+        cfg = self._config
         outcome = Outcome()
         async with self._pool.acquire() as conn, conn.transaction():
             await repo.lock(conn)
@@ -184,96 +173,34 @@ class BatchProcessor:
             if not fresh:
                 return outcome
             plan = coalesce(fresh)
-            meta = await repo.load_meta(conn)
-            total_now = plan.total_loss
-            if total_now is None:
-                total_now = await repo.total_loss_from_summary(conn)
+            cur = await repo.current_metrics(conn, now)
+            prev = await repo.latest_snapshot(conn)
+            if cur is not None:
+                await repo.write_snapshot(conn, cur, timedelta(seconds=cfg.snapshot_every_s))
 
-            if meta.baseline_at is None:
+            if not await repo.baseline_taken(conn):
                 remembered = await repo.take_baseline(conn, now)
-                if total_now is not None:
-                    _, total_state, _ = evaluate_total(total_now, None, self._thresholds, now)
-                    await repo.save_total(conn, total_state)
                 await repo.mark_processed(conn, plan.event_ids)
                 log.info("baseline_taken", customers=remembered)
                 outcome.baseline = True
                 return outcome
 
             ids = None if plan.full else sorted(plan.customer_ids)
-            await repo.forget_removed(conn, ids)
-            rows = await repo.changed_rows(conn, ids)
-            decision = evaluate_customers(rows, self._thresholds, now)
-            bulk = is_bulk(decision.alerts, full=plan.full, threshold=self._config.bulk_threshold)
-            high_before = await repo.count_high_state(conn) if bulk else 0
-            # состояние обновляется и при сводной записи: свёрнутые клиенты считаются оповещёнными,
-            # отложенных оповещений по ним потом не будет
-            await repo.save_states(conn, decision.states)
-            alerts = list(decision.alerts)
-            suppressed = dict(decision.suppressed)
-
-            if total_now is not None:
-                total_alert, total_state, total_suppressed = evaluate_total(
-                    total_now, meta.total, self._thresholds, now
+            transitions = await repo.high_transitions(conn, ids, now, timedelta(seconds=cfg.customer_cooldown_s))
+            if cur is not None:
+                result = await self._fanout.on_scores(
+                    conn, now=now, cur=cur, prev=prev, transitions=transitions, event_ids=plan.event_ids
                 )
-                if bulk:
-                    # рост общей потери уже в сводной записи; отсчёт — от новой базы
-                    total_state = TotalState(total_now, total_now, now)
-                elif total_alert is not None:
-                    alerts.insert(0, total_alert)
-                await repo.save_total(conn, total_state)
-                if total_suppressed and not bulk:
-                    suppressed["total_loss_jump"] = suppressed.get("total_loss_jump", 0) + 1
-
-            if bulk:
-                folded = len(decision.alerts)
-                BULK_FOLDED.inc(folded)
-                alerts = [
-                    bulk_alert(
-                        decision.alerts,
-                        full=plan.full,
-                        high_now=await repo.count_high_scores(conn),
-                        high_before=high_before,
-                        total_now=total_now,
-                        total_before=meta.total.total_loss if meta.total else None,
-                    )
-                ]
-                log.info("alerts_bulk", folded=folded, full=plan.full)
-
-            if alerts:
-                batch_id = str(uuid.uuid4())
-                await repo.insert_feed(conn, alerts, batch_id=batch_id, event_id=plan.event_ids[-1], now=now)
-                await self._enqueue(conn, alerts, batch_id=batch_id, event_ids=plan.event_ids, now=now)
-                outcome.batch_id = batch_id
-                outcome.alerts = alerts
+                outcome.journal = result.journal
+                outcome.personal = result.personal
+                outcome.queued_external = result.queued_external
             await repo.mark_processed(conn, plan.event_ids)
 
-        for alert in outcome.alerts:
-            RAISED.labels(kind=alert.kind).inc()
-        for kind, count in suppressed.items():
-            SUPPRESSED.labels(kind=kind).inc(count)
-        if outcome.alerts:
+        if outcome.journal:
             SENT.labels(channel="feed").inc()
-            log.info("alerts_raised", batch_id=outcome.batch_id, count=len(outcome.alerts), suppressed=suppressed)
+        if outcome.journal or outcome.personal:
+            log.info("events_raised", journal=len(outcome.journal), personal=outcome.personal)
         return outcome
-
-    async def _enqueue(
-        self, conn: asyncpg.Connection, alerts: list[Alert], *, batch_id: str, event_ids: list[str], now: datetime
-    ) -> None:
-        cfg = self._config
-        channels = cfg.enabled_channels()
-        if "webhook" in channels:
-            payload = webhook_payload(
-                alerts,
-                batch_id=batch_id,
-                event_ids=event_ids,
-                created_at=now,
-                public_url=cfg.public_url,
-                max_items=cfg.max_items_in_message,
-            )
-            await repo.enqueue_delivery(conn, batch_id=batch_id, channel="webhook", payload=payload)
-        if "telegram" in channels:
-            text = batch_text(alerts, cfg.public_url, cfg.max_items_in_message)
-            await repo.enqueue_delivery(conn, batch_id=batch_id, channel="telegram", payload={"text": text})
 
     async def retry_or_dead_letter(self, messages: Sequence[Message], error: BaseException) -> None:
         """Повтор с паузой по backoff; после max_deliver доставок — в DLQ и term()."""

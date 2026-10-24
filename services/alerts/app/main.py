@@ -1,4 +1,4 @@
-"""Точка входа: HTTP (/healthz, /readyz, /metrics, /api/v1/alerts), потребитель NATS и отправка в каналы.
+"""Точка входа: HTTP (пробы, /metrics, /api/v1/alerts/*), потребитель NATS, расписание, отправка, Telegram-бот.
 
 Без `from __future__ import annotations`: FastAPI должен видеть Depends(current_user)
 из замыкания как объект, а не строку.
@@ -9,8 +9,8 @@ import contextlib
 import logging
 import signal
 import sys
-from collections.abc import Sequence
-from datetime import timedelta
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 import httpx
@@ -25,22 +25,38 @@ from svckit.logs import configure_logging, get_logger
 from svckit.metrics import METRICS_TOKEN_MESSAGE, HttpMetricsMiddleware, bearer_token_valid, render
 
 from . import repository as repo
-from .channels import build_channels
+from .api_prefs import install_prefs_routes
+from .bot import Bot
+from .channels import TelegramApi, build_channels
 from .config import Config
 from .delivery import Dispatcher
-from .metrics import ERRORS, HTTP_DURATION
+from .fanout import Fanout
+from .metrics import ERRORS, HTTP_DURATION, SUBSCRIBERS, TELEGRAM_LINKED
 from .rules import feed_path
 from .worker import Worker
 
 log = get_logger("alerts")
 
-AlertKind = Literal["high_risk", "loss_jump", "total_loss_jump", "bulk"]
+AlertKind = Literal[
+    "loss_growth",
+    "big_customer_high",
+    "risk_share",
+    "high_count_growth",
+    "stale_data",
+    # записи старой ленты (до персональных настроек)
+    "high_risk",
+    "loss_jump",
+    "total_loss_jump",
+    "bulk",
+]
 
 
 class State:
     def __init__(self) -> None:
         self.pool: Any = None
         self.worker: Worker | None = None
+        self.bot: Bot | None = None
+        self.kick: Callable[[], None] | None = None
         self.failed_task: str | None = None
 
 
@@ -118,7 +134,31 @@ def create_http_app(config: Config, state: State) -> FastAPI:
             "channels": {"feed": True, "webhook": config.webhook_enabled, "telegram": config.telegram_enabled},
         }
 
+    install_prefs_routes(app, config, state, current_user)
     return app
+
+
+async def scheduler(config: Config, pool: Any, kick: Callable[[], None], stop: asyncio.Event) -> None:
+    """Раз в scheduler_interval_s: «данные без пересчёта» и ежедневные сводки. Под тем же advisory lock,
+    что и обработка событий, поэтому две реплики не отправят одно и то же дважды."""
+    fanout = Fanout(config)
+    while not stop.is_set():
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=config.scheduler_interval_s)
+        if stop.is_set():
+            return
+        try:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    await repo.lock(conn)
+                    queued = await fanout.on_tick(conn, now=datetime.now(UTC))
+                SUBSCRIBERS.set(await conn.fetchval("SELECT count(*) FROM alerts.user_prefs") or 0)
+                TELEGRAM_LINKED.set(await conn.fetchval("SELECT count(*) FROM alerts.telegram_links") or 0)
+            if queued:
+                kick()
+        except Exception:
+            log.exception("scheduler_failed")
+            ERRORS.labels(stage="scheduler").inc()
 
 
 async def _connect_with_retry(coro_factory, what: str, attempts: int = 60):  # type: ignore[no-untyped-def]
@@ -190,17 +230,29 @@ async def run() -> int:
     )
     worker = Worker(config, state.pool, on_enqueued=dispatcher.kick)
     state.worker = worker
+    state.kick = dispatcher.kick
     await _connect_with_retry(worker.connect, "nats")
-    log.info("alerts_started", port=config.http_port, channels=["feed", *channels])
+    log.info("alerts_started", port=config.http_port, channels=["feed", "panel", *channels])
 
+    sched_stop = asyncio.Event()
     tasks = [
         asyncio.create_task(worker.consume(), name="consume"),
         asyncio.create_task(dispatcher.run(), name="delivery"),
+        asyncio.create_task(scheduler(config, state.pool, dispatcher.kick, sched_stop), name="scheduler"),
     ]
+    if config.bot_enabled:
+        api = TelegramApi(
+            client, config.telegram_bot_token, api_url=config.telegram_api_url, timeout_s=config.telegram_timeout_s
+        )
+        state.bot = Bot(config, state.pool, api)
+        tasks.append(asyncio.create_task(state.bot.run(), name="telegram-bot"))
     failed = await supervise(tasks, stop, state)
     log.info("alerts_stopping", failed_task=state.failed_task)
     worker.stop()
     dispatcher.stop()
+    sched_stop.set()
+    if state.bot is not None:
+        state.bot.stop()
     alive = [t for t in tasks if not t.done()]
     if alive:
         _, still = await asyncio.wait(alive, timeout=config.shutdown_grace_s)

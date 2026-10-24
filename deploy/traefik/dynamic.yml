@@ -48,7 +48,7 @@ http:
         contentSecurityPolicy: >-
           default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline';
           script-src 'self'; font-src 'self' data:; connect-src 'self';
-          frame-ancestors 'none'; base-uri 'self'; form-action 'self' http://localhost:8081
+          frame-ancestors 'none'; base-uri 'self'; form-action 'self' http://localhost:9000
 
     docs-headers:
       headers:

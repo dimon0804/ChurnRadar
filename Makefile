@@ -8,7 +8,7 @@ COMPOSE_FILES := -f docker-compose.yml
 endif
 DC := $(COMPOSE) $(COMPOSE_FILES)
 
-.PHONY: help up up-oidc down clean logs ps build test test-auth test-notifier test-web e2e acceptance \
+.PHONY: help up up-sso down clean logs ps build test test-auth test-notifier test-web e2e acceptance \
         k8s-up k8s-down k8s-demo helm-lint load
 
 help:
@@ -17,14 +17,14 @@ help:
 up: ## поднять всё: http://localhost:8080
 	$(DC) up -d --build --wait
 
-up-oidc: ## то же плюс Keycloak на :8081
-	$(DC) --profile oidc up -d --build --wait
+up-sso: ## то же плюс Authentik (SSO по OIDC и SAML) на :9000
+	$(DC) --profile sso up -d --build --wait
 
 down: ## остановить
-	$(DC) --profile oidc down
+	$(DC) --profile sso down
 
 clean: ## остановить и удалить данные
-	$(DC) --profile oidc down -v --remove-orphans
+	$(DC) --profile sso down -v --remove-orphans
 
 logs: ## логи всех сервисов
 	$(DC) logs -f --tail=100

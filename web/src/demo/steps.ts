@@ -36,6 +36,8 @@ export interface DemoContext {
   navigate: (to: string) => void
   spotlight: (targets: Target[]) => void
   waitFor: (target: Target) => Promise<unknown>
+  /** Нажимает на элемент, если он уже есть на странице. Возвращает, нашёлся ли он. */
+  click: (target: Target) => Promise<boolean>
   wait: (ms: number) => Promise<void>
   redirect: (url: string) => void
 }
@@ -80,6 +82,15 @@ const FILTER_TARGET: Target = { selector: '[aria-label="Фильтр по уро
 const TABLE_TARGET: Target = { selector: 'table[aria-label="Клиенты под риском"]', closest: '.rounded-xl' }
 const LIVE_TARGET: Target = { selector: 'header [role="status"]' }
 const PROFILE_TARGET: Target = { selector: 'header button[aria-label^="Профиль"]' }
+const ALERTS_TARGET: Target = { selector: 'header button[aria-label^="Оповещения"]' }
+const CALL_TODAY_TARGET: Target = { selector: '[data-testid="call-today"]' }
+const CALL_TODAY_CSV_TARGET: Target = { selector: '[data-testid="call-today-csv"]' }
+const QUALITY_LIFT_TARGET: Target = { selector: '[data-testid="quality-lift"]' }
+const QUALITY_AUC_TARGET: Target = { selector: '[data-testid="quality-auc"]' }
+export const WHAT_IF_SWITCH: Target = { selector: 'label:has(button[role="switch"])', text: 'Что если' }
+/** Тот же переключатель, но только выключенный: повторный запуск шага не выключит режим обратно. */
+export const WHAT_IF_OFF: Target = { selector: 'label:has(button[role="switch"][aria-checked="false"])', text: 'Что если' }
+export const WHAT_IF_CANCEL: Target = { selector: '[data-testid="what-if"] button', text: 'Отменить' }
 
 export const sortHeader = (label: string): Target => ({ selector: 'thead th', text: label })
 export const sheetSection = (title: string): Target => ({ selector: '[role="dialog"] section h3', text: title, closest: 'section' })
@@ -127,6 +138,26 @@ export const stopStreamAction: DemoAction = {
   },
 }
 
+export const applyWeightAction: DemoAction = {
+  id: 'apply-weight',
+  label: 'Сменить вес и пересчитать',
+  adminOnly: true,
+  run: async (ctx) => {
+    const settings = await ctx.api.settings()
+    const weight = settings.weights.find((w) => w.code === DEMO_FEATURE) ?? settings.weights.find((w) => w.enabled)
+    if (!weight) return 'В модели нет признаков, менять нечего.'
+    ctx.navigate('/model')
+    const row = weightRow(weight.title)
+    await ctx.waitFor(row)
+    // черновик «Что если» закрываем, иначе страница покажет его, а не сохранённый вес
+    await ctx.click(WHAT_IF_CANCEL)
+    ctx.spotlight([row])
+    const next = demoWeight(weight.weight, weight.min, weight.max)
+    await ctx.api.patchWeight(weight.code, next)
+    return `«${weight.title}»: вес ${formatWeight(weight.weight)} → ${formatWeight(next)} сохранён. Следите за сводкой ниже.`
+  },
+}
+
 export const resetSettingsAction: DemoAction = {
   id: 'reset-settings',
   label: 'Сбросить коэффициенты',
@@ -151,11 +182,23 @@ export const DEMO_STEPS: DemoStep[] = [
     },
   },
   {
+    id: 'call-today',
+    title: 'Кому позвонить сегодня',
+    say:
+      'С этого маркетолог начинает день: список, кому звонить, и отсортирован он по деньгам, которые можно спасти, сверху тот, на ком мы потеряем больше всего. Позвонил, нажал «Сделано» или отложил на пару дней, и клиент уходит из списка, а весь список одной кнопкой выгружается в CSV для рассылки.',
+    show: 'Блок «Кому позвонить сегодня» на обзоре: у каждого клиента кнопки «Сделано» и «Отложить», справа сверху «Выгрузить CSV».',
+    run: async (ctx) => {
+      ctx.navigate('/')
+      await ctx.waitFor(CALL_TODAY_TARGET)
+      ctx.spotlight([CALL_TODAY_TARGET, CALL_TODAY_CSV_TARGET])
+    },
+  },
+  {
     id: 'chart',
     title: 'Факт и прогноз на одном графике',
     say:
-      'Слева факт: сколько услуг уже удалено по дням. Справа прогноз: сколько непродлений ждём в горизонте модели и на какую сумму, так видно, когда ударит отток.',
-    show: 'График «Отток услуг: факт и прогноз». Наведите на график, чтобы увидеть цифры за день.',
+      'На графике три линии: сколько услуг уже удалено по дням, сколько непродлений ждём впереди и сколько услуг прямо сейчас под риском. В данных кейса удалений за прошлые дни нет, поэтому слева пусто, и подпись на самом графике это объясняет.',
+    show: 'График «Отток услуг: факт и прогноз». Наведите курсор, чтобы увидеть цифры за день, линия «Под риском» идёт по правой шкале.',
     run: async (ctx) => {
       ctx.navigate('/')
       ctx.spotlight([CHART_TARGET])
@@ -181,8 +224,8 @@ export const DEMO_STEPS: DemoStep[] = [
     id: 'customer',
     title: 'Карточка клиента высокого риска',
     say:
-      'Открываем самого рискованного клиента. Видно, какие признаки сколько добавили к оценке, сколько денег на кону и что конкретно сделать маркетологу.',
-    show: 'Блоки «Почему» и «Что сделать», ниже — вклад признаков и деньги.',
+      'Открываем самого рискованного клиента: видно, какие признаки сколько добавили к оценке, сколько денег на кону и что конкретно сделать. Тут же блок «Работа с клиентом», где можно отметить звонок, и клиент пропадёт из списка на обзоре.',
+    show: 'Блоки «Почему» и «Что сделать», ниже вклад признаков, деньги и «Работа с клиентом».',
     run: async (ctx) => {
       const top = await ctx.api.topHighRisk()
       if (!top) {
@@ -191,44 +234,59 @@ export const DEMO_STEPS: DemoStep[] = [
         return 'Сейчас нет клиентов высокого риска. Откройте любого из таблицы.'
       }
       ctx.navigate(`/customers/${top.id}?level=high`)
-      ctx.spotlight([sheetSection('Почему'), sheetSection('Что сделать')])
+      ctx.spotlight([sheetSection('Почему'), sheetSection('Что сделать'), sheetSection('Работа с клиентом')])
       return top.nextAction ? `Главное действие: ${top.nextAction}` : `Клиент #${top.id}, ${top.email}`
     },
   },
   {
     id: 'model',
-    title: 'Меняем коэффициент, оценки пересчитываются сами',
+    title: 'Модель: примеряем в «Что если», потом применяем',
     say:
-      'Веса признаков настраиваются без программиста и сохраняются в базе, перезапуск их не сбрасывает. Меняю вес «Ждёт оплаты», и через несколько секунд цифры ниже обновятся сами, страницу никто не перезагружает.',
-    show: 'Строку признака на странице модели и сводку в этой карточке.',
+      'Веса признаков настраивает сам маркетолог, без программиста, но сначала их можно примерить: включаю «Что если», двигаю ползунок и вижу, что было и что станет, и кто из клиентов сменит уровень риска. Не понравилось, жму «Отменить», понравилось, жму «Применить», и оценки пересчитаются за секунды, страницу никто не перезагружает.',
+    show: 'Переключатель «Что если» уже включён. Подвиньте ползунок подсвеченного признака: сверху появятся «было → станет» и клиенты, которые сменят уровень.',
     adminOnly: true,
     readout: 'summary',
     run: async (ctx) => {
       const settings = await ctx.api.settings()
       const weight = settings.weights.find((w) => w.code === DEMO_FEATURE) ?? settings.weights.find((w) => w.enabled)
-      if (!weight) return 'В модели нет признаков, менять нечего.'
       ctx.navigate('/model')
+      await ctx.waitFor(WHAT_IF_SWITCH)
+      // только предпросмотр: пока не нажали «Применить», в базе ничего не меняется
+      await ctx.click(WHAT_IF_OFF)
+      if (!weight) {
+        ctx.spotlight([WHAT_IF_SWITCH])
+        return 'Режим «Что если» включён, но в модели нет признаков.'
+      }
       const row = weightRow(weight.title)
       await ctx.waitFor(row)
-      ctx.spotlight([row])
-      await ctx.wait(1200)
-      const next = demoWeight(weight.weight, weight.min, weight.max)
-      await ctx.api.patchWeight(weight.code, next)
-      return `«${weight.title}»: вес ${formatWeight(weight.weight)} → ${formatWeight(next)}. Следите за сводкой ниже.`
+      ctx.spotlight([WHAT_IF_SWITCH, row])
+      return `Режим «Что если» включён. Подвиньте вес «${weight.title}» (сейчас ${formatWeight(weight.weight)}), до «Применить» ничего не сохранится.`
     },
-    actions: [resetSettingsAction],
+    actions: [applyWeightAction, resetSettingsAction],
+  },
+  {
+    id: 'quality',
+    title: 'Качество модели: проверяем, что она не гадает',
+    say:
+      'Чтобы не верить модели на слово, мы прогоняем месяц синтетического будущего и смотрим, кто ушёл на самом деле: клиенты высокого риска уходят в 3,3–5,5 раза чаще среднего, ROC AUC от 0,77 до 0,93. Честно скажу, данные синтетические, так что мы проверили порядок, кто опаснее кого, а на реальной базе эти цифры нужно будет перемерить.',
+    show: 'Страница «Качество модели»: сверху lift и ROC AUC, ниже ROC-кривая, сравнение с простыми правилами и устойчивость.',
+    run: async (ctx) => {
+      ctx.navigate('/quality')
+      await ctx.waitFor(QUALITY_LIFT_TARGET)
+      ctx.spotlight([QUALITY_LIFT_TARGET, QUALITY_AUC_TARGET])
+    },
   },
   {
     id: 'live',
-    title: 'Живые данные: большой набор и поток изменений',
+    title: 'Живые данные и оповещения',
     say:
-      'Загружаем 5 000 синтетических клиентов и включаем поток: балансы, продления и статусы меняются раз в полторы секунды. Первый полный пересчёт занимает около 20 секунд, дальше цифры и строки таблицы меняются на глазах.',
-    show: 'Карточки сверху и строки таблицы: изменённые клиенты подсвечиваются.',
+      'Загружаем 5 000 синтетических клиентов и включаем поток изменений: первый пересчёт около 20 секунд, дальше цифры и строки таблицы меняются на глазах. Колокольчик в шапке это отдельный сервис оповещений, он подписан на события и добавлен без единой правки в других сервисах, а массовые изменения сворачивает в одну запись, чтобы не завалить ленту.',
+    show: 'Карточки сверху и колокольчик в шапке: когда пойдут изменения, откройте его и покажите ленту.',
     adminOnly: true,
     readout: 'simulator',
     run: async (ctx) => {
       ctx.navigate('/')
-      ctx.spotlight([...KPI_TARGETS, LIVE_TARGET])
+      ctx.spotlight([...KPI_TARGETS, LIVE_TARGET, ALERTS_TARGET])
       await ctx.api.simulator({ generate: { accounts: LIVE_ACCOUNTS, seed: LIVE_SEED } })
       await ctx.api.simulator({ running: true, interval_ms: LIVE_INTERVAL_MS })
       return 'Набор на 5 000 клиентов загружен, поток включён. Цифры обновятся, когда закончится первый пересчёт.'
@@ -237,14 +295,16 @@ export const DEMO_STEPS: DemoStep[] = [
   },
   {
     id: 'ops',
-    title: 'Метрики, дашборды и API',
+    title: 'Метрики, надёжность и Kubernetes',
     say:
-      'Каждый сервис отдаёт метрики в Prometheus, в Grafana готовые дашборды и алерты. Весь API описан в OpenAPI, его можно потрогать в Swagger.',
-    show: 'Откройте ссылки ниже в новой вкладке. /metrics закрыт токеном, его читает только сборщик.',
+      'Каждый сервис отдаёт метрики в Prometheus, в Grafana готовые дашборды и алерты, весь API описан в OpenAPI. Надёжность проверяем по-честному: хаос-скрипт роняет NATS, а данные всё равно доходят, и на каждый пул-реквест CI ставит наш Helm-чарт в настоящий Kubernetes через kind.',
+    show: 'Ссылки открываются в новой вкладке. Хаос-проверка: bash scripts/chaos.sh nats, после неё верните стенд кнопкой внизу пульта.',
     links: [
       { label: 'Grafana', href: GRAFANA_URL, hint: 'дашборды и алерты, вход admin / admin' },
       { label: 'Prometheus', href: `${PROMETHEUS_URL}/targets`, hint: 'кого и как часто опрашиваем' },
       { label: 'Swagger', href: SWAGGER_URL, hint: 'весь API, под текущим входом' },
+      { label: 'Хаос-проверка', href: `${REPO_URL}/blob/main/scripts/chaos.sh`, hint: 'роняем NATS, API и scoring' },
+      { label: 'CI с kind', href: `${REPO_URL}/blob/main/.github/workflows/ci.yml`, hint: 'джоба «Helm install in kind»' },
     ],
   },
   {

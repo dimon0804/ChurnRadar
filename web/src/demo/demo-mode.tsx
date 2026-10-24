@@ -8,7 +8,7 @@ import { demoApi } from './demo-api'
 import { FEATURES, type Feature } from './features'
 import { hasDemoParam, isDemoHotkey } from './hotkey'
 import { DemoPanel, type DemoTab } from './panel'
-import { sleep, waitForTarget, type Target } from './spotlight'
+import { findTarget, sleep, waitForTarget, type Target } from './spotlight'
 import { SpotlightLayer } from './spotlight-layer'
 import { DEMO_STEPS, isLocked, type DemoContext, type DemoResult, type DemoStep } from './steps'
 import { readStored, writeStored } from './storage'
@@ -83,6 +83,15 @@ export function DemoMode() {
       navigate: (to) => void navigate(to),
       spotlight: (targets) => setSpot((prev) => ({ targets, nonce: prev.nonce + 1 })),
       waitFor: (target) => waitForTarget(target),
+      click: async (target) => {
+        const el = findTarget(target)
+        if (!(el instanceof HTMLElement)) return false
+        // у подписи жмём сам переключатель внутри неё
+        const control = el instanceof HTMLLabelElement ? el.control : null
+        const button = control ?? el
+        button.click()
+        return true
+      },
       wait: sleep,
       redirect: (url) => window.location.assign(url),
     }),

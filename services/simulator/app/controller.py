@@ -4,17 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
+import gzip
 import random
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
+import orjson
+from svckit.logs import get_logger
 
 from .config import Config
 from .generator import generate
-from .logs import get_logger
 from .metrics import BATCHES, CHANGES, GENERATE_SECONDS, RUNNING
 from .stream import World
 from .timeutil import iso, utcnow_ms
@@ -128,20 +129,22 @@ class Controller:
             data = await asyncio.to_thread(generate, accounts, seed, reference)
             if self.config.snapshot_reference == "null":
                 data["reference_time"] = None
-            body = await asyncio.to_thread(_dumps, data)
+            raw_size, body = await asyncio.to_thread(_dumps_gzip, data, self.config.snapshot_gzip_level)
             gen_s = time.perf_counter() - started
-            log.info("generated", accounts=accounts, seed=seed, bytes=len(body), seconds=round(gen_s, 2))
+            log.info("generated", accounts=accounts, seed=seed, bytes=raw_size, gzip_bytes=len(body),
+                     seconds=round(gen_s, 2))
             response = await self.client.put(
                 f"{self.config.ingest_url}/api/v1/source/snapshot",
                 content=body,
-                headers={**SERVICE_HEADERS, "Content-Type": "application/json"},
+                headers={**SERVICE_HEADERS, "Content-Type": "application/json", "Content-Encoding": "gzip"},
                 timeout=self.config.ingest_timeout_s,
             )
+            del body
             if response.status_code == 413:
                 raise IngestError(
                     413,
-                    f"Снимок {len(body) // (1024 * 1024)} МБ больше лимита ingest. "
-                    "Увеличьте MAX_BODY_BYTES у ingest или уменьшите число аккаунтов.",
+                    f"Снимок {raw_size // (1024 * 1024)} МБ больше лимита ingest. Увеличьте MAX_BODY_BYTES "
+                    "(и MAX_COMPRESSED_BODY_BYTES) у ingest или уменьшите число аккаунтов.",
                 )
             if response.status_code >= 300:
                 raise IngestError(response.status_code, f"ingest ответил {response.status_code}: {response.text[:300]}")
@@ -154,11 +157,13 @@ class Controller:
                 "transactions": len(data["transactions"]),
                 "seed": seed,
                 "reference_time": data.get("reference_time") or iso(reference),
-                "bytes": len(body),
+                "bytes": raw_size,
             }
             self.last_error = None
             return self.last_generate
 
 
-def _dumps(data: dict[str, Any]) -> bytes:
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
+def _dumps_gzip(data: dict[str, Any], level: int) -> tuple[int, bytes]:
+    """Снимок в компактный JSON и gzip: по сети уходит примерно в 9 раз меньше."""
+    raw = orjson.dumps(data)
+    return len(raw), gzip.compress(raw, compresslevel=level)

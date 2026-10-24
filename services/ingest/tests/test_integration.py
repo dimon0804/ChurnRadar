@@ -134,8 +134,9 @@ async def test_seed_on_start_and_event(running):
     assert event["payload"]["counts"] == {"accounts": 10, "services": 30, "transactions": 100}
     assert event["payload"]["account_ids"] == []
 
-    health = await client.get("/healthz")
-    assert health.json() == {"status": "ok", "checks": {"db": True, "nats": True}}
+    ready = await client.get("/readyz")
+    assert ready.json() == {"status": "ok", "checks": {"db": True, "nats": True}}
+    assert (await client.get("/healthz")).json() == {"status": "ok"}
 
 
 async def test_seed_skipped_when_data_exists(running):

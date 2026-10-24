@@ -13,8 +13,10 @@ import asyncpg
 import nats
 from nats.aio.client import Client as NATS
 from nats.js import JetStreamContext
-from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy, RetentionPolicy, StorageType, StreamConfig
-from nats.js.errors import BadRequestError, NotFoundError
+from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy
+from nats.js.errors import NotFoundError
+from svckit.bus import ensure_stream
+from svckit.logs import get_logger
 
 from . import repository as repo
 from .config import Config
@@ -31,7 +33,6 @@ from .events import (
     scores_updated_payload,
     unique_new,
 )
-from .logs import get_logger
 from .metrics import EVENTS, LAST_RUN
 
 log = get_logger("scoring.worker")
@@ -49,26 +50,6 @@ class Message(Protocol):
 
 class Publisher(Protocol):
     async def __call__(self, result: RunResult) -> None: ...
-
-
-async def ensure_stream(js: JetStreamContext, name: str) -> None:
-    try:
-        await js.stream_info(name)
-        return
-    except NotFoundError:
-        pass
-    config = StreamConfig(
-        name=name,
-        subjects=["churn.>"],
-        storage=StorageType.FILE,
-        retention=RetentionPolicy.LIMITS,
-        max_age=24 * 3600,
-    )
-    try:
-        await js.add_stream(config)
-    except BadRequestError:
-        # Стрим успела создать другая служба.
-        await js.stream_info(name)
 
 
 async def ensure_consumer(js: JetStreamContext, stream: str, durable: str, ack_wait_s: float) -> None:
@@ -178,6 +159,7 @@ class Worker:
         self.nc: NATS | None = None
         self.js: JetStreamContext | None = None
         self._stop = asyncio.Event()
+        self.subscribed = False
         self.processor = BatchProcessor(
             pool, scorer, self.publish, incremental_max=config.incremental_max_accounts
         )
@@ -227,6 +209,7 @@ class Worker:
     async def consume(self) -> None:
         assert self.js is not None
         sub = await self.js.pull_subscribe_bind(self.config.durable_name, stream=self.config.stream_name)
+        self.subscribed = True
         debounce = self.config.debounce_ms / 1000
         while not self._stop.is_set():
             try:

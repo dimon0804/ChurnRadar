@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from svckit.errors import ApiError
 
 from app import model_catalog, queries
-from app.errors import ApiError
 from app.model_settings import ModelSettingsPatch, apply_patch, diff_settings
 from tests.conftest import ADMIN, ANALYST, NOW, FakePool
 
@@ -140,6 +140,17 @@ async def test_swagger_ui_and_spec(client):
     assert "yaml" in spec.headers["content-type"]
 
 
+async def test_swagger_works_offline(client):
+    html = (await client.get("/api/v1/docs")).text
+    assert "http://" not in html and "https://" not in html and "//cdn" not in html
+    js = await client.get("/api/v1/docs/swagger-ui-bundle.js")
+    assert js.status_code == 200 and "javascript" in js.headers["content-type"]
+    assert "SwaggerUIBundle" in js.text
+    css = await client.get("/api/v1/docs/swagger-ui.css")
+    assert css.status_code == 200 and css.headers["content-type"].startswith("text/css")
+    assert_error(await client.get("/api/v1/docs/secret.py"), 404, "not_found")
+
+
 async def test_metrics_requires_token(client):
     assert_error(await client.get("/metrics"), 401, "unauthorized")
     assert_error(await client.get("/metrics", headers={"Authorization": "Basic abc"}), 401, "unauthorized")
@@ -256,7 +267,7 @@ async def test_simulator_proxy_forwards_user(client, app):
         seen["body"] = request.content
         return httpx.Response(200, json={"running": True, "interval_ms": 1000, "events_emitted": 3})
 
-    app.state.http = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://simulator:8003")
+    app.state.http = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://simulator:8000")
     resp = await client.put("/api/v1/simulator", json={"running": True}, headers=ADMIN)
     assert resp.status_code == 200
     assert resp.json()["events_emitted"] == 3
@@ -269,5 +280,44 @@ async def test_simulator_unavailable(client, app):
     def handler(request):
         raise httpx.ConnectError("refused")
 
-    app.state.http = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://simulator:8003")
+    app.state.http = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://simulator:8000")
     assert_error(await client.get("/api/v1/simulator", headers=ANALYST), 503, "simulator_unavailable")
+
+
+# --- пробы ---------------------------------------------------------------------------------
+
+async def test_probes(client, app):
+    assert (await client.get("/healthz")).json() == {"status": "ok"}
+    ready = await client.get("/readyz")
+    assert ready.status_code == 503
+    assert ready.json()["checks"] == {"db": False, "nats": True}
+    app.state.pool = FakePool({"SELECT 1": 1})
+    ready = await client.get("/readyz")
+    assert ready.status_code == 200 and ready.json()["status"] == "ok"
+
+
+# --- карточка клиента ------------------------------------------------------------------------
+
+def _score_row(detail: dict | None) -> dict:
+    return {
+        "customer_id": 7, "email": "a@b.c", "balance": 0, "bonus_balance": 0, "bonus_state": "locked",
+        "withdraw_balance": 0, "total_replenished": 100, "risk_score": 70.0, "risk_level": "high",
+        "loyalty": "low", "reasons": ["x"], "services_total": 1, "services_at_risk": 1,
+        "monthly_revenue": 499, "expected_loss": 300, "exposure": 499,
+        "detail": detail, "model_version": 3, "scored_at": NOW,
+    }
+
+
+async def test_customer_card_passes_next_action(client, app):
+    action = {"code": "call", "title": "Позвонить", "priority": 1}
+    app.state.pool = FakePool({"FROM scoring.customer_scores": _score_row({"next_action": action})})
+    body = (await client.get("/api/v1/customers/7", headers=ANALYST)).json()
+    assert body["next_action"] == action
+    assert body["model_version"] == 3
+
+
+async def test_customer_card_without_next_action(client, app):
+    app.state.pool = FakePool({"FROM scoring.customer_scores": _score_row(None)})
+    body = (await client.get("/api/v1/customers/7", headers=ANALYST)).json()
+    assert body["next_action"] is None
+    assert body["recommendations"] == []

@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import asyncpg
+from svckit.errors import ApiError
 
-from app.errors import ApiError
 from app.schemas import (
     SourceAccount,
     SourceChangeBatch,
@@ -123,20 +123,21 @@ async def replace_snapshot(
 
         await conn.execute("TRUNCATE source.transactions, source.services, source.accounts")
         await conn.execute(_DROP_FKS)
+        # строки для COPY отдаём генераторами: второй копии снимка в памяти не будет
         if snap.accounts:
             await conn.copy_records_to_table(
                 "accounts", schema_name="source", columns=ACCOUNT_COLS,
-                records=[_account_row(a) for a in snap.accounts],
+                records=(_account_row(a) for a in snap.accounts),
             )
         if snap.services:
             await conn.copy_records_to_table(
                 "services", schema_name="source", columns=SERVICE_COLS,
-                records=[_service_row(s) for s in snap.services],
+                records=(_service_row(s) for s in snap.services),
             )
         if snap.transactions:
             await conn.copy_records_to_table(
                 "transactions", schema_name="source", columns=TX_COLS,
-                records=[_tx_row(t) for t in snap.transactions],
+                records=(_tx_row(t) for t in snap.transactions),
             )
         await conn.execute(_ADD_FKS)
 

@@ -1,24 +1,26 @@
-"""HTTP API симулятора: GET/PUT /api/v1/simulator, /healthz, /metrics. Порт 8003."""
+"""HTTP API симулятора: GET/PUT /api/v1/simulator, /healthz, /readyz, /metrics. Порт HTTP_PORT (8000)."""
 
 from __future__ import annotations
 
-import hmac
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from typing import Any
 
+import asyncpg
 import httpx
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict, Field
+from svckit.auth import User, make_current_user
+from svckit.errors import ApiError
+from svckit.health import install_probes
+from svckit.logs import configure_logging, get_logger
+from svckit.metrics import METRICS_TOKEN_MESSAGE, bearer_token_valid, render
 
 from .config import Config
 from .controller import Controller, IngestError
-from .logs import get_logger, setup_logging
 from .source_db import make_loader
 
 log = get_logger("simulator")
@@ -37,12 +39,6 @@ class SimulatorCommand(BaseModel):
     generate: GenerateCommand | None = None
 
 
-class ApiError(Exception):
-    def __init__(self, status: int, code: str, message: str, details: Any = None) -> None:
-        super().__init__(message)
-        self.status, self.code, self.message, self.details = status, code, message, details
-
-
 def _error(request: Request, status: int, code: str, message: str, details: Any = None) -> JSONResponse:
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
     return JSONResponse(
@@ -51,24 +47,17 @@ def _error(request: Request, status: int, code: str, message: str, details: Any 
     )
 
 
-@dataclass(frozen=True, slots=True)
-class User:
-    name: str
-    roles: frozenset[str]
-
-
-def make_user_dependency(config: Config):  # type: ignore[no-untyped-def]
-    def current_user(request: Request) -> User:
-        name = request.headers.get("x-user-name") if config.auth_trust_headers else None
-        roles_raw = request.headers.get("x-user-roles", "") if name else ""
-        if not name and config.auth_dev_user:
-            name, roles_raw = config.auth_dev_user, config.auth_dev_roles
-        if not name:
-            raise ApiError(401, "unauthorized", "Нужна авторизация")
-        roles = frozenset(r.strip() for r in roles_raw.split(",") if r.strip())
-        return User(name=name, roles=roles)
-
-    return current_user
+async def database_ready(dsn: str) -> bool:
+    try:
+        conn = await asyncpg.connect(dsn, timeout=2)
+    except (OSError, TimeoutError, asyncpg.PostgresError):
+        return False
+    try:
+        return bool(await conn.fetchval("SELECT 1") == 1)
+    except asyncpg.PostgresError:
+        return False
+    finally:
+        await conn.close()
 
 
 def create_app(config: Config | None = None, controller: Controller | None = None) -> FastAPI:
@@ -93,7 +82,8 @@ def create_app(config: Config | None = None, controller: Controller | None = Non
                 await own_client.aclose()
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
-    current_user = make_user_dependency(config)
+    # роли из заголовка сравниваются как есть, без приведения регистра
+    current_user = make_current_user(config, lower_roles=False, unauthorized_message="Нужна авторизация")
 
     @app.exception_handler(ApiError)
     async def _api_error(request: Request, exc: ApiError) -> JSONResponse:
@@ -104,17 +94,19 @@ def create_app(config: Config | None = None, controller: Controller | None = Non
         details = [{"loc": list(e["loc"]), "msg": e["msg"]} for e in exc.errors()]
         return _error(request, 422, "validation_error", "Некорректные параметры команды", details)
 
-    @app.get("/healthz")
-    async def healthz() -> dict[str, str]:
-        return {"status": "ok"}
+    async def readiness(_: Request) -> dict[str, bool]:
+        # Postgres нужен для стартового состояния потока; ingest проверяется своими пробами
+        return {"database": await database_ready(config.database_url)}
+
+    install_probes(app, readiness)
 
     @app.get("/metrics")
     async def metrics(request: Request) -> Response:
-        if config.metrics_token:
-            header = request.headers.get("authorization", "")
-            if not hmac.compare_digest(header.encode(), f"Bearer {config.metrics_token}".encode()):
-                return _error(request, 401, "unauthorized", "Нужен токен сборщика метрик")
-        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+        if config.metrics_token and not bearer_token_valid(
+            request.headers.get("authorization"), config.metrics_token, exact=True
+        ):
+            return _error(request, 401, "unauthorized", METRICS_TOKEN_MESSAGE)
+        return render()
 
     @app.get("/api/v1/simulator")
     async def get_state(request: Request, user: User = Depends(current_user)) -> dict[str, Any]:
@@ -152,7 +144,7 @@ def main() -> None:
     import uvicorn
 
     config = Config.from_env()
-    setup_logging(config.log_level)
+    configure_logging(config.log_level, event_key="event", force=False)
     uvicorn.run(create_app(config), host=config.http_host, port=config.http_port, log_level="warning",
                 access_log=False)
 

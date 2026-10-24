@@ -1,10 +1,15 @@
-"""Схемы тела запросов ingest (SourceSnapshot, SourceChangeBatch из contracts/openapi.yaml)."""
+"""Схемы тела запросов ingest (SourceSnapshot, SourceChangeBatch из contracts/openapi.yaml).
+
+Записи источника — pydantic-датаклассы со slots: снимок на 100k аккаунтов — это больше
+миллиона объектов, и без __dict__ и служебных полей BaseModel он занимает в разы меньше памяти.
+"""
 
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic.dataclasses import dataclass
 
 PaymentTerm = Literal["hour", "week", "month", "quarter_year", "half_year", "year"]
 ServiceStatus = Literal["active", "suspended", "prolong_wait", "deleted", "blocked"]
@@ -13,12 +18,11 @@ BIGINT_MAX = 9_223_372_036_854_775_807
 Id = Annotated[int, Field(ge=1, le=BIGINT_MAX)]
 Money = Annotated[int, Field(ge=0, le=BIGINT_MAX)]
 
-
-class _Base(BaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+_CONFIG = ConfigDict(extra="ignore", populate_by_name=True)
 
 
-class SourceAccount(_Base):
+@dataclass(slots=True, kw_only=True, config=_CONFIG)
+class SourceAccount:
     id: Id
     email: str = Field(min_length=1, max_length=320)
     balance: Money
@@ -28,7 +32,8 @@ class SourceAccount(_Base):
     bonus_state: Literal["locked", "unlocked"] = Field(alias="bonusState")
 
 
-class SourceService(_Base):
+@dataclass(slots=True, kw_only=True, config=_CONFIG)
+class SourceService:
     id: Id
     name: str = Field(min_length=1, max_length=500)
     owner_id: Id = Field(alias="ownerId")
@@ -40,7 +45,8 @@ class SourceService(_Base):
     price: Money
 
 
-class SourceTransaction(_Base):
+@dataclass(slots=True, kw_only=True, config=_CONFIG)
+class SourceTransaction:
     id: Id
     amount: Money
     status: Literal["performed", "not_performed"]
@@ -50,17 +56,23 @@ class SourceTransaction(_Base):
     service_id: Id = Field(alias="serviceId")
 
 
-class SourceSnapshot(_Base):
+@dataclass(slots=True, kw_only=True, config=_CONFIG)
+class SourceSnapshot:
     reference_time: AwareDatetime | None = None
     accounts: list[SourceAccount]
     services: list[SourceService]
     transactions: list[SourceTransaction]
 
 
-class SourceChangeBatch(_Base):
+@dataclass(slots=True, kw_only=True, config=_CONFIG)
+class SourceChangeBatch:
     accounts: list[SourceAccount] = Field(default_factory=list)
     services: list[SourceService] = Field(default_factory=list)
     transactions: list[SourceTransaction] = Field(default_factory=list)
+
+
+SNAPSHOT = TypeAdapter(SourceSnapshot)
+SERVICE = TypeAdapter(SourceService)
 
 
 class Counts(BaseModel):

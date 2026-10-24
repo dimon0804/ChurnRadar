@@ -8,8 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 import asyncpg
-
-from app.errors import ApiError
+from svckit.errors import ApiError
 
 SortField = Literal["id", "email", "balance", "total_replenished", "risk_score", "expected_loss"]
 SortOrder = Literal["asc", "desc"]
@@ -184,6 +183,7 @@ async def get_customer(pool: asyncpg.Pool, customer_id: int) -> dict[str, Any]:
             "transactions": detail.get("transactions", []),
             "money": detail.get("money") or _default_money(row),
             "recommendations": detail.get("recommendations", []),
+            "next_action": detail.get("next_action"),
             "scored_at": iso_z(row["scored_at"]),
             "model_version": row["model_version"],
         }

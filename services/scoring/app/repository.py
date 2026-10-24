@@ -11,6 +11,7 @@ from typing import Any
 
 import asyncpg
 from riskcore.types import Account, Service, StatusChange, Transaction
+from svckit import db
 
 SCORE_COLUMNS: tuple[str, ...] = (
     "customer_id",
@@ -51,7 +52,10 @@ class SourceData:
 
 
 async def create_pool(dsn: str, *, min_size: int = 1, max_size: int = 8) -> asyncpg.Pool:
-    return await asyncpg.create_pool(dsn, min_size=min_size, max_size=max_size, command_timeout=600)
+    # jsonb пишем и читаем строками сами, повторы подключения — в main
+    return await db.create_pool(
+        dsn, min_size, max_size, timeout_s=0, command_timeout=600, json_codec=False
+    )
 
 
 # --- настройки --------------------------------------------------------------------------------

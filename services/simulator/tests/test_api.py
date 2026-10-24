@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 import random
 from dataclasses import replace
@@ -30,7 +31,7 @@ class FakeIngest:
 
 
 def _config(**overrides) -> Config:  # type: ignore[no-untyped-def]
-    return replace(Config.from_env(), ingest_url="http://ingest:8002", running=False, auth_dev_user=None, **overrides)
+    return replace(Config.from_env(), ingest_url="http://ingest:8000", running=False, auth_dev_user=None, **overrides)
 
 
 @pytest.fixture
@@ -92,7 +93,8 @@ async def test_generate_puts_snapshot_and_stream_posts_events(client, ingest, op
     put = ingest.requests[-1]
     assert put.method == "PUT" and put.url.path == "/api/v1/source/snapshot"
     assert put.headers["X-User-Name"] == "simulator" and put.headers["X-User-Roles"] == "admin"
-    snapshot = json.loads(put.content)
+    assert put.headers["Content-Encoding"] == "gzip"
+    snapshot = json.loads(gzip.decompress(put.content))
     assert len(snapshot["accounts"]) == 40
     assert not list(openapi_validator("SourceSnapshot").iter_errors(snapshot))
     assert controller.last_generate["seed"] == 9
@@ -133,3 +135,23 @@ async def test_metrics_need_token(client) -> None:  # type: ignore[no-untyped-de
 async def test_healthz(client) -> None:  # type: ignore[no-untyped-def]
     c, _ = client
     assert (await c.get("/healthz")).json() == {"status": "ok"}
+
+
+async def test_readyz_needs_database(client) -> None:  # type: ignore[no-untyped-def]
+    c, _ = client
+    response = await c.get("/readyz")
+    assert response.status_code == 503
+    assert response.json() == {"status": "fail", "checks": {"database": False}}
+
+
+async def test_metrics_token_is_exact(client) -> None:  # type: ignore[no-untyped-def]
+    c, _ = client
+    response = await c.get("/metrics", headers={"Authorization": "bearer churn-metrics-token"})
+    assert response.status_code == 401 and response.json()["error"]["request_id"]
+
+
+async def test_roles_are_case_sensitive(client) -> None:  # type: ignore[no-untyped-def]
+    c, _ = client
+    headers = {"X-User-Name": "x", "X-User-Roles": "Admin"}
+    response = await c.put("/api/v1/simulator", json={"running": False}, headers=headers)
+    assert response.status_code == 403

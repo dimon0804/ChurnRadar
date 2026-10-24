@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import gzip
+import json
 from datetime import UTC, datetime
 
 import pytest
 
 from app.config import settings
+from app.main import create_app
 from app.repository import snapshot_history_rows
-from app.schemas import SourceService
+from app.schemas import SERVICE, SourceService
 from tests.conftest import ADMIN, ANALYST
 
 
@@ -123,13 +126,75 @@ async def test_invalid_json(client):
     assert_error(resp, 422, "validation_error")
 
 
-async def test_body_too_large(client):
-    big = b"[" + b"0," * (settings.max_body_bytes // 2) + b"0]"
-    resp = await client.put(
+@pytest.fixture
+async def small_limits_client(monkeypatch, app):
+    from httpx import ASGITransport, AsyncClient
+
+    monkeypatch.setattr(settings, "max_body_bytes", 64 * 1024)
+    monkeypatch.setattr(settings, "max_compressed_body_bytes", 8 * 1024)
+    small = create_app(with_lifespan=False)
+    small.state.pool = app.state.pool
+    small.state.bus = app.state.bus
+    async with AsyncClient(transport=ASGITransport(app=small), base_url="http://test") as c:
+        yield c
+
+
+async def test_body_too_large(small_limits_client):
+    big = b"[" + b"0," * (64 * 1024 // 2) + b"0]"
+    resp = await small_limits_client.put(
         "/api/v1/source/snapshot", content=big, headers={**ADMIN, "Content-Type": "application/json"}
     )
-    assert resp.status_code == 413
-    assert resp.json()["error"]["code"] == "payload_too_large"
+    err = assert_error(resp, 413, "payload_too_large")
+    assert "0.0625 МБ" in err["message"]
+
+
+async def test_gzip_bomb_rejected(small_limits_client):
+    bomb = gzip.compress(b" " * (10 * 1024 * 1024), compresslevel=9)
+    resp = await small_limits_client.put(
+        "/api/v1/source/snapshot", content=bomb, headers={**ADMIN, "Content-Encoding": "gzip"}
+    )
+    assert_error(resp, 413, "payload_too_large")
+
+
+async def test_unknown_content_encoding(client, snapshot):
+    resp = await client.put(
+        "/api/v1/source/snapshot", content=b"x", headers={**ADMIN, "Content-Encoding": "br"}
+    )
+    assert_error(resp, 415, "unsupported_media_type")
+
+
+async def test_gzip_snapshot_is_validated(client, snapshot):
+    snapshot["services"][0]["ownerId"] = 999_999
+    body = gzip.compress(json.dumps(snapshot).encode())
+    resp = await client.put(
+        "/api/v1/source/snapshot", content=body,
+        headers={**ADMIN, "Content-Encoding": "gzip", "Content-Type": "application/json"},
+    )
+    err = assert_error(resp, 422, "validation_error")
+    assert any(d["field"] == "services.0.ownerId" for d in err["details"])
+
+
+async def test_gzip_events_batch(client, sample, app):
+    body = gzip.compress(json.dumps({"accounts": [sample["accounts"][0]] * 2}).encode())
+    resp = await client.post(
+        "/api/v1/source/events", content=body, headers={**ADMIN, "Content-Encoding": "gzip"}
+    )
+    err = assert_error(resp, 422, "validation_error")
+    assert err["details"][0]["type"] == "duplicate"
+
+
+async def test_snapshot_schema_error_paths(client, snapshot):
+    snapshot["accounts"][2]["withdrawBalance"] = "много"
+    err = assert_error(await put(client, snapshot), 422, "validation_error")
+    assert err["details"][0]["field"] == "accounts.2.withdrawBalance"
+    assert err["details"][0]["location"] == "body"
+
+
+async def test_snapshot_rejects_non_json_content_type(client, snapshot):
+    resp = await client.put(
+        "/api/v1/source/snapshot", content=json.dumps(snapshot), headers={**ADMIN, "Content-Type": "text/plain"}
+    )
+    assert_error(resp, 422, "validation_error")
 
 
 async def test_events_duplicate_in_batch(client, sample):
@@ -174,14 +239,19 @@ async def test_metrics_requires_token(client):
     assert "http_request_duration_seconds" in ok.text
 
 
-async def test_healthz_reports_db_failure(client):
+async def test_healthz_is_liveness_only(client):
     resp = await client.get("/healthz")
+    assert resp.status_code == 200 and resp.json() == {"status": "ok"}
+
+
+async def test_readyz_reports_db_failure(client):
+    resp = await client.get("/readyz")
     assert resp.status_code == 503
-    assert resp.json()["checks"]["db"] is False
+    assert resp.json() == {"status": "fail", "checks": {"db": False, "nats": True}}
 
 
 def _svc(id_: int, status: str, expires: str) -> SourceService:
-    return SourceService.model_validate(
+    return SERVICE.validate_python(
         {
             "id": id_, "name": f"s{id_}", "ownerId": 1, "paymentTerm": "month", "autoProlong": True,
             "createdAt": "2026-01-01T00:00:00Z", "expiresAt": expires, "status": status, "price": 100,

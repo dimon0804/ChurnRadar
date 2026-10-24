@@ -851,8 +851,8 @@ services.
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push and PR: ruff,
 eslint and tsc, hadolint, actionlint and promtool, tests of all services, image builds with a
-Trivy scan, `helm lint` with kubeconform, e2e in Compose, and a chart install into kind (on PRs
-and `main`). A `v*` tag publishes the images to GHCR.
+Trivy scan, `helm lint` with kubeconform, e2e in Compose, e2e of the Authentik sign-in with the
+`sso` profile, and a chart install into kind (the last two on PRs and `main`). A `v*` tag publishes the images to GHCR.
 
 ## Configuration
 

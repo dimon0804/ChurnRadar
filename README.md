@@ -848,7 +848,7 @@ cd tests/e2e && SSO_E2E=1 npx playwright test specs/sso.spec.ts
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) на каждый push и PR гоняет ruff,
 eslint и tsc, hadolint, actionlint и promtool, тесты всех сервисов, сборку образов со сканом
-Trivy, `helm lint` с kubeconform, e2e в Compose и установку чарта в kind (на PR и в `main`).
+Trivy, `helm lint` с kubeconform, e2e в Compose, e2e входа через Authentik с профилем `sso` и установку чарта в kind (последние два — на PR и в `main`).
 По тегу `v*` образы публикуются в GHCR.
 
 ## Конфигурация

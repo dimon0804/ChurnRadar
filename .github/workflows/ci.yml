@@ -463,3 +463,58 @@ jobs:
       - name: Stop stack
         if: always()
         run: docker compose ${{ steps.compose.outputs.args }} down -v --remove-orphans
+
+  e2e-sso:
+    name: E2E SSO (compose --profile sso + Playwright)
+    needs: discover
+    # Authentik добавляет к стенду ~1 ГБ памяти и пару минут старта: только PR и main
+    if: >-
+      needs.discover.outputs.has_e2e == 'true' &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start stack with Authentik
+        run: |
+          if [ ! -f .env ] && [ -f .env.example ]; then cp .env.example .env; fi
+          docker compose --profile sso up -d --build --wait --wait-timeout 600
+          # blueprint применяется воркером уже после healthy: ждём, пока появится OIDC-приложение
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:9000/application/o/churn-radar/.well-known/openid-configuration >/dev/null && break
+            sleep 5
+          done
+          curl -sf http://localhost:9000/application/o/churn-radar/.well-known/openid-configuration >/dev/null
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: tests/e2e/package-lock.json
+      - name: Install Playwright
+        working-directory: tests/e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run SSO and users specs
+        working-directory: tests/e2e
+        env:
+          BASE_URL: http://localhost:8080
+          CI: "true"
+          SSO_E2E: "1"
+        run: npx playwright test specs/sso.spec.ts specs/users.spec.ts
+      - name: Compose logs
+        if: failure()
+        run: docker compose --profile sso logs --no-color --timestamps > compose-logs.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-sso
+          path: |
+            tests/e2e/playwright-report
+            tests/e2e/test-results
+            compose-logs.txt
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: Stop stack
+        if: always()
+        run: docker compose --profile sso down -v --remove-orphans

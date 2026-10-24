@@ -31,6 +31,8 @@ tags:
     description: Настройки модели risk-score
   - name: source
     description: Загрузка исходных данных
+  - name: connectors
+    description: Источники, из которых система сама забирает данные (HTTP API биллинга, Яндекс Метрика)
   - name: stream
     description: Живые обновления (Server-Sent Events)
   - name: simulator
@@ -1048,6 +1050,211 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/v1/source/connectors:
+    get:
+      tags: [connectors]
+      summary: Источники, из которых система сама забирает данные
+      description: |
+        Коннекторы (pull): HTTP API биллинга и Яндекс Метрика. Планировщик в ingest ходит в них
+        по расписанию; при нескольких репликах работает ровно один исполнитель (лидер по
+        `pg_try_advisory_lock`). Токены в базе не хранятся: у коннектора записано только имя
+        переменной окружения (`CONNECTOR_TOKEN_*`), а ответ говорит лишь, задана ли она.
+        Требуется роль `admin`.
+      operationId: listConnectors
+      responses:
+        '200':
+          description: Список коннекторов со статусом
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConnectorList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [connectors]
+      summary: Добавить коннектор
+      operationId: createConnector
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConnectorCreate' }
+      responses:
+        '201':
+          description: Коннектор создан
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Connector' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Коннектор с таким id уже есть
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/source/connectors/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ConnectorId'
+    get:
+      tags: [connectors]
+      summary: Коннектор со статусом
+      operationId: getConnector
+      responses:
+        '200':
+          description: Коннектор
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Connector' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [connectors]
+      summary: Изменить настройки коннектора (вкл/выкл, расписание, адрес, опции)
+      description: |
+        У коннекторов из окружения (`managed: true`) адрес, имя переменной токена и счётчик Метрики
+        задаются переменными окружения ingest; попытка поменять их здесь даёт 422.
+      operationId: patchConnector
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConnectorPatch' }
+      responses:
+        '200':
+          description: Новое состояние
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Connector' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [connectors]
+      summary: Удалить коннектор (уже загруженные им данные остаются)
+      operationId: deleteConnector
+      responses:
+        '204': { description: Удалён }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/source/connectors/{id}/run:
+    parameters:
+      - $ref: '#/components/parameters/ConnectorId'
+    post:
+      tags: [connectors]
+      summary: Запустить сейчас
+      description: |
+        Ставит отметку «запустить вне расписания»; лидер подхватит её в течение нескольких секунд.
+        Работает и для выключенного коннектора (разовый запуск). Ход запуска видно в `status`
+        и в истории запусков.
+      operationId: runConnector
+      responses:
+        '202':
+          description: Запуск запрошен
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Connector' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/source/connectors/{id}/reset-cursor:
+    parameters:
+      - $ref: '#/components/parameters/ConnectorId'
+    post:
+      tags: [connectors]
+      summary: Сбросить курсор, чтобы следующий запуск забрал данные заново целиком
+      operationId: resetConnectorCursor
+      responses:
+        '200':
+          description: Курсор сброшен
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Connector' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/source/connectors/{id}/runs:
+    parameters:
+      - $ref: '#/components/parameters/ConnectorId'
+    get:
+      tags: [connectors]
+      summary: История запусков (новые сверху)
+      operationId: listConnectorRuns
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 20 }
+      responses:
+        '200':
+          description: Запуски
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ConnectorRun' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/source/metrica:
+    get:
+      tags: [connectors]
+      summary: Что известно из Яндекс Метрики
+      description: |
+        Сводка по связке визитов с аккаунтами: у скольких клиентов уже есть данные Метрики, сколько
+        загружено соответствий clientID → аккаунт, когда последний раз пересчитаны агрегаты.
+      operationId: getMetricaSummary
+      responses:
+        '200':
+          description: Сводка
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MetricaSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/source/metrica/client-ids:
+    post:
+      tags: [connectors]
+      summary: Загрузить соответствия clientID → аккаунт
+      description: |
+        Запасной способ связать визиты с клиентами, если сайт не передаёт номер аккаунта
+        (основной способ: `ym(<счётчик>, 'setUserID', '<id>')` плюс параметр визита
+        `account_id`, см. README). Соответствия добавляются или обновляются; с `replace=true`
+        прежняя таблица заменяется целиком. Агрегаты визитов пересчитаются при следующем запуске
+        коннектора Метрики.
+      operationId: postMetricaClientIds
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MetricaClientIds' }
+      responses:
+        '200':
+          description: Принято
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted, total]
+                properties:
+                  accepted: { type: integer, description: Сколько строк записано из этого запроса }
+                  total: { type: integer, description: Сколько соответствий теперь в таблице }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/v1/stream:
     get:
       tags: [stream]
@@ -1353,6 +1560,11 @@ components:
         Тело можно сжать gzip. Лимиты задаются переменными ingest: `MAX_COMPRESSED_BODY_BYTES`
         (сжатое тело) и `MAX_BODY_BYTES` (после распаковки).
       schema: { type: string, enum: [gzip, identity] }
+    ConnectorId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-z0-9][a-z0-9_-]{1,40}$' }
 
   responses:
     BadRequest:
@@ -2598,18 +2810,183 @@ components:
         running: { type: boolean }
         interval_ms: { type: integer }
         events_emitted: { type: integer }
+        mode:
+          type: string
+          enum: [push, pull]
+          description: |
+            push — симулятор сам шлёт изменения в ingest; pull — только отдаёт их через демо-API
+            биллинга, а забирает коннектор ingest по расписанию или по кнопке «Запустить сейчас».
 
     SimulatorCommand:
       type: object
       properties:
         running: { type: boolean }
         interval_ms: { type: integer, minimum: 200, maximum: 60000 }
+        mode: { type: string, enum: [push, pull] }
         generate:
           type: object
           description: Сгенерировать и загрузить расширенный набор вместо текущего
           properties:
             accounts: { type: integer, minimum: 1, maximum: 200000 }
             seed: { type: integer }
+
+    ConnectorKind:
+      type: string
+      enum: [billing_http, yandex_metrica]
+      description: |
+        `billing_http` — HTTP API биллинга по контракту `contracts/billing-source.openapi.yaml`;
+        `yandex_metrica` — Logs API Яндекс Метрики (визиты).
+
+    ConnectorOptions:
+      type: object
+      description: |
+        Опции зависят от типа. Биллинг: `page_size` (1..1000), `max_records` (сколько записей
+        забрать за один запуск). Метрика: `counter_id`, `lookback_days` (глубина первой выгрузки),
+        `refresh_days` (сколько последних дней перечитывать: визиты в Метрике дописываются до трёх
+        суток), `account_param` (ключ параметра визита с номером аккаунта), `tz_offset_hours`
+        (часовой пояс счётчика), `pages` (шаблоны адресов для групп `payment`, `cancel`, `pricing`),
+        `goals` (номера целей для тех же групп).
+      additionalProperties: true
+      properties:
+        page_size: { type: integer, minimum: 1, maximum: 1000 }
+        max_records: { type: integer, minimum: 1 }
+        counter_id: { type: integer, minimum: 1 }
+        lookback_days: { type: integer, minimum: 1, maximum: 90 }
+        refresh_days: { type: integer, minimum: 0, maximum: 10 }
+        account_param: { type: string }
+        tz_offset_hours: { type: number, minimum: -12, maximum: 14 }
+        pages:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+        goals:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: integer }
+
+    ConnectorStatus:
+      type: object
+      required: [last_status, run_requested, consecutive_failures]
+      properties:
+        last_status:
+          type: [string, 'null']
+          enum: [ok, error, running, null]
+        last_run_at: { type: [string, 'null'], format: date-time }
+        last_success_at: { type: [string, 'null'], format: date-time }
+        last_duration_ms: { type: [integer, 'null'] }
+        last_records: { type: [integer, 'null'], description: Сколько записей принято за последний запуск }
+        last_error: { type: [string, 'null'] }
+        consecutive_failures: { type: integer }
+        next_run_at: { type: [string, 'null'], format: date-time }
+        run_requested: { type: boolean, description: Нажали «Запустить сейчас», а исполнитель ещё не взял }
+
+    Connector:
+      type: object
+      required: [id, kind, title, base_url, interval_s, enabled, token_env, token_present, managed, options, cursor, status]
+      properties:
+        id: { type: string, pattern: '^[a-z0-9][a-z0-9_-]{1,40}$' }
+        kind: { $ref: '#/components/schemas/ConnectorKind' }
+        title: { type: string }
+        base_url: { type: string }
+        interval_s: { type: integer, minimum: 10, maximum: 604800, description: Расписание, интервал между запусками }
+        enabled: { type: boolean }
+        token_env:
+          type: [string, 'null']
+          description: Имя переменной окружения ingest с токеном (`CONNECTOR_TOKEN_*`). Сам токен API не отдаёт.
+        token_present: { type: boolean, description: Переменная задана и не пуста }
+        managed: { type: boolean, description: Адрес, токен и счётчик заданы переменными окружения ingest }
+        options: { $ref: '#/components/schemas/ConnectorOptions' }
+        cursor:
+          type: object
+          additionalProperties: true
+          description: |
+            Курсор инкремента. Биллинг: `{accounts, services, transactions}` — последний
+            `updatedAt` по каждой сущности. Метрика: `{last_date}` — последний выгруженный день.
+        status: { $ref: '#/components/schemas/ConnectorStatus' }
+
+    ConnectorList:
+      type: object
+      required: [items, scheduler]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Connector' }
+        scheduler:
+          type: object
+          required: [enabled]
+          properties:
+            enabled: { type: boolean, description: Планировщик включён в ingest }
+            leader: { type: [string, 'null'], description: Какая реплика сейчас исполнитель }
+
+    ConnectorCreate:
+      type: object
+      required: [id, kind, title, base_url]
+      properties:
+        id: { type: string, pattern: '^[a-z0-9][a-z0-9_-]{1,40}$' }
+        kind: { $ref: '#/components/schemas/ConnectorKind' }
+        title: { type: string, minLength: 1, maxLength: 120 }
+        base_url: { type: string }
+        interval_s: { type: integer, minimum: 10, maximum: 604800, default: 300 }
+        enabled: { type: boolean, default: false }
+        token_env: { type: [string, 'null'], pattern: '^CONNECTOR_TOKEN_[A-Z0-9_]{1,64}$' }
+        options: { $ref: '#/components/schemas/ConnectorOptions' }
+
+    ConnectorPatch:
+      type: object
+      minProperties: 1
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        base_url: { type: string }
+        interval_s: { type: integer, minimum: 10, maximum: 604800 }
+        enabled: { type: boolean }
+        token_env: { type: [string, 'null'], pattern: '^CONNECTOR_TOKEN_[A-Z0-9_]{1,64}$' }
+        options: { $ref: '#/components/schemas/ConnectorOptions' }
+
+    ConnectorRun:
+      type: object
+      required: [id, connector_id, trigger, status, started_at, records, attempts]
+      properties:
+        id: { type: integer }
+        connector_id: { type: string }
+        trigger: { type: string, enum: [schedule, manual] }
+        status: { type: string, enum: [running, ok, error] }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        duration_ms: { type: [integer, 'null'] }
+        records: { type: integer, description: Сколько записей принято }
+        attempts: { type: integer, description: HTTP-запросов с учётом повторов }
+        error: { type: [string, 'null'] }
+        details:
+          type: object
+          additionalProperties: true
+          description: 'Биллинг: `{accounts, services, transactions, skipped}`; Метрика: `{visits, linked, accounts, days}`'
+
+    MetricaSummary:
+      type: object
+      required: [client_ids, accounts_with_activity]
+      properties:
+        client_ids: { type: integer, description: Соответствий clientID → аккаунт }
+        client_ids_updated_at: { type: [string, 'null'], format: date-time }
+        accounts_with_activity: { type: integer, description: Клиентов, по которым есть визиты }
+        last_visit_at: { type: [string, 'null'], format: date-time }
+        computed_at: { type: [string, 'null'], format: date-time, description: Когда последний раз пересчитаны агрегаты }
+
+    MetricaClientIds:
+      type: object
+      required: [items]
+      properties:
+        replace: { type: boolean, default: false }
+        items:
+          type: array
+          maxItems: 200000
+          items:
+            type: object
+            required: [client_id, account_id]
+            properties:
+              client_id: { type: string, pattern: '^[0-9]{1,20}$', description: 'ClientID Метрики (поле ym:s:clientID)' }
+              account_id: { type: integer, minimum: 1 }
 
     ScoresUpdatedEvent:
       type: object

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bell, BellOff, ChevronRight, Sigma, TrendingUp, TriangleAlert } from 'lucide-react'
+import { Bell, BellOff, ChevronRight, Layers, Sigma, TrendingUp, TriangleAlert } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { alertsQueryKey, fetchAlerts, type AlertFeed, type AlertItem } from '@/api/alerts'
@@ -22,6 +22,7 @@ const KIND_ICON: Record<AlertItem['kind'], { icon: typeof Bell; className: strin
   high_risk: { icon: TriangleAlert, className: 'bg-risk-high-bg text-risk-high' },
   loss_jump: { icon: TrendingUp, className: 'bg-risk-medium-bg text-risk-medium' },
   total_loss_jump: { icon: Sigma, className: 'bg-muted text-foreground' },
+  bulk: { icon: Layers, className: 'bg-risk-high-bg text-risk-high' },
 }
 
 async function loadFeed(signal: AbortSignal): Promise<AlertFeed> {

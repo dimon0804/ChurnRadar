@@ -22,8 +22,18 @@ from svckit.logs import get_logger
 from . import repository as repo
 from .config import Config
 from .events import SUBJECT_SCORES, InvalidEvent, ScoresEvent, coalesce, parse_event, unique_new
-from .metrics import DEAD_LETTERS, ERRORS, EVENTS, LAST_EVENT, RAISED, RETRIES, SENT, SUPPRESSED
-from .rules import Alert, Thresholds, batch_text, evaluate_customers, evaluate_total, webhook_payload
+from .metrics import BULK_FOLDED, DEAD_LETTERS, ERRORS, EVENTS, LAST_EVENT, RAISED, RETRIES, SENT, SUPPRESSED
+from .rules import (
+    Alert,
+    Thresholds,
+    TotalState,
+    batch_text,
+    bulk_alert,
+    evaluate_customers,
+    evaluate_total,
+    is_bulk,
+    webhook_payload,
+)
 
 log = get_logger("alerts.worker")
 
@@ -193,6 +203,10 @@ class BatchProcessor:
             await repo.forget_removed(conn, ids)
             rows = await repo.changed_rows(conn, ids)
             decision = evaluate_customers(rows, self._thresholds, now)
+            bulk = is_bulk(decision.alerts, full=plan.full, threshold=self._config.bulk_threshold)
+            high_before = await repo.count_high_state(conn) if bulk else 0
+            # состояние обновляется и при сводной записи: свёрнутые клиенты считаются оповещёнными,
+            # отложенных оповещений по ним потом не будет
             await repo.save_states(conn, decision.states)
             alerts = list(decision.alerts)
             suppressed = dict(decision.suppressed)
@@ -201,11 +215,29 @@ class BatchProcessor:
                 total_alert, total_state, total_suppressed = evaluate_total(
                     total_now, meta.total, self._thresholds, now
                 )
-                await repo.save_total(conn, total_state)
-                if total_alert is not None:
+                if bulk:
+                    # рост общей потери уже в сводной записи; отсчёт — от новой базы
+                    total_state = TotalState(total_now, total_now, now)
+                elif total_alert is not None:
                     alerts.insert(0, total_alert)
-                if total_suppressed:
+                await repo.save_total(conn, total_state)
+                if total_suppressed and not bulk:
                     suppressed["total_loss_jump"] = suppressed.get("total_loss_jump", 0) + 1
+
+            if bulk:
+                folded = len(decision.alerts)
+                BULK_FOLDED.inc(folded)
+                alerts = [
+                    bulk_alert(
+                        decision.alerts,
+                        full=plan.full,
+                        high_now=await repo.count_high_scores(conn),
+                        high_before=high_before,
+                        total_now=total_now,
+                        total_before=meta.total.total_loss if meta.total else None,
+                    )
+                ]
+                log.info("alerts_bulk", folded=folded, full=plan.full)
 
             if alerts:
                 batch_id = str(uuid.uuid4())

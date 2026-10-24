@@ -36,4 +36,5 @@ export const KIND_LABEL: Record<AlertItem['kind'], string> = {
   high_risk: 'Высокий риск',
   loss_jump: 'Рост потери',
   total_loss_jump: 'Общая потеря',
+  bulk: 'Массовое изменение',
 }

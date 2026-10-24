@@ -327,6 +327,13 @@ too, not only a jump within one recalculation. One customer gets at most one ale
 message. On the very first start the service only remembers the current state and sends
 nothing; otherwise it would report everyone who has long been in high risk.
 
+Mass changes are folded. If one recalculation produces more than `ALERTS_BULK_THRESHOLD` (20)
+customer alerts, or a full recalculation brings new customers (meaning a snapshot was loaded),
+the feed and the channels get a single summary: how many customers are in high risk now and
+before, how the expected loss moved, and the most expensive ones, linked to the high-risk list
+sorted by expected loss. The state of every folded customer is updated, so no delayed alerts
+follow. A single new customer from the change stream still gets its own record.
+
 How delivery works:
 
 - The service keeps its state in the `alerts` schema and only reads `scoring.*`. The comparison
@@ -686,7 +693,7 @@ change something, copy it to `.env`.
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | `churn` | database |
 | `COOKIE_SECURE` | `false` | turn on behind HTTPS |
 | `API_REPLICAS`, `SCORING_REPLICAS`, `NOTIFIER_REPLICAS`, `ALERTS_REPLICAS` | `2` | replica counts |
-| `ALERT_LOSS_JUMP_EUR`, `ALERT_TOTAL_LOSS_JUMP_PCT`, `ALERT_COOLDOWN_MIN` | `50`, `10`, `60` | alert thresholds and anti-spam window |
+| `ALERT_LOSS_JUMP_EUR`, `ALERT_TOTAL_LOSS_JUMP_PCT`, `ALERT_COOLDOWN_MIN`, `ALERTS_BULK_THRESHOLD` | `50`, `10`, `60`, `20` | alert thresholds, anti-spam window, folding of mass changes |
 | `ALERTS_WEBHOOK_URL`, `ALERTS_WEBHOOK_SECRET` | empty | alert webhook and its signing key |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | empty | Telegram for alerts; without them the channel is off |
 | `SEED_REFERENCE_TIME` | `2026-10-19T15:00:00Z` | the moment the case sample is scored at on first start |

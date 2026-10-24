@@ -29,11 +29,12 @@ from .channels import build_channels
 from .config import Config
 from .delivery import Dispatcher
 from .metrics import ERRORS, HTTP_DURATION
+from .rules import feed_path
 from .worker import Worker
 
 log = get_logger("alerts")
 
-AlertKind = Literal["high_risk", "loss_jump", "total_loss_jump"]
+AlertKind = Literal["high_risk", "loss_jump", "total_loss_jump", "bulk"]
 
 
 class State:
@@ -62,7 +63,7 @@ def feed_item(row: dict[str, Any]) -> dict[str, Any]:
         "prev_loss": row.get("prev_loss"),
         "message": row["message"],
         "created_at": _iso(row.get("created_at")),
-        "link": f"/customers/{cid}" if cid is not None else "/customers?level=high",
+        "link": feed_path(row["kind"], cid),
     }
 
 

@@ -51,6 +51,8 @@ class Config:
     total_loss_jump_pct: float = 10.0
     cooldown_s: float = 3600.0  # ALERT_COOLDOWN_MIN
     max_items_in_message: int = 10
+    # больше стольких оповещений по клиентам за пересчёт — одна сводная запись вместо всех
+    bulk_threshold: int = 20
 
     # доставка
     public_url: str = "http://localhost:8080"
@@ -109,6 +111,7 @@ class Config:
             total_loss_jump_pct=float(os.getenv("ALERT_TOTAL_LOSS_JUMP_PCT", "10")),
             cooldown_s=float(os.getenv("ALERT_COOLDOWN_MIN", "60")) * 60,
             max_items_in_message=max(1, int(os.getenv("ALERT_MAX_ITEMS_IN_MESSAGE", "10"))),
+            bulk_threshold=max(0, int(os.getenv("ALERTS_BULK_THRESHOLD", "20"))),
             public_url=(os.getenv("PUBLIC_URL") or "http://localhost:8080").rstrip("/"),
             webhook_url=_env_str("WEBHOOK_URL"),
             webhook_secret=_env_str("WEBHOOK_SECRET"),

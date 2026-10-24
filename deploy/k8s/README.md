@@ -35,7 +35,7 @@ pg_restore --clean --if-exists -d "$DATABASE_URL" churn-radar-<время>.dump
 ```
 
 Маршруты шлюза совпадают с compose: публичные `/api/v1/auth/login`, `/api/v1/auth/providers`,
-`/api/v1/auth/oidc/*`, `/login`, `/assets/*`, `/favicon.svg`; остальное идёт через
+`/api/v1/auth/oidc/*`, `/api/v1/auth/saml/*`, `/login`, `/assets/*`, `/favicon.svg`; остальное идёт через
 ForwardAuth `auth:/internal/verify` (для страниц панели — `?redirect=1`), `/metrics` —
 через `auth:/internal/verify-metrics`.
 

@@ -48,7 +48,11 @@ metadata:
 spec:
   backoffLimit: {{ $.Values.migrationJob.backoffLimit }}
   activeDeadlineSeconds: {{ $.Values.migrationJob.activeDeadlineSeconds }}
+  {{- /* TTL только у хуков: Job установки — обычный ресурс релиза; если его удалит
+  TTL-контроллер, состояние кластера разойдётся с манифестом релиза */}}
+  {{- if $asHook }}
   ttlSecondsAfterFinished: {{ $.Values.migrationJob.ttlSecondsAfterFinished }}
+  {{- end }}
   template:
     metadata:
       labels:
@@ -59,6 +63,9 @@ spec:
       serviceAccountName: {{ include "cr.serviceAccountName" $ }}
       automountServiceAccountToken: false
       enableServiceLinks: false
+      {{- with include "cr.priorityClassName" (dict "root" $ "value" "") }}
+      {{ . }}
+      {{- end }}
       {{- with $.Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

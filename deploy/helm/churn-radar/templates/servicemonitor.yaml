@@ -3,6 +3,7 @@
 {{- if include "cr.appEnabled" (dict "root" $ "key" $key) }}
 {{- $app := include "cr.appConfig" (dict "root" $ "key" $key) | fromYaml }}
 {{- $component := kebabcase $key }}
+{{- if $app.serviceMonitor.enabled }}
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -30,6 +31,7 @@ spec:
           name: {{ include "cr.secretName" $ }}
           key: METRICS_TOKEN
       {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

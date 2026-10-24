@@ -21,10 +21,11 @@ spec:
   {{- end }}
   revisionHistoryLimit: 3
   strategy:
-    type: RollingUpdate
+    type: {{ $app.strategy.type }}
+    {{- if and (eq $app.strategy.type "RollingUpdate") $app.strategy.rollingUpdate }}
     rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
+      {{- toYaml $app.strategy.rollingUpdate | nindent 6 }}
+    {{- end }}
   selector:
     matchLabels:
       {{- $selector | nindent 6 }}
@@ -48,6 +49,9 @@ spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       terminationGracePeriodSeconds: {{ $app.terminationGracePeriodSeconds }}
+      {{- with include "cr.priorityClassName" (dict "root" $ "value" $app.priorityClassName) }}
+      {{ . }}
+      {{- end }}
       {{- with $.Values.global.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

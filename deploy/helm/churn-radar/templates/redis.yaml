@@ -41,13 +41,29 @@ spec:
       serviceAccountName: {{ include "cr.serviceAccountName" . }}
       automountServiceAccountToken: false
       enableServiceLinks: false
+      {{- with include "cr.priorityClassName" (dict "root" . "value" $r.priorityClassName) }}
+      {{ . }}
+      {{- end }}
       securityContext:
         {{- include "cr.podSecurityContext" (dict "uid" 10001) | nindent 8 }}
       containers:
         - name: redis
           image: "{{ $r.image.repository }}:{{ $r.image.tag }}"
           imagePullPolicy: {{ $r.image.pullPolicy }}
-          args: ["redis-server", "--dir", "/data", "--appendonly", "yes", "--protected-mode", "no"]
+          args:
+            - redis-server
+            - --dir
+            - /data
+            - --appendonly
+            - "yes"
+            - --protected-mode
+            - "no"
+            {{- if $r.maxmemory }}
+            - --maxmemory
+            - {{ $r.maxmemory | quote }}
+            - --maxmemory-policy
+            - {{ $r.maxmemoryPolicy | quote }}
+            {{- end }}
           ports:
             - name: redis
               containerPort: 6379

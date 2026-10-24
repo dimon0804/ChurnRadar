@@ -4,6 +4,7 @@
 {{- $instance := dict "app.kubernetes.io/instance" .Release.Name }}
 {{- $appPods := dict "app.kubernetes.io/instance" .Release.Name "churn-radar/tier" "app" }}
 {{- $dataPods := dict "app.kubernetes.io/instance" .Release.Name "churn-radar/tier" "data" }}
+{{- $backupPods := dict "app.kubernetes.io/instance" .Release.Name "churn-radar/tier" "backup" }}
 # Всё, что не разрешено явно, запрещено
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -143,9 +144,44 @@ spec:
         - podSelector:
             matchLabels:
               {{- toYaml $appPods | nindent 14 }}
+        {{- if .Values.backup.enabled }}
+        - podSelector:
+            matchLabels:
+              {{- toYaml $backupPods | nindent 14 }}
+        {{- end }}
       ports:
         - port: 5432
           protocol: TCP
+{{- end }}
+{{- if .Values.backup.enabled }}
+---
+# CronJob бэкапа: только исходящие к Postgres (внешняя БД — через extraAppEgress)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-backup
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $backupPods | nindent 6 }}
+  policyTypes: ["Ingress", "Egress"]
+  {{- if or .Values.postgresql.enabled $np.extraAppEgress }}
+  egress:
+    {{- if .Values.postgresql.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "cr.selectorLabels" (dict "root" . "component" "postgresql") | nindent 14 }}
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
+    {{- with $np.extraAppEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
 {{- end }}
 {{- if .Values.redis.enabled }}
 ---

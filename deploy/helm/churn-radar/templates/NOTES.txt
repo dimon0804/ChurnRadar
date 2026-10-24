@@ -16,6 +16,12 @@ ChurnRadar установлен в namespace {{ .Release.Namespace }}.
 {{- if .Values.gateway.enabled }}
   curl -i http://<адрес-traefik>/api/v1/customers   # ожидается 401 без сессии
 {{- end }}
+{{- if .Values.backup.enabled }}
+
+Бэкап Postgres по расписанию "{{ .Values.backup.schedule }}", хранится {{ .Values.backup.retention }} последних дампов.
+Запустить вручную:
+  kubectl -n {{ .Release.Namespace }} create job --from=cronjob/{{ include "cr.componentName" (dict "root" . "component" "backup") }} backup-manual
+{{- end }}
 {{- if or (eq .Values.secrets.adminPassword "admin") (eq .Values.secrets.metricsToken "churn-metrics-demo-token") }}
 
 Используются демо-секреты. Для production задайте secrets.* или secrets.existingSecret.

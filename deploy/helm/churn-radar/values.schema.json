@@ -1,0 +1,306 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "churn-radar values",
+  "type": "object",
+  "definitions": {
+    "quantity": {
+      "description": "Kubernetes quantity: 64Mi, 1Gi, 500m, 2",
+      "type": ["string", "number"]
+    },
+    "image": {
+      "type": "object",
+      "properties": {
+        "registry": { "type": "string" },
+        "repository": { "type": "string" },
+        "tag": { "type": ["string", "number"] },
+        "pullPolicy": { "enum": ["", "Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "size": { "$ref": "#/definitions/quantity" },
+        "storageClass": { "type": "string" }
+      }
+    },
+    "external": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "requests": { "type": "object" },
+        "limits": { "type": "object" }
+      }
+    },
+    "intOrPercent": {
+      "type": ["integer", "string"]
+    },
+    "app": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicas": { "type": "integer", "minimum": 0 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "image": { "$ref": "#/definitions/image" },
+        "strategy": {
+          "type": "object",
+          "properties": {
+            "type": { "enum": ["RollingUpdate", "Recreate"] },
+            "rollingUpdate": {
+              "type": ["object", "null"],
+              "properties": {
+                "maxUnavailable": { "$ref": "#/definitions/intOrPercent" },
+                "maxSurge": { "$ref": "#/definitions/intOrPercent" }
+              }
+            }
+          }
+        },
+        "priorityClassName": { "type": "string" },
+        "secretKeys": { "type": "array", "items": { "type": "string" } },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": ["string", "number", "boolean"] }
+        },
+        "extraEnv": { "type": "array" },
+        "probes": { "type": "object" },
+        "resources": { "$ref": "#/definitions/resources" },
+        "podSecurityContext": { "type": "object" },
+        "securityContext": { "type": "object" },
+        "tmpSizeLimit": { "$ref": "#/definitions/quantity" },
+        "extraVolumes": { "type": "array" },
+        "extraVolumeMounts": { "type": "array" },
+        "preStopSleepSeconds": { "type": "integer", "minimum": 0 },
+        "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 },
+        "podAnnotations": { "type": "object" },
+        "podLabels": { "type": "object" },
+        "nodeSelector": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "affinity": { "type": "object" },
+        "spread": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "topologyKey": { "type": "string" },
+            "whenUnsatisfiable": { "enum": ["ScheduleAnyway", "DoNotSchedule"] }
+          }
+        },
+        "pdb": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" } }
+        },
+        "autoscaling": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "minReplicas": { "type": "integer", "minimum": 1 },
+            "maxReplicas": { "type": "integer", "minimum": 1 },
+            "targetCPUUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 },
+            "behavior": { "type": "object" }
+          }
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "bearerToken": { "type": "boolean" }
+          }
+        },
+        "exposedViaGateway": { "type": "boolean" }
+      }
+    }
+  },
+  "properties": {
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "global": {
+      "type": "object",
+      "properties": {
+        "image": { "$ref": "#/definitions/image" },
+        "imagePullSecrets": { "type": "array" },
+        "logLevel": { "type": "string", "minLength": 1 },
+        "clusterDomain": { "type": "string", "minLength": 1 },
+        "priorityClassName": { "type": "string" }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "properties": {
+        "existingSecret": { "type": "string" },
+        "metricsToken": { "type": "string" },
+        "adminPassword": { "type": "string" },
+        "analystPassword": { "type": "string" }
+      }
+    },
+    "commonEnv": {
+      "type": "object",
+      "additionalProperties": { "type": ["string", "number", "boolean"] }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "type": "object" }
+      }
+    },
+    "appDefaults": { "$ref": "#/definitions/app" },
+    "auth": { "$ref": "#/definitions/app" },
+    "notifier": { "$ref": "#/definitions/app" },
+    "web": { "$ref": "#/definitions/app" },
+    "api": { "$ref": "#/definitions/app" },
+    "ingest": { "$ref": "#/definitions/app" },
+    "scoring": { "$ref": "#/definitions/app" },
+    "simulator": { "$ref": "#/definitions/app" },
+    "mockCore": { "$ref": "#/definitions/app" },
+    "migrations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "command"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "app": { "type": "string" },
+          "image": { "$ref": "#/definitions/image" },
+          "command": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "env": { "type": "object" }
+        }
+      }
+    },
+    "migrationJob": {
+      "type": "object",
+      "properties": {
+        "backoffLimit": { "type": "integer", "minimum": 0 },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "ttlSecondsAfterFinished": { "type": "integer", "minimum": 0 },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "postgresql": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "external": { "$ref": "#/definitions/external" },
+        "image": { "$ref": "#/definitions/image" },
+        "database": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "persistence": { "$ref": "#/definitions/persistence" },
+        "resources": { "$ref": "#/definitions/resources" },
+        "runAsUser": { "type": "integer" },
+        "shmSizeLimit": { "$ref": "#/definitions/quantity" },
+        "priorityClassName": { "type": "string" }
+      }
+    },
+    "redis": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "external": { "$ref": "#/definitions/external" },
+        "image": { "$ref": "#/definitions/image" },
+        "database": { "type": "integer", "minimum": 0 },
+        "maxmemory": { "type": ["string", "integer"] },
+        "maxmemoryPolicy": {
+          "enum": ["noeviction", "allkeys-lru", "allkeys-lfu", "allkeys-random", "volatile-lru", "volatile-lfu", "volatile-random", "volatile-ttl"]
+        },
+        "priorityClassName": { "type": "string" },
+        "persistence": { "$ref": "#/definitions/persistence" },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "nats": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "external": { "$ref": "#/definitions/external" },
+        "image": { "$ref": "#/definitions/image" },
+        "jetstream": {
+          "type": "object",
+          "properties": {
+            "maxMemory": { "type": ["string", "integer"] },
+            "maxFile": { "type": ["string", "integer"] }
+          }
+        },
+        "goMemLimit": { "type": "string" },
+        "priorityClassName": { "type": "string" },
+        "persistence": { "$ref": "#/definitions/persistence" },
+        "resources": { "$ref": "#/definitions/resources" },
+        "streams": { "type": "object" }
+      }
+    },
+    "gateway": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "entryPoints": { "type": "array", "items": { "type": "string" } },
+        "host": { "type": "string" },
+        "tls": { "type": "object" },
+        "traefikNamespace": { "type": "string" },
+        "traefikPodLabels": { "type": "object" },
+        "securityHeaders": { "type": "boolean" }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "prometheus": { "type": "object" },
+        "dns": { "type": "object" },
+        "extraAppEgress": { "type": "array" }
+      }
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "interval": { "type": "string" },
+        "scrapeTimeout": { "type": "string" },
+        "labels": { "type": "object" }
+      }
+    },
+    "keda": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minReplicaCount": { "type": "integer", "minimum": 0 },
+        "maxReplicaCount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "backup": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "schedule": { "type": "string", "minLength": 9 },
+        "timeZone": { "type": "string" },
+        "retention": { "type": "integer", "minimum": 1 },
+        "image": { "$ref": "#/definitions/image" },
+        "runAsUser": { "type": "integer", "minimum": 1 },
+        "priorityClassName": { "type": "string" },
+        "backoffLimit": { "type": "integer", "minimum": 0 },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "startingDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "successfulJobsHistoryLimit": { "type": "integer", "minimum": 0 },
+        "failedJobsHistoryLimit": { "type": "integer", "minimum": 0 },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "existingClaim": { "type": "string" },
+            "size": { "$ref": "#/definitions/quantity" },
+            "storageClass": { "type": "string" }
+          }
+        },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "properties": {
+        "image": { "$ref": "#/definitions/image" }
+      }
+    }
+  }
+}

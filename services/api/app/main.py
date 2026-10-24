@@ -20,7 +20,7 @@ from svckit.mail import MailConfig
 from svckit.metrics import HttpMetricsMiddleware, check_metrics_token, render
 from svckit.outbox import OutboxRelay
 
-from app import actions, mail_templates, mailer, marketing, metrics, model_quality, model_settings, preview, queries
+from app import actions, mail_templates, mailer, marketing, metrics, model_quality, model_settings, playbooks, preview, queries
 from app.config import settings
 from app.docs import router as docs_router
 
@@ -66,8 +66,16 @@ async def lifespan(app: FastAPI):
         followup_days=settings.mail_followup_days,
     )
     app.state.mail_worker.start()
+    app.state.playbook_runner = playbooks.PlaybookRunner(
+        app.state.pool, app.state.mail_config,
+        reply_to=mailer.reply_to_for(None, settings.smtp_reply_to, app.state.mail_config),
+        interval_s=settings.playbook_poll_interval_s, on_emails=app.state.mail_worker.kick,
+    )
+    if settings.playbooks_enabled:
+        app.state.playbook_runner.start()
     log.info("api_started")
     yield
+    await app.state.playbook_runner.stop()
     await app.state.mail_worker.stop()
     await app.state.scoring_http.aclose()
     await app.state.http.aclose()
@@ -98,6 +106,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
     app.add_middleware(HttpMetricsMiddleware, histogram=metrics.http_duration)
     app.add_middleware(RequestIdMiddleware)
     app.include_router(docs_router)
+    app.include_router(playbooks.router)
 
     # --- customers ---------------------------------------------------------------
     @app.get("/api/v1/customers", tags=["customers"])

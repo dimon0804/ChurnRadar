@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from prometheus_client import CollectorRegistry, Gauge
+from prometheus_client import CollectorRegistry, Counter, Gauge
 from svckit.metrics import http_duration_histogram
 from svckit.outbox import OutboxMetrics
 
@@ -80,6 +80,19 @@ emails_helped = Gauge(
     registry=registry,
 )
 
+
+# Сценарии удержания (app/playbooks.py)
+playbook_runs = Counter(
+    "playbook_runs", "Запуски сценариев: по пересчёту (scores) или вручную (manual)", ["cause", "mode"],
+    registry=registry,
+)
+playbook_actions = Counter(
+    "playbook_actions", "Действия, выполненные сценариями (email, status, notify)", ["action"], registry=registry
+)
+playbook_holdout = Counter(
+    "playbook_holdout", "Клиенты, попавшие в контрольную группу сценария: действие им не выполнялось",
+    registry=registry,
+)
 
 def update_mail_stats(stats: dict[str, Any]) -> None:
     emails_sent.set(_num(stats.get("sent")))

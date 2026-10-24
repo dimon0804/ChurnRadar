@@ -50,6 +50,10 @@ class Settings(ServiceSettings):
     # Reply-To, если у сотрудника нет почты в профиле; пусто — SMTP_FROM
     smtp_reply_to: str = ""
 
+    # сценарии удержания: как часто проверять, был ли пересчёт; false — исполнитель не запускается
+    playbooks_enabled: bool = True
+    playbook_poll_interval_s: float = 5.0
+
     db_pool_max: int = 10
     nats_wait_on_start_s: float = 5.0
 

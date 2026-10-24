@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
-import { CheckCircle2, CircleHelp, Lightbulb, RefreshCcw, RefreshCwOff, UserX } from 'lucide-react'
+import { CheckCircle2, CircleHelp, Lightbulb, PiggyBank, RefreshCcw, RefreshCwOff, Target, UserX } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router'
 import { isApiError } from '@/api/client'
 import { api, queryKeys } from '@/api/endpoints'
 import type { CustomerDetail, FeatureContribution, ServiceRisk, Transaction } from '@/api/types'
+import { DataClockBadge, referenceOf, useDataClock } from '@/components/data-clock'
 import { RiskBadge, RISK_BAR, RISK_TEXT, riskLevelOf } from '@/components/risk'
 import { EmptyState, ErrorState } from '@/components/states'
 import { Button } from '@/components/ui/button'
@@ -30,6 +31,8 @@ import {
   TX_STATUS_LABEL,
   TX_TYPE_LABEL,
 } from '@/lib/labels'
+import { clockFromReference, clockFromServices } from '@/lib/data-clock'
+import { isChurned, shortReasonTitle } from '@/lib/reasons'
 import { cn } from '@/lib/utils'
 import { useLive } from '@/providers/live'
 
@@ -58,6 +61,21 @@ function Stat({ label, value, hint, strong }: { label: string; value: ReactNode;
 function Hero({ c }: { c: CustomerDetail }) {
   const level = riskLevelOf(c.risk_level)
   const unknown = level === 'unknown' || c.risk_score === null
+  if (unknown && isChurned(c)) {
+    return (
+      <div className="flex gap-4 rounded-xl border border-dashed border-border bg-card p-5">
+        <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-risk-unknown-bg text-risk-unknown">
+          <UserX className="size-5" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-[17px] font-semibold">Клиент ушёл</p>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            Все его услуги удалены или заблокированы, поэтому риск ухода уже не считаем. Это кандидат на возврат.
+          </p>
+        </div>
+      </div>
+    )
+  }
   if (unknown) {
     const raw = c.reasons?.[0]?.title?.trim()
     const stripped = raw ? raw.replace(/^оценки нет\s*[:.—-]\s*/i, '') : ''
@@ -111,6 +129,7 @@ function Hero({ c }: { c: CustomerDetail }) {
 
 function Reasons({ c, services }: { c: CustomerDetail; services: Map<number, ServiceRisk> }) {
   const reasons = (c.reasons ?? []).filter((r) => c.risk_level === 'unknown' || r.contribution > 0)
+  const titles = useMemo(() => new Map((c.features ?? []).map((f) => [f.code, f.title] as const)), [c.features])
   if (c.risk_level === 'unknown') return null
   return (
     <Section title="Почему">
@@ -124,7 +143,8 @@ function Reasons({ c, services }: { c: CustomerDetail; services: Map<number, Ser
               <li key={`${r.code}-${r.service_id ?? ''}-${i}`} className="flex items-start gap-3 rounded-lg border border-border bg-card px-3.5 py-2.5">
                 <span className={cn('mt-[7px] size-1.5 shrink-0 rounded-full', RISK_BAR[riskLevelOf(c.risk_level)])} aria-hidden />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm leading-6">{r.title}</p>
+                  <p className="text-sm leading-6 font-medium">{shortReasonTitle(r, titles)}</p>
+                  <p className="text-sm leading-6 text-muted-foreground">{r.title}</p>
                   {svc && <p className="truncate text-xs text-muted-foreground">Услуга: {svc.name}</p>}
                 </div>
                 <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground num">
@@ -158,7 +178,7 @@ function Features({ features, level }: { features: FeatureContribution[]; level:
         {list.map((f) => (
           <li key={f.code}>
             <div className="flex items-baseline justify-between gap-3">
-              <span className="min-w-0 truncate text-sm" title={f.title}>
+              <span className="min-w-0 truncate text-sm" title={f.explanation || f.title}>
                 {f.title}
               </span>
               <span className={cn('shrink-0 text-sm font-medium num', f.contribution < 0.05 && 'text-muted-foreground')}>
@@ -171,7 +191,6 @@ function Features({ features, level }: { features: FeatureContribution[]; level:
                 style={{ width: `${(Math.abs(f.contribution) / max) * 100}%` }}
               />
             </div>
-            {f.explanation && <p className="mt-1 text-xs leading-5 text-muted-foreground">{f.explanation}</p>}
           </li>
         ))}
       </ul>
@@ -206,6 +225,7 @@ function Money({ c }: { c: CustomerDetail }) {
         <Stat
           label="Баланса хватит"
           value={typeof days === 'number' && Number.isFinite(days) ? coverageText(days) : '—'}
+          hint={m?.funds_run_out_at ? `до ${formatDate(m.funds_run_out_at)}` : undefined}
         />
       </div>
       {m?.explanation && <p className="mt-3 text-sm leading-6 text-muted-foreground">{m.explanation}</p>}
@@ -231,22 +251,51 @@ function Money({ c }: { c: CustomerDetail }) {
   )
 }
 
-function Recommendations({ c }: { c: CustomerDetail }) {
+type Recommendation = NonNullable<CustomerDetail['recommendations']>[number]
+
+/** Главное действие по клиенту наверху карточки и ещё пара запасных под ним. */
+function NextAction({ c }: { c: CustomerDetail }) {
   const recs = c.recommendations ?? []
-  if (recs.length === 0) return null
+  const fromReason = c.reasons?.find((r) => r.action)
+  const main: Recommendation | null =
+    c.next_action ?? recs.find((r) => r.primary) ?? recs[0] ?? (fromReason?.action ? { code: fromReason.code, title: fromReason.action } : null)
+  if (!main) return null
+  const rest = recs.filter((r) => !(r.code === main.code && r.title === main.title))
   return (
     <Section title="Что сделать">
-      <ul className="space-y-2">
-        {recs.map((r, i) => (
-          <li key={`${r.code}-${i}`} className="flex gap-3 rounded-lg border border-border bg-card px-3.5 py-3">
-            <Lightbulb className="mt-0.5 size-4 shrink-0 text-chart-forecast" />
-            <div className="min-w-0">
-              <p className="text-sm font-medium leading-6">{r.title}</p>
-              {r.detail && <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">{r.detail}</p>}
-            </div>
-          </li>
-        ))}
-      </ul>
+      <div className="rounded-xl border border-chart-forecast/30 bg-card px-4 py-3.5" data-testid="next-action">
+        <div className="flex gap-3">
+          <Target className="mt-0.5 size-4 shrink-0 text-chart-forecast" aria-hidden />
+          <div className="min-w-0 flex-1">
+            <p className="text-[15px] leading-6 font-semibold">{main.title}</p>
+            {main.detail && <p className="mt-1 text-sm leading-6 text-muted-foreground">{main.detail}</p>}
+            {typeof main.expected_saving === 'number' && main.expected_saving > 0 && (
+              <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-risk-low-bg px-2 py-1 text-xs font-medium text-risk-low num">
+                <PiggyBank className="size-3.5" aria-hidden />
+                Сбережёт до {formatMoney(main.expected_saving)} ожидаемой потери
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+      {rest.length > 0 && (
+        <ul className="mt-2 space-y-2">
+          {rest.map((r, i) => (
+            <li key={`${r.code}-${i}`} className="flex gap-3 rounded-lg border border-border bg-card px-3.5 py-2.5">
+              <Lightbulb className="mt-1 size-4 shrink-0 text-muted-foreground" aria-hidden />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm leading-6 font-medium">{r.title}</p>
+                {r.detail && <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">{r.detail}</p>}
+              </div>
+              {typeof r.expected_saving === 'number' && r.expected_saving > 0 && (
+                <span className="shrink-0 pt-0.5 text-xs text-muted-foreground num" title="Насколько снизится ожидаемая потеря">
+                  до {formatMoney(r.expected_saving, { cents: false })}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </Section>
   )
 }
@@ -436,6 +485,7 @@ export default function CustomerSheet() {
   const c = detail.data
   const services = useMemo(() => new Map((c?.services ?? []).map((s) => [s.id, s])), [c])
   const flash = changed.get(id)
+  const clock = useDataClock(clockFromReference(referenceOf(c)), clockFromServices(c?.services))
 
   const close = () => navigate(`/customers${location.search}`)
   const notFound = !valid || (isApiError(detail.error) && detail.error.status === 404)
@@ -455,6 +505,7 @@ export default function CustomerSheet() {
               {c?.email ?? (detail.isPending && valid ? 'Загрузка…' : 'Карточка клиента')}
             </SheetTitle>
             <SheetDescription className="sr-only">Оценка риска ухода, причины, услуги и деньги клиента</SheetDescription>
+            {c && <DataClockBadge clock={clock} className="mt-2" />}
           </div>
         }
       >
@@ -478,10 +529,10 @@ export default function CustomerSheet() {
             <div className="px-6 py-5">
               <Hero c={c} />
             </div>
+            <NextAction c={c} />
             <Reasons c={c} services={services} />
             {riskLevelOf(c.risk_level) !== 'unknown' && <Features features={c.features ?? []} level={riskLevelOf(c.risk_level)} />}
             <Money c={c} />
-            <Recommendations c={c} />
             <Services services={c.services ?? []} />
             <Transactions txs={c.transactions ?? []} services={services} />
             <p className="px-6 py-4 text-xs text-subtle-foreground num">

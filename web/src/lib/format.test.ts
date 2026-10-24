@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   countLabel,
   formatAgo,
+  formatCompact,
   formatDate,
   formatDaysToExpiry,
   formatDecimal,
@@ -136,5 +137,17 @@ describe('dates', () => {
     expect(formatDaysToExpiry(0.2)).toBe('истекает сегодня')
     expect(formatDaysToExpiry(-5)).toBe(nb('истекла 5~дней назад'))
     expect(formatDaysToExpiry(null)).toBe('—')
+  })
+})
+
+describe('formatCompact', () => {
+  it('keeps small axis numbers whole and shortens big ones', () => {
+    expect(formatCompact(0)).toBe('0')
+    expect(formatCompact(8)).toBe('8')
+    expect(formatCompact(1600)).toBe(nb('1~600'))
+    expect(formatCompact(12500)).toBe(nb('12,5~тыс.'))
+    expect(formatCompact(250000)).toBe(nb('250~тыс.'))
+    expect(formatCompact(1_200_000)).toBe(nb('1,2~млн'))
+    expect(formatCompact(null)).toBe('—')
   })
 })

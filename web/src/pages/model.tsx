@@ -3,7 +3,9 @@ import { AlertCircle, CheckCircle2, History, Loader2, RotateCcw } from 'lucide-r
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { errorMessage } from '@/api/client'
 import { api, queryKeys } from '@/api/endpoints'
-import type { FeatureWeight, ModelSettings, ModelSettingsPatch, SettingsChange } from '@/api/types'
+import type { FeatureWeight, ModelSettings, ModelSettingsPatch, SettingsChange, Summary } from '@/api/types'
+import { AnimatedNumber } from '@/components/animated-number'
+import { FlashOverlay } from '@/components/flash'
 import { PageHeader } from '@/components/page-header'
 import { EmptyState, ErrorState } from '@/components/states'
 import { ConfirmDialog } from '@/components/ui/alert-dialog'
@@ -13,8 +15,9 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
+import { useChangeStamp, usePreviousDistinct } from '@/hooks/use-change-stamp'
 import { useNow } from '@/hooks/use-now'
-import { formatAgo, formatDateTime, formatDecimal, formatDuration, NBSP, plural } from '@/lib/format'
+import { formatAgo, formatDateTime, formatDecimal, formatDuration, formatInt, formatMoney, formatShare, NBSP, plural } from '@/lib/format'
 import { groupLabel } from '@/lib/labels'
 import { applyPatch, clamp, groupWeights, isEmptyPatch, mergePatch, weightStep } from '@/lib/settings'
 import { cn } from '@/lib/utils'
@@ -301,6 +304,91 @@ function HistoryCard({ titles }: { titles: Map<string, string> }) {
   )
 }
 
+/** Одна итоговая цифра над редактором: значение, подсветка после пересчёта и сдвиг относительно прошлого. */
+function ImpactStat({
+  label,
+  value,
+  format,
+  formatDelta,
+  goodWhenDown = true,
+  testId,
+}: {
+  label: string
+  value: number | null
+  format: (v: number | null | undefined) => string
+  formatDelta: (delta: number) => string | null
+  goodWhenDown?: boolean
+  testId: string
+}) {
+  const stamp = useChangeStamp(value)
+  const prev = usePreviousDistinct(value)
+  const delta = value !== null && prev !== null ? value - prev : null
+  const deltaText = delta !== null && delta !== 0 ? formatDelta(delta) : null
+  const good = delta !== null && (goodWhenDown ? delta < 0 : delta > 0)
+  return (
+    <div className="relative min-w-0 rounded-lg border border-border bg-card px-3 py-2" data-testid={testId}>
+      {stamp > 0 && <FlashOverlay key={stamp} />}
+      <p className="truncate text-xs text-muted-foreground">{label}</p>
+      <p className="mt-0.5 flex items-baseline gap-2">
+        <span className="text-lg leading-6 font-semibold tracking-[-0.01em] num" data-role="value">
+          <AnimatedNumber value={value} format={format} />
+        </span>
+        {deltaText && (
+          <span
+            className={cn('truncate text-xs font-medium num', good ? 'text-risk-low' : 'text-risk-high')}
+            title={prev !== null ? `До последнего пересчёта: ${format(prev)}` : undefined}
+          >
+            {deltaText}
+          </span>
+        )}
+      </p>
+    </div>
+  )
+}
+
+const signed = (text: string, delta: number) => `${delta > 0 ? '+' : '−'}${text}`
+
+/** Что изменилось в итоге: три главные цифры обзора, обновляются по SSE сразу после пересчёта. */
+function ImpactBar() {
+  const summary = useQuery({ queryKey: queryKeys.summary, queryFn: ({ signal }) => api.summary(signal) })
+  const s: Summary | undefined = summary.data
+  if (!s) {
+    return (
+      <div className="grid grid-cols-3 gap-2">
+        {Array.from({ length: 3 }, (_, i) => (
+          <Skeleton key={i} className="h-[58px] rounded-lg" />
+        ))}
+      </div>
+    )
+  }
+  const share = typeof s.revenue_at_risk_share === 'number' ? s.revenue_at_risk_share : null
+  return (
+    <div className="grid grid-cols-3 gap-2" aria-label="Итог по всем клиентам" role="group">
+      <ImpactStat
+        label="Клиентов высокого риска"
+        testId="impact-high"
+        value={s.by_level.high}
+        format={formatInt}
+        formatDelta={(d) => signed(formatInt(Math.abs(d)), d)}
+      />
+      <ImpactStat
+        label={`Ожидаемая потеря за ${s.horizon_days}${NBSP}дн.`}
+        testId="impact-expected-loss"
+        value={s.expected_loss}
+        format={(v) => formatMoney(v, { cents: false })}
+        formatDelta={(d) => (Math.abs(d) < 50 ? null : signed(formatMoney(Math.abs(d), { cents: false }), d))}
+      />
+      <ImpactStat
+        label="Доля выручки под риском"
+        testId="impact-share"
+        value={share}
+        format={(v) => formatShare(v)}
+        formatDelta={(d) => (Math.abs(d) < 0.0005 ? null : `${d > 0 ? '+' : '−'}${formatDecimal(Math.abs(d) * 100, 1)}${NBSP}п.п.`)}
+      />
+    </div>
+  )
+}
+
 type SaveState = { kind: 'idle' } | { kind: 'saving' } | { kind: 'error'; message: string }
 
 function StatusLine({ save, settings, awaitingVersion, onRetry }: { save: SaveState; settings: ModelSettings; awaitingVersion: number | null; onRetry: () => void }) {
@@ -451,7 +539,8 @@ export default function ModelPage() {
       ) : (
         <>
           <div className="sticky top-14 z-20 -mx-4 mb-4 border-b border-border bg-background/90 px-4 py-2.5 backdrop-blur-md md:-mx-6 md:px-6">
-            <div className="flex items-center justify-between gap-4">
+            <ImpactBar />
+            <div className="mt-2 flex items-center justify-between gap-4">
               <StatusLine
                 save={save}
                 settings={current}

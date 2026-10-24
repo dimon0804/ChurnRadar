@@ -6,12 +6,15 @@ import { api, queryKeys } from '@/api/endpoints'
 import type { RiskLevel, Summary } from '@/api/types'
 import { AnimatedNumber } from '@/components/animated-number'
 import { ChurnChart } from '@/components/churn-chart'
+import { DataClockBadge, useDataClock } from '@/components/data-clock'
+import { FlashOverlay } from '@/components/flash'
 import { PageHeader, RecalcNote } from '@/components/page-header'
 import { RISK_BAR, RiskGlyph, RISK_TEXT } from '@/components/risk'
 import { EmptyState, ErrorState } from '@/components/states'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip } from '@/components/ui/tooltip'
+import { useChangeStamp } from '@/hooks/use-change-stamp'
 import { countLabel, formatInt, formatMoney, formatShare, plural } from '@/lib/format'
 import { RISK_LABEL_LONG } from '@/lib/labels'
 import { RISK_LEVELS } from '@/lib/url-state'
@@ -26,6 +29,7 @@ function KpiCard({
   info,
   emphasis,
   testId,
+  watch,
 }: {
   label: string
   value: ReactNode
@@ -33,9 +37,13 @@ function KpiCard({
   info?: ReactNode
   emphasis?: boolean
   testId?: string
+  /** Число, при изменении которого карточка коротко подсвечивается (после пересчёта). */
+  watch?: number | null
 }) {
+  const stamp = useChangeStamp(watch ?? null)
   return (
-    <Card className="flex flex-col px-5 py-4" data-testid={testId}>
+    <Card className="relative flex flex-col px-5 py-4" data-testid={testId}>
+      {stamp > 0 && <FlashOverlay key={stamp} />}
       <div className="flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground">
         {emphasis && <RiskGlyph level="high" className="text-risk-high" />}
         <span>{label}</span>
@@ -77,41 +85,56 @@ function KpiRow({ s }: { s: Summary }) {
   const horizonText = `${horizon} ${plural(horizon, ['день', 'дня', 'дней'])}`
 
   return (
-    <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-      <KpiCard
-        label="Клиенты под высоким риском"
-        testId="kpi-high"
-        emphasis
-        value={<AnimatedNumber value={high} format={formatInt} />}
-        sub={total > 0 ? `${formatShare(high / total, 0)} от ${countLabel(total, ['клиента', 'клиентов', 'клиентов'])}` : 'Клиентов пока нет'}
-        info="Клиенты, у которых risk-score выше порога высокого риска. Порог задаётся в настройках модели."
-      />
-      <KpiCard
-        label={`Ожидаемая потеря за ${horizonText}`}
-        testId="kpi-expected-loss"
-        value={<AnimatedNumber value={s.expected_loss} format={money} />}
-        sub={<span title={s.money_explanation}>{s.money_explanation || 'Сумма с учётом вероятности ухода и покрытия балансом.'}</span>}
-        info={
-          <span>
-            {s.money_explanation || 'Сколько выручки мы, вероятно, потеряем, если ничего не делать.'}
-            <span className="mt-1.5 block text-muted-foreground">
-              Учитывает цены услуг под риском, вероятность непродления и то, что уже покрыто балансом клиента.
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <KpiCard
+          label="Клиенты под высоким риском"
+          testId="kpi-high"
+          emphasis
+          watch={high}
+          value={<AnimatedNumber value={high} format={formatInt} />}
+          sub={total > 0 ? `${formatShare(high / total, 0)} от ${countLabel(total, ['клиента', 'клиентов', 'клиентов'])}` : 'Клиентов пока нет'}
+          info="Клиенты, у которых risk-score выше порога высокого риска. Порог задаётся в настройках модели."
+        />
+        <KpiCard
+          label={`Ожидаемая потеря за ${horizonText}`}
+          testId="kpi-expected-loss"
+          watch={s.expected_loss}
+          value={<AnimatedNumber value={s.expected_loss} format={money} />}
+          sub="С учётом вероятности ухода и денег на балансе клиентов"
+          info={
+            <span>
+              {s.money_explanation || 'Сколько выручки мы, вероятно, потеряем, если ничего не делать.'}
+              <span className="mt-1.5 block text-muted-foreground">
+                Учитывает цены услуг под риском, вероятность непродления и то, что уже покрыто балансом клиента.
+              </span>
             </span>
-          </span>
-        }
-      />
-      <KpiCard
-        label="Максимальная экспозиция"
-        value={<AnimatedNumber value={s.exposure} format={money} />}
-        sub={s.services_at_risk > 0 ? `Если уйдут все ${countLabel(s.services_at_risk, ['услуга', 'услуги', 'услуг'])} под риском` : 'Услуг под риском нет'}
-        info="Худший сценарий: сколько выручки за горизонт прогноза потеряем, если не продлится ни одна услуга под риском."
-      />
-      <KpiCard
-        label="Доля выручки под риском"
-        value={share === null ? '—' : <AnimatedNumber value={share} format={(v) => formatShare(v)} />}
-        sub={`Месячная выручка ${money(s.monthly_revenue_total)}`}
-        info="Какая часть месячной выручки приходится на услуги клиентов со средним и высоким риском."
-      />
+          }
+        />
+        <KpiCard
+          label="Максимальная экспозиция"
+          watch={s.exposure}
+          value={<AnimatedNumber value={s.exposure} format={money} />}
+          sub={s.services_at_risk > 0 ? `Если уйдут все ${countLabel(s.services_at_risk, ['услуга', 'услуги', 'услуг'])} под риском` : 'Услуг под риском нет'}
+          info="Худший сценарий: сколько выручки за горизонт прогноза потеряем, если не продлится ни одна услуга под риском."
+        />
+        <KpiCard
+          label="Доля выручки под риском"
+          watch={share}
+          value={share === null ? '—' : <AnimatedNumber value={share} format={(v) => formatShare(v)} />}
+          sub={`Месячная выручка ${money(s.monthly_revenue_total)}`}
+          info="Какая часть месячной выручки приходится на услуги клиентов со средним и высоким риском."
+        />
+      </div>
+      {s.money_explanation && (
+        <div className="flex items-start gap-3 rounded-xl border border-border bg-card px-5 py-3.5 shadow-card" data-testid="money-explanation">
+          <Info className="mt-1 size-4 shrink-0 text-subtle-foreground" aria-hidden />
+          <p className="text-sm leading-6 text-muted-foreground">
+            <span className="font-medium text-foreground">Как считаем ожидаемую потерю. </span>
+            {s.money_explanation}
+          </p>
+        </div>
+      )}
     </div>
   )
 }
@@ -183,13 +206,16 @@ function LevelRow({ level, count, total }: { level: RiskLevel; count: number; to
 }
 
 function TopReasons({ s }: { s: Summary }) {
-  const reasons = s.top_reasons ?? []
-  const max = Math.max(1, ...reasons.map((r) => r.customers))
+  // причины, которые не главные ни у одного клиента, дают «0 клиентов · €3» и выглядят как ошибка
+  const reasons = (s.top_reasons ?? []).map((r) => ({ ...r, count: r.customers })).filter((r) => r.count > 0)
+    .slice(0, 10)
+  const max = Math.max(1, ...reasons.map((r) => r.count))
+  const half = Math.ceil(reasons.length / 2)
   return (
     <Card>
       <CardHeader>
         <CardTitle>Главные причины риска</CardTitle>
-        <CardDescription>Что чаще всего толкает клиентов к уходу</CardDescription>
+        <CardDescription>Что чаще всего толкает клиентов к уходу и сколько денег за этим стоит</CardDescription>
       </CardHeader>
       <CardContent>
         {reasons.length === 0 ? (
@@ -200,9 +226,16 @@ function TopReasons({ s }: { s: Summary }) {
             className="py-8"
           />
         ) : (
-          <ol className="grid gap-x-8 gap-y-1 lg:grid-cols-2">
-            {reasons.slice(0, 10).map((r, i) => (
-              <li key={`${r.code}-${i}`} className="flex items-center gap-3 border-b border-border py-2.5 last:border-0 lg:[&:nth-last-child(2):nth-child(odd)]:border-0">
+          // на широком экране — две колонки, но читаются сверху вниз: 1–5 слева, 6–10 справа
+          <ol
+            className="grid gap-x-8 lg:grid-flow-col lg:grid-cols-2"
+            style={{ gridTemplateRows: `repeat(${half}, auto)` }}
+          >
+            {reasons.map((r, i) => (
+              <li
+                key={`${r.code}-${i}`}
+                className={cn('flex items-center gap-3 border-b border-border py-2.5', (i === reasons.length - 1 || i === half - 1) && 'lg:border-0', i === reasons.length - 1 && 'border-0')}
+              >
                 <span className="w-5 shrink-0 text-right text-[13px] text-subtle-foreground num">{i + 1}</span>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm" title={r.title}>
@@ -211,15 +244,22 @@ function TopReasons({ s }: { s: Summary }) {
                   <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted">
                     <div
                       className="h-full rounded-full bg-foreground/35 transition-[width] duration-500"
-                      style={{ width: `${(r.customers / max) * 100}%` }}
+                      style={{ width: `${(r.count / max) * 100}%` }}
                     />
                   </div>
                 </div>
                 <div className="shrink-0 text-right">
-                  <p className="text-sm font-medium num">{countLabel(r.customers, ['клиент', 'клиента', 'клиентов'])}</p>
-                  {typeof r.expected_loss === 'number' && (
-                    <p className="text-xs text-muted-foreground num">{money(r.expected_loss)}</p>
-                  )}
+                  <p className="text-sm font-medium num">{countLabel(r.count, ['клиент', 'клиента', 'клиентов'])}</p>
+                  <p className="text-xs text-muted-foreground num">
+                    {[
+                      typeof r.primary_customers === 'number' && r.primary_customers > 0
+                        ? `главная у ${countLabel(r.primary_customers, ['клиента', 'клиентов', 'клиентов'])}`
+                        : null,
+                      typeof r.expected_loss === 'number' ? money(r.expected_loss) : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </p>
                 </div>
               </li>
             ))}
@@ -250,13 +290,21 @@ function OverviewSkeleton() {
 export default function OverviewPage() {
   const summary = useQuery({ queryKey: queryKeys.summary, queryFn: ({ signal }) => api.summary(signal) })
   const s = summary.data
+  const clock = useDataClock()
 
   return (
     <>
       <PageHeader
         title="Обзор"
         description="Кто может уйти, почему и сколько денег под угрозой."
-        meta={s && <RecalcNote scoredAt={s.scored_at} modelVersion={s.model_version} />}
+        meta={
+          s && (
+            <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+              <DataClockBadge clock={clock} />
+              <RecalcNote scoredAt={s.scored_at} modelVersion={s.model_version} />
+            </div>
+          )
+        }
       />
       {summary.isPending ? (
         <OverviewSkeleton />

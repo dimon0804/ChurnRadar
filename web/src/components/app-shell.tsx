@@ -1,4 +1,4 @@
-import { Database, LayoutDashboard, LogOut, Moon, SlidersHorizontal, Sun, Users } from 'lucide-react'
+import { Activity, Database, FileCode2, LayoutDashboard, LogOut, Moon, SlidersHorizontal, Sun, Users } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { NavLink, Outlet } from 'react-router'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -11,8 +11,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
+import { RecalcToast } from '@/components/recalc-toast'
 import { formatAgo } from '@/lib/format'
 import { ROLE_LABEL } from '@/lib/labels'
+import { grafanaUrl, SWAGGER_PATH } from '@/lib/links'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/providers/auth'
 import { useLive } from '@/providers/live'
@@ -106,14 +108,18 @@ function initials(name: string): string {
 function UserMenu() {
   const { user, logout } = useAuth()
   const name = user.display_name?.trim() || user.username
-  const role = user.roles.includes('admin') ? ROLE_LABEL.admin : ROLE_LABEL.analyst
+  const admin = user.roles.includes('admin')
+  const role = admin ? ROLE_LABEL.admin : ROLE_LABEL.analyst
+  const access = admin ? 'полный доступ' : 'только просмотр'
+  // «Администратор / Администратор» — когда имя совпадает с ролью; вторая строка — логин и права
+  const caption = `${user.auth_method === 'oidc' ? 'SSO' : user.username} · ${access}`
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
           className="flex h-9 items-center gap-2.5 rounded-md py-1 pr-2 pl-1 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label={`Профиль: ${name}, ${role}`}
+          aria-label={`Профиль: ${name === role ? name : `${name}, ${role}`}, ${caption}`}
         >
           <span className="flex size-7 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">
             {initials(name)}
@@ -122,7 +128,7 @@ function UserMenu() {
             <span className="truncate text-[13px] font-medium" title={name}>
               {name}
             </span>
-            <span className="text-[11px] text-muted-foreground">{role}</span>
+            <span className="truncate text-[11px] text-muted-foreground">{caption}</span>
           </span>
         </button>
       </DropdownMenuTrigger>
@@ -132,9 +138,22 @@ function UserMenu() {
             {name}
           </p>
           <p className="truncate text-xs text-muted-foreground">
-            {role} · {user.auth_method === 'oidc' ? 'вход через SSO' : user.username}
+            {name === role ? caption : `${role} · ${caption}`}
           </p>
         </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <a href={SWAGGER_PATH} target="_blank" rel="noopener noreferrer">
+            <FileCode2 />
+            API (Swagger)
+          </a>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <a href={grafanaUrl()} target="_blank" rel="noopener noreferrer">
+            <Activity />
+            Мониторинг (Grafana)
+          </a>
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => void logout()}>
           <LogOut />
@@ -158,11 +177,11 @@ export function AppShell() {
         К содержимому
       </a>
       <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur-md supports-[backdrop-filter]:bg-background/70">
-        <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-4 px-4 md:px-6">
-          <NavLink to="/" className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="ChurnRadar, обзор">
-            <Logo />
+        <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-2 px-4 sm:gap-4 md:px-6">
+          <NavLink to="/" className="shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="ChurnRadar, обзор">
+            <Logo className="[&>span]:max-sm:sr-only" />
           </NavLink>
-          <nav aria-label="Разделы" className="ml-2 flex items-center gap-0.5">
+          <nav aria-label="Разделы" className="flex min-w-0 items-center gap-0.5 sm:ml-2">
             {items.map((item) => (
               <NavLink
                 key={item.to}
@@ -170,22 +189,24 @@ export function AppShell() {
                 end={item.end}
                 className={({ isActive }) =>
                   cn(
-                    'inline-flex h-8 items-center gap-2 rounded-md px-2.5 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4',
+                    'inline-flex h-8 shrink-0 items-center gap-2 rounded-md px-2 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-2.5 [&_svg]:size-4',
                     isActive
                       ? 'bg-accent text-foreground'
                       : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
                   )
                 }
               >
-                <span className="opacity-80">{item.icon}</span>
-                {item.label}
+                <span className="opacity-80" aria-hidden>
+                  {item.icon}
+                </span>
+                <span className="max-md:sr-only">{item.label}</span>
               </NavLink>
             ))}
           </nav>
-          <div className="ml-auto flex items-center gap-1.5">
+          <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-1.5">
             <LiveIndicator />
             <ThemeToggle />
-            <div className="mx-1 h-5 w-px bg-border" aria-hidden />
+            <div className="mx-1 h-5 w-px bg-border max-sm:hidden" aria-hidden />
             <UserMenu />
           </div>
         </div>
@@ -193,6 +214,7 @@ export function AppShell() {
       <main id="main" className="mx-auto w-full max-w-[1400px] flex-1 px-4 pt-6 pb-16 md:px-6">
         <Outlet />
       </main>
+      <RecalcToast />
     </div>
   )
 }

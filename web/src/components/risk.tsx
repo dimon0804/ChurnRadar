@@ -63,12 +63,32 @@ export function RiskBadge({
   level: rawLevel,
   className,
   size = 'sm',
+  churned = false,
 }: {
   level: RiskLevel | string | null | undefined
   className?: string
   size?: 'sm' | 'md'
+  /** Оценки нет, потому что клиент уже ушёл (все услуги закрыты). */
+  churned?: boolean
 }) {
   const level = riskLevelOf(rawLevel)
+  if (churned && level === 'unknown') {
+    return (
+      <span
+        className={cn(
+          'inline-flex items-center gap-1.5 rounded-full border border-dashed border-risk-unknown/40 font-medium whitespace-nowrap text-muted-foreground',
+          size === 'sm' ? 'h-6 px-2 text-xs' : 'h-7 px-2.5 text-[13px]',
+          className,
+        )}
+        title="Все услуги клиента удалены или заблокированы: оценивать уход уже нечего, можно предложить вернуться"
+      >
+        <svg viewBox="0 0 10 10" className="size-2 shrink-0" aria-hidden>
+          <path d="M2 5h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+        Ушёл
+      </span>
+    )
+  }
   return (
     <span
       className={cn(
@@ -89,10 +109,13 @@ export function ScoreBar({
   score,
   level: rawLevel,
   className,
+  trend,
 }: {
   score: number | null | undefined
   level: RiskLevel | string | null | undefined
   className?: string
+  /** Куда сдвинулась оценка при последнем пересчёте. */
+  trend?: 'up' | 'down' | null
 }) {
   const level = riskLevelOf(rawLevel)
   const known = typeof score === 'number' && Number.isFinite(score)
@@ -117,6 +140,15 @@ export function ScoreBar({
           />
         )}
       </div>
+      {trend && (
+        <span
+          className={cn('-ml-1 text-xs font-semibold', trend === 'up' ? 'text-risk-high' : 'text-risk-low')}
+          title={trend === 'up' ? 'Риск вырос при последнем пересчёте' : 'Риск снизился при последнем пересчёте'}
+        >
+          <span aria-hidden>{trend === 'up' ? '↑' : '↓'}</span>
+          <span className="sr-only">{trend === 'up' ? 'риск вырос' : 'риск снизился'}</span>
+        </span>
+      )}
     </div>
   )
 }

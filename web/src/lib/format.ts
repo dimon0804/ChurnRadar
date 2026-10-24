@@ -157,3 +157,13 @@ export function formatDuration(ms: number | null | undefined): string {
   if (ms < 1000) return `${Math.round(ms)}${NBSP}мс`
   return `${formatDecimal(ms / 1000, 1)}${NBSP}с`
 }
+
+/** Компактное число для осей графиков: 950, 1 600, 12 тыс., 1,2 млн. */
+export function formatCompact(value: number | null | undefined): string {
+  if (!isFiniteNumber(value)) return DASH
+  const abs = Math.abs(value)
+  const sign = value < 0 ? MINUS : ''
+  if (abs >= 1_000_000) return `${sign}${formatDecimal(abs / 1_000_000, 1)}${NBSP}млн`
+  if (abs >= 10_000) return `${sign}${formatDecimal(abs / 1_000, abs >= 100_000 ? 0 : 1)}${NBSP}тыс.`
+  return formatDecimal(value, abs < 10 ? 1 : 0)
+}

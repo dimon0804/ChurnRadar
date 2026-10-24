@@ -16,7 +16,7 @@ import type { TimelinePoint } from '@/api/types'
 import { EmptyState } from '@/components/states'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useCssVars } from '@/hooks/use-css-vars'
-import { formatDate, formatDecimal, formatInt, formatMoney, plural } from '@/lib/format'
+import { formatCompact, formatDate, formatDecimal, formatInt, formatMoney, plural } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 interface Row {
@@ -112,10 +112,19 @@ function Swatch({ kind }: { kind: 'fact' | 'forecast' }) {
   )
 }
 
+/** Ширина оси Y под самую длинную подпись, чтобы «1 600» не превращалось в «|600». */
+export function yAxisWidth(rows: readonly Row[]): number {
+  const max = Math.max(0, ...rows.map((r) => Math.max(r.fact ?? 0, r.forecast ?? 0)))
+  // recharts округляет верх шкалы вверх, берём с запасом
+  const label = formatCompact(Math.ceil(max * 1.25))
+  return Math.max(32, Math.round(label.length * 7.5 + 12))
+}
+
 export function ChurnChart({ timeline, horizonDays }: { timeline: TimelinePoint[]; horizonDays?: number }) {
   const [view, setView] = useState<'chart' | 'table'>('chart')
   const colors = useCssVars(['chart-fact', 'chart-forecast', 'chart-grid', 'chart-axis', 'chart-forecast-zone', 'muted-foreground', 'border'])
   const rows = useMemo(() => buildRows(timeline), [timeline])
+  const axisWidth = useMemo(() => yAxisWidth(rows), [rows])
 
   const firstForecast = rows.find((r) => r.kind === 'forecast')?.date
   const lastDate = rows.at(-1)?.date
@@ -176,7 +185,7 @@ export function ChurnChart({ timeline, horizonDays }: { timeline: TimelinePoint[
           aria-label={`График оттока: факт по дням и прогноз на ${horizonDays ?? ''} дней вперёд. Таблица доступна по кнопке «Таблица».`}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={rows} margin={{ top: 22, right: 12, bottom: 0, left: -12 }}>
+            <ComposedChart data={rows} margin={{ top: 22, right: 12, bottom: 0, left: 0 }}>
               <CartesianGrid vertical={false} stroke={colors['chart-grid']} />
               {firstForecast && lastDate && (
                 <ReferenceArea
@@ -208,9 +217,10 @@ export function ChurnChart({ timeline, horizonDays }: { timeline: TimelinePoint[
               <YAxis
                 allowDecimals={false}
                 tick={{ fill: colors['chart-axis'], fontSize: 12 }}
+                tickFormatter={(v: number) => formatCompact(v)}
                 tickLine={false}
                 axisLine={false}
-                width={44}
+                width={axisWidth}
               />
               {todayMark && (
                 <ReferenceLine

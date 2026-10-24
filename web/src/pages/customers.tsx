@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsUpDown, Search, 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { Link, Outlet, useNavigate, useSearchParams } from 'react-router'
 import { api, queryKeys } from '@/api/endpoints'
-import type { CustomerSort, CustomerSummary, RiskLevel } from '@/api/types'
+import type { CustomerPage, CustomerSort, CustomerSummary, RiskLevel } from '@/api/types'
 import { PageHeader, RecalcNote } from '@/components/page-header'
 import { RiskBadge, RiskGlyph, RISK_TEXT, ScoreBar } from '@/components/risk'
 import { EmptyState, ErrorState } from '@/components/states'
@@ -17,6 +17,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useDebouncedValue } from '@/hooks/use-debounced'
 import { formatInt, formatMoney } from '@/lib/format'
 import { RISK_LABEL } from '@/lib/labels'
+import { isChurned, reasonAction, reasonTooltip, shortReasonTitle } from '@/lib/reasons'
+import { diffRows, scoreTrend } from '@/lib/recalc'
 import {
   DEFAULT_CUSTOMERS_STATE,
   nextSort,
@@ -35,6 +37,12 @@ import { useLive } from '@/providers/live'
 const SORTABLE = new Set<string>(['id', 'email', 'balance', 'total_replenished', 'risk_score', 'expected_loss'])
 
 const col = createColumnHelper<CustomerSummary>()
+
+/** Что передаём ячейкам через meta таблицы. */
+interface CellContext {
+  titles?: ReadonlyMap<string, string>
+  trend?: ReadonlyMap<number, 'up' | 'down'>
+}
 
 const columns = [
   col.accessor('id', {
@@ -63,27 +71,44 @@ const columns = [
   }),
   col.accessor('risk_score', {
     header: 'Риск',
-    meta: { className: 'w-[128px] whitespace-nowrap' },
-    cell: (c) => <ScoreBar score={c.getValue()} level={c.row.original.risk_level} />,
+    meta: { className: 'w-[140px] whitespace-nowrap' },
+    cell: (c) => (
+      <ScoreBar
+        score={c.getValue()}
+        level={c.row.original.risk_level}
+        trend={(c.table.options.meta as CellContext | undefined)?.trend?.get(c.row.original.id) ?? null}
+      />
+    ),
   }),
   col.accessor('risk_level', {
     header: 'Уровень',
     enableSorting: false,
     meta: { className: 'w-[124px] whitespace-nowrap' },
-    cell: (c) => <RiskBadge level={c.getValue()} />,
+    cell: (c) => <RiskBadge level={c.getValue()} churned={isChurned(c.row.original)} />,
   }),
   col.display({
     id: 'reason',
-    header: 'Главная причина',
+    header: 'Главная причина и что сделать',
     meta: { className: 'w-full min-w-[160px] max-w-0' },
     cell: (c) => {
       const reason = c.row.original.reasons?.[0]
       const unknown = c.row.original.risk_level === 'unknown'
       if (!reason) return <span className="text-subtle-foreground">—</span>
+      const titles = (c.table.options.meta as CellContext | undefined)?.titles
+      const action = reasonAction(reason)
       return (
-        <span className={cn('block truncate', unknown ? 'text-muted-foreground' : '')} title={reason.title}>
-          {reason.title}
-        </span>
+        <div className="min-w-0" title={reasonTooltip(reason)}>
+          <p className={cn('truncate', unknown ? 'text-muted-foreground' : 'font-medium')}>{shortReasonTitle(reason, titles)}</p>
+          {action && (
+            <p className="truncate text-xs leading-5 text-muted-foreground">
+              <span className="text-subtle-foreground" aria-hidden>
+                →{' '}
+              </span>
+              <span className="sr-only">Что сделать: </span>
+              {action}
+            </p>
+          )}
+        </div>
       )
     },
   }),
@@ -103,6 +128,36 @@ interface ColumnMeta {
 }
 
 const ARIA_SORT = { asc: 'ascending', desc: 'descending' } as const
+
+interface FlashState {
+  data: CustomerPage | null
+  signatures: ReadonlyMap<number, string>
+  scores: ReadonlyMap<number, number | null>
+  ids: ReadonlySet<number>
+  trend: ReadonlyMap<number, 'up' | 'down'>
+  stamp: number
+}
+
+const EMPTY_FLASH: FlashState = { data: null, signatures: new Map(), scores: new Map(), ids: new Set(), trend: new Map(), stamp: 0 }
+
+const rowSignature = (c: CustomerSummary) =>
+  [c.risk_level, c.risk_score === null ? '' : c.risk_score.toFixed(1), c.expected_loss, c.balance, c.total_replenished, c.reasons?.[0]?.code ?? ''].join('|')
+
+function nextFlash(prev: FlashState, data: CustomerPage, live: ReadonlyMap<number, number>): FlashState {
+  const { changed, next } = diffRows(prev.signatures, data.items, rowSignature)
+  const ids = new Set(changed)
+  // клиенты из события scores.updated, если они на этой странице и это не первая загрузка
+  if (prev.data) for (const item of data.items) if (live.has(item.id) && prev.signatures.has(item.id)) ids.add(item.id)
+  const trend = new Map<number, 'up' | 'down'>()
+  const scores = new Map<number, number | null>()
+  for (const item of data.items) {
+    scores.set(item.id, item.risk_score)
+    if (!ids.has(item.id)) continue
+    const t = scoreTrend(prev.scores.get(item.id), item.risk_score)
+    if (t) trend.set(item.id, t)
+  }
+  return { data, signatures: next, scores, ids, trend, stamp: ids.size > 0 ? prev.stamp + 1 : prev.stamp }
+}
 
 function SortButton({
   label,
@@ -238,6 +293,18 @@ export default function CustomersPage() {
 
   const data = customers.data
   const items = useMemo(() => data?.items ?? [], [data])
+  const titles = useMemo(
+    () => new Map((summary.data?.top_reasons ?? []).map((r) => [r.code, r.title] as const)),
+    [summary.data?.top_reasons],
+  )
+
+  // После пересчёта подсвечиваем строки, у которых поменялись цифры, и показываем, куда сдвинулся риск.
+  // Считаем прямо при новой загрузке страницы таблицы, сравнивая с прошлой: так подсветка совпадает
+  // с тем, что видно на экране, и работает и для частичного, и для полного пересчёта (full=true).
+  const [flash, setFlash] = useState<FlashState>(EMPTY_FLASH)
+  if (data && data !== flash.data && !customers.isPlaceholderData) {
+    setFlash(nextFlash(flash, data, changed))
+  }
   const total = data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / state.pageSize))
 
@@ -258,6 +325,7 @@ export default function CustomersPage() {
     enableSortingRemoval: false,
     getCoreRowModel: getCoreRowModel(),
     getRowId: (row) => String(row.id),
+    meta: { titles, trend: flash.trend } satisfies CellContext,
   })
 
   const filtered = state.levels.length > 0 || state.search.trim() !== ''
@@ -365,10 +433,10 @@ export default function CustomersPage() {
                 ) : (
                   table.getRowModel().rows.map((row) => {
                     const id = row.original.id
-                    const stamp = changed.get(id)
+                    const stamp = flash.ids.has(id) ? flash.stamp : 0
                     return (
                       <TableRow
-                        key={`${id}-${stamp ?? 0}`}
+                        key={`${id}-${stamp}`}
                         tabIndex={0}
                         onClick={(e) => onRowClick(e, id)}
                         onKeyDown={(e) => onRowKey(e, id)}

@@ -1,0 +1,29 @@
+# Надстройка над docker-compose.yml для публичного сервера за nginx с HTTPS.
+#   docker compose -f docker-compose.yml -f deploy/prod/compose.prod.yml --profile sso up -d
+# Все порты слушают только 127.0.0.1: Docker обходит UFW, наружу смотрит лишь nginx (80/443).
+services:
+  traefik:
+    ports: !override
+      - "127.0.0.1:8080:8080"
+
+  mailpit:
+    ports: !override
+      - "127.0.0.1:8025:8025"
+    environment:
+      MP_WEBROOT: /mailpit/
+
+  grafana:
+    environment:
+      GF_SERVER_ROOT_URL: ${PUBLIC_URL}/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+
+  authentik-server:
+    ports: !override
+      - "127.0.0.1:9000:9000"
+    environment:
+      # Authentik живёт на том же домене по пути /sso/
+      AUTHENTIK_WEB__PATH: /sso/
+
+  authentik-worker:
+    environment:
+      AUTHENTIK_WEB__PATH: /sso/

@@ -1,0 +1,207 @@
+openapi: 3.1.0
+info:
+  title: ChurnRadar — HTTP API биллинга для коннектора (pull)
+  version: 1.0.0
+  description: |
+    Что должен отдавать биллинг, чтобы ChurnRadar сам забирал из него данные (коннектор
+    `billing_http` в ingest). Это контракт **источника**: его реализует ваш биллинг, а ChurnRadar
+    только ходит в него по расписанию или по кнопке «Запустить сейчас».
+
+    Записи — те же DTO, что и в `data.json` кейса (`SourceAccount`, `SourceService`,
+    `SourceTransaction` из `contracts/openapi.yaml`), плюс поле `updatedAt` — когда запись
+    последний раз менялась в биллинге.
+
+    Как ChurnRadar забирает изменения:
+    1. По каждой сущности по очереди: `accounts`, затем `services`, затем `transactions`.
+    2. Первый запуск — без `updated_since`: источник отдаёт всё, что есть.
+    3. Дальше — `updated_since` = наибольший `updatedAt` из прошлого запуска. Фильтр
+       **включительный** (`updatedAt >= updated_since`): записи с тем же временем придут ещё раз,
+       ChurnRadar делает upsert, и повтор ничего не ломает. Так не теряются записи, у которых
+       совпало время изменения.
+    4. Страницы идут по `next_cursor`, пока он не станет `null`. Курсор непрозрачный: ChurnRadar
+       передаёт его обратно как есть.
+    5. Записи на всех страницах упорядочены по (`updatedAt`, `id`) по возрастанию.
+
+    Если услуга ссылается на аккаунт, которого ещё нет ни в выгрузке, ни в ChurnRadar (гонка
+    между страницами), коннектор откладывает её до следующего запуска и не сдвигает курсор
+    дальше неё.
+
+    Ошибки: на 429, 5xx, таймауты и обрывы связи коннектор повторяет запрос с растущей паузой
+    (учитывает `Retry-After`), на 401/403 сразу сообщает «проверьте токен». Токен коннектор
+    берёт из переменной окружения ingest (`CONNECTOR_TOKEN_*`), в базе ChurnRadar он не хранится.
+
+    Демо-реализация этого контракта — в симуляторе: `http://simulator:8000/demo/billing/v1`.
+servers:
+  - url: https://billing.example.com/churnradar/v1
+    description: Ваш биллинг (адрес задаётся в настройках коннектора)
+  - url: http://simulator:8000/demo/billing/v1
+    description: Демо-биллинг симулятора (внутри сети стенда)
+security:
+  - bearerAuth: []
+
+paths:
+  /accounts:
+    get:
+      summary: Аккаунты, изменившиеся с updated_since
+      operationId: listAccounts
+      parameters:
+        - $ref: '#/components/parameters/UpdatedSince'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Страница аккаунтов
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Account' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /services:
+    get:
+      summary: Услуги, изменившиеся с updated_since
+      operationId: listServices
+      parameters:
+        - $ref: '#/components/parameters/UpdatedSince'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Страница услуг
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Service' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /transactions:
+    get:
+      summary: Транзакции, созданные или изменённые с updated_since
+      operationId: listTransactions
+      parameters:
+        - $ref: '#/components/parameters/UpdatedSince'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Страница транзакций
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Transaction' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Токен из переменной окружения ingest, имя которой указано в коннекторе (`CONNECTOR_TOKEN_*`)
+
+  parameters:
+    UpdatedSince:
+      name: updated_since
+      in: query
+      required: false
+      description: Вернуть записи с `updatedAt >= updated_since` (включительно). Без параметра — все записи.
+      schema: { type: string, format: date-time, examples: ['2026-10-19T15:00:00.000Z'] }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: '`next_cursor` из предыдущей страницы, как есть'
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Размер страницы
+      schema: { type: integer, minimum: 1, maximum: 1000, default: 500 }
+
+  responses:
+    BadRequest:
+      description: Неверный параметр (например, нераспознанный cursor)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Нет токена или он неверный
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyRequests:
+      description: Источник просит подождать
+      headers:
+        Retry-After:
+          description: Секунды или HTTP-дата
+          schema: { type: string }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Page:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array }
+        next_cursor:
+          type: [string, 'null']
+          description: Курсор следующей страницы; `null` — страниц больше нет
+
+    UpdatedAt:
+      type: object
+      required: [updatedAt]
+      properties:
+        updatedAt:
+          type: string
+          format: date-time
+          description: Когда запись последний раз менялась в биллинге (с часовым поясом)
+
+    Account:
+      allOf:
+        - $ref: './openapi.yaml#/components/schemas/SourceAccount'
+        - $ref: '#/components/schemas/UpdatedAt'
+
+    Service:
+      allOf:
+        - $ref: './openapi.yaml#/components/schemas/SourceService'
+        - $ref: '#/components/schemas/UpdatedAt'
+
+    Transaction:
+      allOf:
+        - $ref: './openapi.yaml#/components/schemas/SourceTransaction'
+        - $ref: '#/components/schemas/UpdatedAt'
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }

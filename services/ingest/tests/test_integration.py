@@ -172,6 +172,23 @@ async def test_snapshot_replace_records_status_diff(running, sample):
     assert event["payload"]["snapshot_id"] == body["snapshot_id"]
 
 
+async def test_snapshot_reset_history_starts_clean(running, sample):
+    _, client = running
+    snap = copy.deepcopy(sample)
+    target = next(s for s in snap["services"] if s["status"] == "active")
+    target["status"] = "prolong_wait"
+    snap["reference_time"] = "2026-10-20T10:00:00Z"
+
+    resp = await client.put(
+        "/api/v1/source/snapshot", params={"reset_history": "true"}, json=snap, headers=ADMIN
+    )
+    assert resp.status_code == 202, resp.text
+    # Смены статусов против прежнего набора не пишутся, остаются только оценочные удаления.
+    assert (await fetch("SELECT count(*) c FROM source.status_history WHERE NOT estimated"))[0]["c"] == 0
+    estimated = await fetch("SELECT count(*) c FROM source.status_history WHERE estimated")
+    assert estimated[0]["c"] == sum(1 for s in snap["services"] if s["status"] == "deleted")
+
+
 async def test_events_upsert(running, sample):
     _, client = running
     svc = dict(next(s for s in sample["services"] if s["status"] == "active"), status="suspended")

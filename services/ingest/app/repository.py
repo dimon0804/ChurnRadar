@@ -107,18 +107,27 @@ async def replace_snapshot(
     kind: str = "snapshot",
     created_by: str | None,
     only_if_empty: bool = False,
+    reset_history: bool = False,
 ) -> WriteResult | None:
-    """Атомарная замена source.*. При only_if_empty ничего не делает, если данные уже есть."""
+    """Атомарная замена source.*. При only_if_empty ничего не делает, если данные уже есть.
+
+    reset_history — снимок описывает другой набор клиентов (например, сгенерированный
+    заново), и прошлая история статусов к нему не относится.
+    """
     batch_id = f"snap_{uuid.uuid4().hex[:16]}"
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT pg_advisory_xact_lock($1)", SOURCE_LOCK_KEY)
         if only_if_empty and await conn.fetchval("SELECT EXISTS (SELECT 1 FROM source.accounts)"):
             return None
 
-        prior = {
-            r["id"]: (r["owner_id"], r["status"])
-            for r in await conn.fetch("SELECT id, owner_id, status FROM source.services")
-        }
+        if reset_history:
+            await conn.execute("TRUNCATE source.status_history")
+            prior = {}
+        else:
+            prior = {
+                r["id"]: (r["owner_id"], r["status"])
+                for r in await conn.fetch("SELECT id, owner_id, status FROM source.services")
+            }
         as_of = snap.reference_time or datetime.now(UTC)
 
         await conn.execute("TRUNCATE source.transactions, source.services, source.accounts")

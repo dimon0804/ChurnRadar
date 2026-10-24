@@ -135,6 +135,7 @@ class Controller:
                      seconds=round(gen_s, 2))
             response = await self.client.put(
                 f"{self.config.ingest_url}/api/v1/source/snapshot",
+                params={"reset_history": "true"},
                 content=body,
                 headers={**SERVICE_HEADERS, "Content-Type": "application/json", "Content-Encoding": "gzip"},
                 timeout=self.config.ingest_timeout_s,

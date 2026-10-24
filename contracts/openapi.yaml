@@ -283,6 +283,13 @@ paths:
       operationId: putSnapshot
       parameters:
         - $ref: '#/components/parameters/ContentEncoding'
+        - name: reset_history
+          in: query
+          required: false
+          description: |
+            Снимок описывает другой набор клиентов: прежняя история статусов удаляется,
+            иначе смены статусов между снимками попадают в факт на графике.
+          schema: { type: boolean, default: false }
       requestBody:
         required: true
         content:

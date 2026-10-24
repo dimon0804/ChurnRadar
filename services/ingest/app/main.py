@@ -156,6 +156,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         user: AdminUser,
         pool: Pool,
         bus: Annotated[EventBus | None, Depends(get_bus)] = None,
+        reset_history: bool = False,
     ) -> SnapshotAccepted:
         # Тело разбираем сами: JSON сразу в датаклассы (pydantic-core), без промежуточных dict.
         # Content-Encoding: gzip к этому моменту уже распакован RequestBodyMiddleware.
@@ -170,7 +171,9 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
             raise ApiError(422, "validation_error", "Снимок не прошёл проверку целостности", errors)
         started = time.perf_counter()
         metrics.parse_duration.observe(started - parse_started)
-        result = await replace_snapshot(pool, body, kind="snapshot", created_by=user.name)
+        result = await replace_snapshot(
+            pool, body, kind="snapshot", created_by=user.name, reset_history=reset_history
+        )
         assert result is not None  # None бывает только при only_if_empty
         written = time.perf_counter()
         metrics.write_duration.labels("snapshot").observe(written - started)

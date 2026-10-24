@@ -61,7 +61,9 @@ class OidcClient:
     def _headers(self) -> dict[str, str]:
         if self.public_origin == self.internal_origin:
             return {}
-        return {"Host": urlsplit(self.public_issuer).netloc}
+        public = urlsplit(self.public_issuer)
+        # за TLS-прокси IdP видит обычный http: без схемы он соберёт ссылки и `iss` как http://
+        return {"Host": public.netloc, "X-Forwarded-Proto": public.scheme}
 
     def _backchannel(self, url: str) -> str:
         """Public endpoint URL -> the same endpoint on the internal address."""

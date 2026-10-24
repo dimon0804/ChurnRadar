@@ -396,7 +396,9 @@ class SamlClient:
         headers = {}
         if public_origin and public_origin != internal_origin:
             # Authentik собирает адрес SSO из Host запроса: просим сразу публичный
-            headers["Host"] = urlsplit(self.s.saml_idp_public_url).netloc
+            public = urlsplit(self.s.saml_idp_public_url)
+            headers["Host"] = public.netloc
+            headers["X-Forwarded-Proto"] = public.scheme
         # Authentik отдаёт метаданные приложения через редирект на /api/v3/providers/saml/<id>/metadata/
         resp = await self.http.get(self.s.saml_idp_metadata_url, headers=headers, timeout=4, follow_redirects=True)
         if resp.status_code != 200:

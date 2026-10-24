@@ -273,6 +273,31 @@ paths:
                     items: { $ref: '#/components/schemas/SettingsChange' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /api/v1/model/quality:
+    get:
+      tags: [model]
+      summary: Качество модели на синтетическом будущем
+      description: |
+        Результаты проверки `python -m tools.calibration`: база из 20 000 синтетических клиентов,
+        оценка моделью на момент T и 30 дней будущего в двух сценариях симуляции. Lift по уровням
+        риска, ROC и сравнение с простыми правилами, точность и полнота порогов, калибровка,
+        прогоны с другими seed. Файл кладётся в образ api при сборке и на лету не меняется.
+        `current_model.matches` говорит, совпадает ли код установленной модели с тем, на котором
+        считались цифры. Доступно любому вошедшему пользователю.
+      operationId: modelQuality
+      responses:
+        '200':
+          description: Результаты проверки
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelQuality' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503':
+          description: Файла с результатами нет в сборке или он не прошёл проверку схемы
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /api/v1/source/snapshot:
     put:
       tags: [source]
@@ -852,6 +877,204 @@ components:
               path: { type: string, examples: ['weights.autoprolong_off_expiring.weight'] }
               old: {}
               new: {}
+
+    QualityRanking:
+      type: object
+      description: 'Качество ранжирования одного метода; доли от 0 до 1'
+      required: [roc_auc, pr_auc, precision_top5, recall_top5, precision_top10, recall_top10]
+      properties:
+        roc_auc: { type: [number, 'null'] }
+        pr_auc: { type: [number, 'null'] }
+        precision_top5: { type: [number, 'null'], description: 'Доля ушедших среди 5 % клиентов с наибольшим score' }
+        recall_top5: { type: [number, 'null'] }
+        precision_top10: { type: [number, 'null'] }
+        recall_top10: { type: [number, 'null'] }
+        roc_auc_ci: { type: [array, 'null'], items: { type: [number, 'null'] }, minItems: 2, maxItems: 2, description: '95 % бутстреп-интервал, только у модели' }
+        pr_auc_ci: { type: [array, 'null'], items: { type: [number, 'null'] }, minItems: 2, maxItems: 2 }
+
+    QualityRankingSet:
+      type: object
+      description: 'model — score модели; autoprolong_off и prolong_wait — простые правила; random — случайный порядок; segment_oracle — скрытый сегмент генератора, модели недоступен'
+      required: [model, autoprolong_off, prolong_wait, random, segment_oracle]
+      properties:
+        model: { $ref: '#/components/schemas/QualityRanking' }
+        autoprolong_off: { $ref: '#/components/schemas/QualityRanking' }
+        prolong_wait: { $ref: '#/components/schemas/QualityRanking' }
+        random: { $ref: '#/components/schemas/QualityRanking' }
+        segment_oracle: { $ref: '#/components/schemas/QualityRanking' }
+
+    QualityTargets:
+      type: object
+      description: 'churned — ушёл полностью (потеряны все услуги, действовавшие на T); lost_any — потерял хотя бы одну'
+      required: [churned, lost_any]
+      properties:
+        churned: { $ref: '#/components/schemas/QualityRankingSet' }
+        lost_any: { $ref: '#/components/schemas/QualityRankingSet' }
+
+    QualityLevel:
+      type: object
+      required: [level, n]
+      properties:
+        level: { type: string, enum: [low, medium, high, all] }
+        n: { type: integer }
+        share_of_base: { type: [number, 'null'] }
+        churn_rate: { type: [number, 'null'] }
+        churn_lift: { type: [number, 'null'], description: 'Во сколько раз чаще уходят полностью, чем в среднем по базе' }
+        lost_any_rate: { type: [number, 'null'] }
+        lost_any_lift: { type: [number, 'null'] }
+        revenue: { type: [number, 'null'], description: 'Выручка за горизонт, евроценты' }
+        expected_loss: { type: [number, 'null'], description: 'Прогноз потерь модели, евроценты' }
+        actual_loss: { type: [number, 'null'], description: 'Фактически потеряно в симуляции, евроценты' }
+        predicted_share: { type: [number, 'null'] }
+        actual_share: { type: [number, 'null'] }
+
+    QualityRates:
+      type: object
+      required: [churned, lost_any]
+      properties:
+        churned: { type: [number, 'null'] }
+        lost_any: { type: [number, 'null'] }
+        revenue_lost_share: { type: [number, 'null'] }
+
+    QualityPrecisionRecall:
+      type: object
+      required: [precision, recall]
+      properties:
+        precision: { type: [number, 'null'] }
+        recall: { type: [number, 'null'] }
+
+    QualityThreshold:
+      type: object
+      required: [flagged, flagged_share, churned, lost_any]
+      properties:
+        flagged: { type: integer, description: 'Сколько клиентов попадает под порог' }
+        flagged_share: { type: [number, 'null'] }
+        churned: { $ref: '#/components/schemas/QualityPrecisionRecall' }
+        lost_any: { $ref: '#/components/schemas/QualityPrecisionRecall' }
+
+    QualityScenario:
+      type: object
+      required: [accounts, services, base_rates, ranking, levels, calibration, roc, thresholds, hard_subset]
+      properties:
+        accounts: { type: integer }
+        services: { type: integer }
+        base_rates: { $ref: '#/components/schemas/QualityRates' }
+        ranking: { $ref: '#/components/schemas/QualityTargets' }
+        levels:
+          type: array
+          items: { $ref: '#/components/schemas/QualityLevel' }
+        calibration:
+          type: array
+          description: 'Децили score: прогноз и факт доли потерянной выручки'
+          items:
+            type: object
+            required: [group, n, score_min, score_max, predicted_share, actual_share]
+            properties:
+              group: { type: integer }
+              n: { type: integer }
+              score_min: { type: number }
+              score_max: { type: number }
+              predicted_share: { type: [number, 'null'] }
+              actual_share: { type: [number, 'null'] }
+        roc:
+          type: object
+          description: 'ROC-кривые на общей сетке FPR, цель churned'
+          required: [target, fpr, tpr]
+          properties:
+            target: { type: string, enum: [churned, lost_any] }
+            fpr: { type: array, items: { type: number } }
+            tpr:
+              type: object
+              required: [model, autoprolong_off, prolong_wait, segment_oracle]
+              properties:
+                model: { type: array, items: { type: number } }
+                autoprolong_off: { type: array, items: { type: number } }
+                prolong_wait: { type: array, items: { type: number } }
+                segment_oracle: { type: array, items: { type: number } }
+        thresholds:
+          type: object
+          description: 'Если работать со всеми клиентами уровня high (или medium и выше)'
+          required: [high, medium_plus]
+          properties:
+            high: { $ref: '#/components/schemas/QualityThreshold' }
+            medium_plus: { $ref: '#/components/schemas/QualityThreshold' }
+        hard_subset:
+          type: object
+          description: 'Клиенты, у которых на T ничего не ждёт оплаты'
+          required: [description, accounts, base_rates, ranking, levels]
+          properties:
+            description: { type: string }
+            accounts: { type: integer }
+            base_rates: { $ref: '#/components/schemas/QualityRates' }
+            ranking: { $ref: '#/components/schemas/QualityTargets' }
+            levels:
+              type: array
+              items: { $ref: '#/components/schemas/QualityLevel' }
+
+    QualityRobustnessScenario:
+      type: object
+      required: [roc_auc, pr_auc, churn_lift_high, base_churned]
+      properties:
+        roc_auc: { type: [number, 'null'] }
+        pr_auc: { type: [number, 'null'] }
+        churn_lift_high: { type: [number, 'null'] }
+        base_churned: { type: [number, 'null'] }
+
+    ModelQuality:
+      type: object
+      required: [params, scenarios, robustness, current_model]
+      properties:
+        params:
+          type: object
+          required: [accounts, seed, reference, horizon_days, stream_rate, background_rate, concentration, bootstrap, riskcore_version, riskcore_sources, simulator_sources, weights, thresholds]
+          properties:
+            accounts: { type: integer }
+            seed: { type: integer }
+            reference: { type: string, description: 'Момент T, ISO 8601' }
+            horizon_days: { type: integer }
+            stream_rate: { type: number, description: 'Изменений живого потока на услугу в сутки (stream)' }
+            background_rate: { type: number }
+            concentration: { type: number, description: 'Разброс поведения внутри сегмента (calendar)' }
+            bootstrap: { type: integer }
+            riskcore_version: { type: string }
+            riskcore_sources: { type: string, description: 'Отпечаток исходников riskcore, на которых шла проверка' }
+            simulator_sources: { type: string }
+            weights: { type: object, additionalProperties: { type: number }, description: 'Веса признаков при проверке' }
+            thresholds:
+              type: object
+              required: [medium, high]
+              properties:
+                medium: { type: number }
+                high: { type: number }
+        scenarios:
+          type: object
+          description: 'stream — живой поток симулятора; calendar — продления строго по сроку, решение по скрытому поведению сегмента'
+          required: [stream, calendar]
+          properties:
+            stream: { $ref: '#/components/schemas/QualityScenario' }
+            calendar: { $ref: '#/components/schemas/QualityScenario' }
+        robustness:
+          type: array
+          description: 'Основной прогон и соседние: другие seed, темп потока, разброс поведения'
+          items:
+            type: object
+            required: [label, seed, stream_rate, concentration, scenarios]
+            properties:
+              label: { type: string }
+              seed: { type: integer }
+              stream_rate: { type: number }
+              concentration: { type: number }
+              scenarios:
+                type: object
+                properties:
+                  stream: { $ref: '#/components/schemas/QualityRobustnessScenario' }
+                  calendar: { $ref: '#/components/schemas/QualityRobustnessScenario' }
+        current_model:
+          type: object
+          required: [riskcore_sources, matches]
+          properties:
+            riskcore_sources: { type: [string, 'null'], description: 'Отпечаток установленного riskcore' }
+            matches: { type: [boolean, 'null'], description: 'Совпадает ли с тем, на котором считались цифры' }
 
     SourceAccount:
       type: object

@@ -88,6 +88,7 @@ def test_where_clause_escapes_like():
         ("GET", "/api/v1/analytics/summary", None),
         ("GET", "/api/v1/model/settings", None),
         ("GET", "/api/v1/model/settings/history", None),
+        ("GET", "/api/v1/model/quality", None),
         ("PATCH", "/api/v1/model/settings", {"horizon_days": 10}),
         ("POST", "/api/v1/model/settings/reset", None),
         ("GET", "/api/v1/simulator", None),

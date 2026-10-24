@@ -18,7 +18,7 @@ from svckit.logs import configure_logging
 from svckit.metrics import HttpMetricsMiddleware, check_metrics_token, render
 from svckit.outbox import OutboxRelay
 
-from app import metrics, model_settings, queries
+from app import metrics, model_quality, model_settings, queries
 from app.config import settings
 from app.docs import router as docs_router
 
@@ -147,6 +147,16 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         for item in items:
             item["changed_at"] = queries.iso_z(item["changed_at"])
         return {"items": items}
+
+    @app.get("/api/v1/model/quality", tags=["model"])
+    async def get_model_quality(_: CurrentUser) -> dict[str, Any]:
+        try:
+            return model_quality.load(settings.model_quality_path)
+        except model_quality.QualityUnavailable as exc:
+            log.warning("model_quality_unavailable", path=settings.model_quality_path, error=str(exc))
+            raise ApiError(
+                503, "model_quality_unavailable", "Результаты проверки модели не найдены в сборке api"
+            ) from exc
 
     # --- simulator (прокси) ------------------------------------------------------------
     async def proxy_simulator(request: Request, method: str, body: dict[str, Any] | None) -> JSONResponse:

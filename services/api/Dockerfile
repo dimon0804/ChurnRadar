@@ -16,12 +16,14 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HTTP_PORT=8000 \
-    OPENAPI_PATH=/app/contracts/openapi.yaml
+    OPENAPI_PATH=/app/contracts/openapi.yaml     MODEL_QUALITY_PATH=/app/data/model_quality.json
 RUN groupadd --system --gid 10001 app && useradd --system --uid 10001 --gid app --no-create-home app
 COPY --from=builder /opt/venv /opt/venv
 WORKDIR /app
 COPY --chown=app:app services/api/app /app/app
 COPY --chown=app:app contracts/openapi.yaml /app/contracts/openapi.yaml
+# Результаты проверки модели (python -m tools.calibration) для страницы «Качество модели»
+COPY --chown=app:app tools/calibration/results/results.json /app/data/model_quality.json
 USER app
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=5 \

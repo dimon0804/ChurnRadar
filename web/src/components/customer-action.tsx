@@ -26,6 +26,7 @@ import {
 } from '@/lib/contact-today'
 import { formatDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/providers/auth'
 
 const TONE_CLASS: Record<ActionTone, string> = {
   emailed: 'bg-secondary text-secondary-foreground',
@@ -111,6 +112,7 @@ export function MarkMenu({
 export function CustomerActionPanel({ id, email, atRisk }: { id: number; email: string; atRisk: boolean }) {
   const state = useQuery({ queryKey: queryKeys.customerAction(id), queryFn: ({ signal }) => api.customerAction(id, signal) })
   const mutation = useCustomerAction()
+  const { canAct } = useAuth()
   const [writing, setWriting] = useState(false)
   const action = state.data?.action ?? null
   const history = state.data?.history ?? []
@@ -134,6 +136,12 @@ export function CustomerActionPanel({ id, email, atRisk }: { id: number; email: 
               ? 'Напишите клиенту: текст подставится по главной причине риска. После отправки он уйдёт из списка, пока ждём ответа.'
               : 'Риска сейчас нет, но написать клиенту можно.'}
       </p>
+      {!canAct && (
+        <p className="text-[13px] text-muted-foreground">
+          Писать клиентам и ставить отметки могут маркетолог и администратор. У вас роль аналитика — только просмотр.
+        </p>
+      )}
+      {canAct && (
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" onClick={() => setWriting(true)} disabled={state.isPending}>
           <Mail />
@@ -152,6 +160,7 @@ export function CustomerActionPanel({ id, email, atRisk }: { id: number; email: 
           </Button>
         )}
       </div>
+      )}
       {mutation.isError && (
         <p role="alert" className="mt-2 text-[13px] text-risk-high">
           {errorMessage(mutation.error)}

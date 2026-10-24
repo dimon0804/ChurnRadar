@@ -16,6 +16,7 @@ import {
   Users,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
+import type { Role } from '@/api/types'
 import { Link, NavLink, Outlet } from 'react-router'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
@@ -44,6 +45,12 @@ interface NavItem {
   icon: ReactNode
   adminOnly?: boolean
   end?: boolean
+}
+
+const ROLE_ACCESS: Record<Role, string> = {
+  admin: 'полный доступ',
+  marketer: 'работа с клиентами',
+  analyst: 'только просмотр',
 }
 
 const NAV: NavItem[] = [
@@ -127,11 +134,10 @@ function initials(name: string): string {
 }
 
 function UserMenu() {
-  const { user, logout } = useAuth()
+  const { user, role: topRole, logout } = useAuth()
   const name = user.display_name?.trim() || user.username
-  const admin = user.roles.includes('admin')
-  const role = admin ? ROLE_LABEL.admin : ROLE_LABEL.analyst
-  const access = admin ? 'полный доступ' : 'только просмотр'
+  const role = ROLE_LABEL[topRole]
+  const access = ROLE_ACCESS[topRole]
   // «Администратор / Администратор» — когда имя совпадает с ролью; вторая строка — логин и права
   const via = user.auth_method === 'oidc' ? 'SSO' : user.auth_method === 'saml' ? 'SAML' : user.username
   const caption = `${via} · ${access}`

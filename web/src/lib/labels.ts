@@ -16,6 +16,7 @@ export const RISK_LABEL_LONG: Record<RiskLevel, string> = {
 
 export const ROLE_LABEL: Record<Role, string> = {
   admin: 'Администратор',
+  marketer: 'Маркетолог',
   analyst: 'Аналитик',
 }
 

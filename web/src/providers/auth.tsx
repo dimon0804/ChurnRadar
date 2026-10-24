@@ -1,11 +1,22 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from 'react'
 import { api, queryKeys } from '@/api/endpoints'
-import type { User } from '@/api/types'
+import type { Role, User } from '@/api/types'
+
+/** Роли вложены: аналитик < маркетолог < администратор. */
+export function topRole(roles: readonly Role[]): Role {
+  if (roles.includes('admin')) return 'admin'
+  if (roles.includes('marketer')) return 'marketer'
+  return 'analyst'
+}
 
 interface AuthContextValue {
   user: User
+  /** старшая роль пользователя */
+  role: Role
   isAdmin: boolean
+  /** писать клиентам, рассылки, отметки — маркетолог и администратор */
+  canAct: boolean
   logout: () => Promise<void>
 }
 
@@ -33,7 +44,10 @@ export function AuthProvider({ user, children }: { user: User; children: ReactNo
   }, [queryClient])
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, isAdmin: user.roles.includes('admin'), logout }),
+    () => {
+      const role = topRole(user.roles)
+      return { user, role, isAdmin: role === 'admin', canAct: role === 'admin' || role === 'marketer', logout }
+    },
     [user, logout],
   )
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

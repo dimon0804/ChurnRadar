@@ -31,6 +31,7 @@ evaluate the project.
 - [Alerts](#alerts)
 - [Risk model](#risk-model)
 - [Quality check](#quality-check)
+- [Marketing metrics](#marketing-metrics)
 - [Adding a new feature](#adding-a-new-feature)
 - [Case requirements](#case-requirements)
 - [Metrics and monitoring](#metrics-and-monitoring)
@@ -448,6 +449,47 @@ by `GET /api/v1/model/quality`. An api test compares the riskcore and simulator 
 fingerprints stored in the file with the current code, so after a model change CI asks you to
 rerun the check. If the weights in the settings differ from the tested ones, the page says so.
 
+## Marketing metrics
+
+The "Marketing" page (`/marketing`, open to everyone signed in) shows the numbers a marketer
+expects, computed from the case data and the model forecast. Every card has an "i" icon with the
+formula on the current numbers, and a plain-language glossary sits at the bottom of the page. The
+customer card has a "Marketing" block: the customer's MRR, forecast and actual LTV, and time with us.
+
+A month is always 30 days, money in the API is in euro cents. All formulas live in one place,
+[`libs/riskcore/riskcore/marketing.py`](libs/riskcore/riskcore/marketing.py), and are covered by a
+test that recomputes the 10-customer case base by hand.
+
+| Metric | How it is computed |
+|---|---|
+| MRR, monthly recurring revenue | revenue of live services normalised to a month. We use the same collectible revenue as the model: an hourly service at list price would give hundreds of euros a month, which the customer never pays. Equals "monthly revenue" on the overview |
+| ARPU | MRR ÷ active customers (at least one live service) |
+| ARPPU | MRR ÷ paying customers (MRR above zero) |
+| Customer churn (forecast) | mean `risk_score / 100` over paying customers: the score is the share of the customer's revenue the model expects to lose over the horizon. The horizon is converted to a month: `1 − (1 − p)^(30 / horizon)` |
+| Gross Revenue Churn (forecast) | the same weighted by customer MRR: which share of MRR leaves in a month |
+| Retention | `1 − churn` |
+| Customer churn (actual) | customers who left ÷ customer-months observed. Left means all services deleted or blocked; the date comes from status history, otherwise end of the paid period + 5 days |
+| Expected lifetime | `1 ÷ monthly churn`, capped at 60 months: near-zero churn would make it infinite |
+| LTV (forecast) | `ARPU × margin ÷ monthly customer churn`. Per customer: their MRR × margin × their lifetime |
+| LTV (actual) | sum of performed transactions: what the customer has already paid for services |
+| LTV at risk | sum of LTV of high and medium risk customers |
+| What retention gives | if we keep the high-risk customers, their churn returns to the historical actual churn (or to the low-risk churn if nobody has left). LTV uplift = MRR × (lifetime at that churn − lifetime now) |
+| CAC, LTV/CAC, Payback | acquisition cost is not in the data, an administrator enters it. `LTV ÷ CAC` and `CAC ÷ (ARPU × margin)` months to pay back; without CAC the page honestly says "enter CAC" |
+| Revenue concentration | share of MRR held by the top 10% of paying customers (at least one) |
+| Average payment | performed payments ÷ their count (free zero-amount orders excluded) |
+| Auto-renewal | share of active customers with a service on auto-renewal, and the MRR share of such services |
+
+Margin (100% by default, so LTV is revenue, not profit) and CAC are stored in PostgreSQL
+(`scoring.marketing_settings`) and only an administrator can change them. scoring computes the
+base metrics on every recalculation together with the summary, and api applies margin and CAC
+when serving, so changing them does not trigger a model recalculation. The same numbers go to
+`/metrics` (`churn_mrr_eur`, `churn_arpu_eur`, `churn_ltv_eur`, `churn_customer_churn_rate`,
+`churn_revenue_churn_rate`) and to the "Marketing" row of the Grafana "Отток" dashboard.
+
+On the case data the model sees risk for almost every paying customer, so the forecast churn is
+high (about 65% of customers a month) and LTV is small. The actual historical churn is about
+7.5% a month, which is exactly what the "What retention gives" block shows.
+
 ## Adding a new feature
 
 A feature is one file in [`libs/riskcore/riskcore/features/`](libs/riskcore/riskcore/features/).
@@ -514,6 +556,8 @@ curl -H "Authorization: Bearer churn-metrics-demo-token" http://localhost:8080/m
 | `churn_services_at_risk`, `churn_services_total` | services at risk and all active services |
 | `churn_model_version` | model settings version used in the last calculation |
 | `churn_last_scored_timestamp_seconds` | time of the last recalculation |
+| `churn_mrr_eur`, `churn_arpu_eur`, `churn_ltv_eur` | MRR, ARPU and average customer LTV (with the configured margin), euro |
+| `churn_customer_churn_rate`, `churn_revenue_churn_rate` | forecast customer and revenue churn over 30 days, share 0..1 |
 
 All business metrics come from the same summary as `GET /api/v1/analytics/summary`, so they
 match the panel: money matches `expected_loss` and `exposure`, risk score matches `risk_scores`.
@@ -608,6 +652,8 @@ types are generated from it. Main resources:
 | `GET /api/v1/call-today` | who to call today: at-risk customers by expected loss, highest first |
 | `GET/PUT/DELETE /api/v1/customers/{id}/action` | the "done" or "snoozed" mark and its log |
 | `GET /api/v1/analytics/summary` | base summary, actual and forecast chart, top reasons |
+| `GET /api/v1/analytics/marketing` | marketing metrics: MRR, ARPU, churn, LTV, risk segments, retention scenarios |
+| `GET/PUT /api/v1/analytics/marketing/settings` | margin and customer acquisition cost (CAC); PUT is admin only |
 | `GET/PATCH /api/v1/model/settings` | weights, thresholds and horizon (PATCH changes only the fields you send); next to it `POST …/reset` and `GET …/history` |
 | `GET /api/v1/model/quality` | model check results on a synthetic future: lift, ROC, baselines, calibration, robustness |
 | `POST /api/v1/model/settings/preview` | "what if": same body as PATCH, returns "before → after", saves nothing |

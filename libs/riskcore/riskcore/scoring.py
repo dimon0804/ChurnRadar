@@ -5,10 +5,11 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
+from . import calibration
 from .base import Feature, Signal
 from .context import (
     SECONDS_PER_DAY,
@@ -17,6 +18,8 @@ from .context import (
     build_account_context,
     build_service_context,
 )
+from .groups import GROUPS, combine
+from .groups import probability as grouped_probability
 from .marketing import customer_marketing, exit_moment, payments_of
 from .money import format_eur, horizon_revenue
 from .recommendations import action_for, build_recommendations
@@ -81,10 +84,18 @@ class FeatureHit:
     signal: Signal
     weight: float
     contribution: float
+    # Группа коррелированных признаков (groups.py), если признак в неё входит и она включена.
+    group: str | None = None
 
     @property
     def strength(self) -> float:
         return self.weight * self.signal.value
+
+
+def _group_fields(group: str | None) -> dict[str, Any]:
+    if group is None:
+        return {}
+    return {"correlation_group": group, "correlation_group_title": GROUPS[group].title}
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,14 +109,32 @@ class ServiceOutcome:
     hits: tuple[FeatureHit, ...] = ()
     contract_revenue: float = 0.0
     revenue_note: str | None = None
+    # Калиброванная вероятность непродления (calibration.py) и считать ли по ней деньги.
+    calibrated: float | None = None
+    use_calibrated: bool = False
+    # Вероятность по модели-челленджеру (логистическая регрессия), только для сравнения.
+    challenger: float | None = None
 
     @property
     def risk_score(self) -> float | None:
         return None if self.probability is None else 100.0 * self.probability
 
     @property
+    def loss_probability(self) -> float:
+        """Вероятность, по которой считаются деньги и прогноз непродлений."""
+        if self.use_calibrated and self.calibrated is not None:
+            return self.calibrated
+        return self.probability or 0.0
+
+    @property
+    def loss_scale(self) -> float:
+        """Во сколько раз денежная вероятность отличается от сырой: так вклады в деньгах сходятся."""
+        p = self.probability or 0.0
+        return self.loss_probability / p if p > 0 else 0.0
+
+    @property
     def expected_loss(self) -> float:
-        return (self.probability or 0.0) * self.revenue
+        return self.loss_probability * self.revenue
 
     def to_api(self) -> dict[str, Any]:
         s = self.service
@@ -117,7 +146,8 @@ class ServiceOutcome:
                 "contribution": 100.0 * hit.contribution,
                 "service_id": s.id,
                 "action": action_for(hit.feature, hit.signal).title,
-                "expected_loss": round(hit.contribution * self.revenue),
+                "expected_loss": round(hit.contribution * self.loss_scale * self.revenue),
+                **_group_fields(hit.group),
             }
             for hit in sorted(self.hits, key=lambda h: h.contribution, reverse=True)
             if 100.0 * hit.contribution > 0
@@ -134,6 +164,8 @@ class ServiceOutcome:
             "expires_at": isoformat_z(s.expires_at),
             "days_to_expiry": round(self.days_to_expiry, 2),
             "risk_score": self.risk_score,
+            "calibrated_probability": self.calibrated,
+            "challenger_probability": self.challenger,
             "risk_level": self.level,
             "reasons": reasons,
             "expected_loss": round(self.expected_loss),
@@ -155,6 +187,7 @@ class FeatureTotal:
     top_service_id: int | None
     # На сколько снизится ожидаемая потеря клиента, если причина исчезнет, евроценты.
     saving: float = 0.0
+    group: str | None = None
 
     @property
     def code(self) -> str:
@@ -173,6 +206,7 @@ class FeatureTotal:
             "service_id": self.service_id,
             "action": action_for(self.feature, self.top_hit.signal).title,
             "expected_loss": round(self.loss),
+            **_group_fields(self.group),
         }
 
     def to_api(self) -> dict[str, Any]:
@@ -184,6 +218,7 @@ class FeatureTotal:
             "weight": self.weight,
             "contribution": self.points,
             "explanation": self.top_hit.signal.explanation,
+            **_group_fields(self.group),
         }
 
 
@@ -215,6 +250,24 @@ class CustomerResult:
     paid_total: int = 0
     payments: int = 0
     first_seen: datetime | None = None
+    # Доля выручки за горизонт, которую ожидаем потерять по калиброванной вероятности, 0..1.
+    calibrated_probability: float | None = None
+    # Score модели-челленджера (логистическая регрессия), 0..100, только для сравнения.
+    challenger_score: float | None = None
+
+    def for_money(self) -> CustomerResult:
+        """Копия, у которой risk_score — доля ожидаемой потери (expected_loss / выручка).
+
+        Маркетинговые метрики (build_marketing) читают risk_score как прогнозный отток. При
+        включённой калибровке это должна быть калиброванная доля, а не ранжирующий score;
+        без калибровки обе величины совпадают.
+        """
+        if self.risk_score is None or self.horizon_revenue <= 0:
+            return self
+        share = (
+            sum(o.expected_loss for o in self.services if o.probability is not None) / self.horizon_revenue
+        )
+        return replace(self, risk_score=100.0 * share)
 
     def to_row(self, scored_at: datetime | None = None) -> dict[str, Any]:
         """Строка таблицы scoring.customer_scores."""
@@ -259,6 +312,8 @@ class CustomerResult:
             "monthly_revenue": self.monthly_revenue,
             "expected_loss": self.expected_loss,
             "exposure": self.exposure,
+            "calibrated_probability": self.calibrated_probability,
+            "challenger_score": self.challenger_score,
         }
 
     def to_api(self, scored_at: datetime | None = None, model_version: int | None = None) -> dict[str, Any]:
@@ -287,12 +342,11 @@ def _score_service(
     found.extend(account_signals)
 
     strengths = [weight * signal.value for _, signal, weight in found]
-    contributions = decompose(strengths)
+    probability, contributions, groups = combine(strengths, [f.code for f, _, _ in found], settings.groups)
     hits = tuple(
-        FeatureHit(feature, signal, weight, share)
-        for (feature, signal, weight), share in zip(found, contributions, strict=True)
+        FeatureHit(feature, signal, weight, share, group)
+        for (feature, signal, weight), share, group in zip(found, contributions, groups, strict=True)
     )
-    probability = noisy_or(strengths)
     return ServiceOutcome(
         service=ctx.service,
         days_to_expiry=ctx.days_to_expiry,
@@ -303,6 +357,9 @@ def _score_service(
         hits=hits,
         contract_revenue=ctx.contract_revenue,
         revenue_note=_revenue_note(ctx),
+        calibrated=calibration.calibrate(probability, settings.horizon_days),
+        use_calibrated=settings.calibrated,
+        challenger=calibration.challenger_probability({f.code: s.value for f, s, _ in found}),
     )
 
 
@@ -342,34 +399,48 @@ def _account_signals(ctx: AccountContext, settings: Settings) -> list[tuple[Feat
     return signals
 
 
-def _saving_share(outcome: ServiceOutcome, removed: FeatureHit) -> float:
-    """На сколько упадёт вероятность непродления услуги без этой причины: p − p(без неё)."""
-    rest = noisy_or(hit.strength for hit in outcome.hits if hit is not removed)
+def _saving_share(outcome: ServiceOutcome, removed: FeatureHit, settings: Settings) -> float:
+    """На сколько упадёт денежная вероятность непродления услуги без этой причины.
+
+    Сырая вероятность без причины считается тем же сложением (с группами), что и сама
+    оценка; при включённой калибровке обе стороны переводятся в калиброванную вероятность.
+    """
+    rest_hits = [hit for hit in outcome.hits if hit is not removed]
+    rest = grouped_probability(
+        [h.strength for h in rest_hits], [h.feature.code for h in rest_hits], settings.groups
+    )
+    if outcome.use_calibrated and outcome.calibrated is not None:
+        rest_q = calibration.calibrate(rest, settings.horizon_days)
+        return outcome.calibrated - (rest if rest_q is None else rest_q)
     return (outcome.probability or 0.0) - rest
 
 
-def _feature_totals(live: Sequence[ServiceOutcome], total_revenue: float) -> list[FeatureTotal]:
+def _feature_totals(
+    live: Sequence[ServiceOutcome], total_revenue: float, settings: Settings
+) -> list[FeatureTotal]:
     grouped: dict[str, list[tuple[FeatureHit, ServiceOutcome]]] = defaultdict(list)
     savings: dict[str, float] = defaultdict(float)
     for outcome in live:
         for hit in outcome.hits:
             grouped[hit.feature.code].append((hit, outcome))
-            savings[hit.feature.code] += outcome.revenue * _saving_share(outcome, hit)
+            savings[hit.feature.code] += outcome.revenue * _saving_share(outcome, hit, settings)
 
     totals = []
     for pairs in grouped.values():
-        loss = sum(hit.contribution * outcome.revenue for hit, outcome in pairs)
+        points = sum(hit.contribution * outcome.revenue for hit, outcome in pairs)
+        loss = sum(hit.contribution * outcome.loss_scale * outcome.revenue for hit, outcome in pairs)
         top_hit, top_outcome = max(pairs, key=lambda pair: pair[0].contribution * pair[1].revenue)
         totals.append(
             FeatureTotal(
                 feature=top_hit.feature,
-                points=100.0 * loss / total_revenue,
+                points=100.0 * points / total_revenue,
                 loss=loss,
                 value=max(hit.signal.value for hit, _ in pairs),
                 weight=100.0 * top_hit.weight,
                 top_hit=top_hit,
                 top_service_id=top_outcome.service.id,
                 saving=savings[top_hit.feature.code],
+                group=top_hit.group,
             )
         )
     totals.sort(key=lambda t: (-t.points, t.code))
@@ -469,6 +540,7 @@ def score_account(
     # Месячная выручка — та же собираемая выручка, что и в score, приведённая к 30 дням.
     monthly = total_revenue * 30 / settings.horizon_days
     expected = sum(o.expected_loss for o in live)
+    raw_expected = sum((o.probability or 0.0) * o.revenue for o in live)
     exposure = sum(o.revenue for o in live if o.level in ("medium", "high"))
     at_risk = sum(1 for o in live if o.level in ("medium", "high"))
 
@@ -482,12 +554,30 @@ def score_account(
         unknown_reason = ("no_paid_services", UNKNOWN_NOT_PAID)
 
     if unknown_reason is None:
-        score: float | None = 100.0 * expected / total_revenue
-        totals = _feature_totals(live, total_revenue)
+        # score — ранжирование по сырой вероятности; деньги — по денежной (см. loss_probability)
+        score: float | None = 100.0 * raw_expected / total_revenue
+        loss_share: float | None = expected / total_revenue
+        calibrated_share = (
+            sum(
+                (o.calibrated if o.calibrated is not None else o.probability or 0.0) * o.revenue for o in live
+            )
+            / total_revenue
+            if any(o.calibrated is not None for o in live)
+            else None
+        )
+        challenger_score = (
+            100.0 * sum((o.challenger or 0.0) * o.revenue for o in live) / total_revenue
+            if any(o.challenger is not None for o in live)
+            else None
+        )
+        totals = _feature_totals(live, total_revenue, settings)
         reasons = [t.to_reason() for t in totals if t.points > REASON_MIN_POINTS][:REASONS_LIMIT]
         features = [t.to_api() for t in totals]
     else:
         score = None
+        loss_share = None
+        calibrated_share = None
+        challenger_score = None
         totals = []
         reasons = [
             {
@@ -511,7 +601,12 @@ def score_account(
         "recommendations": [r.to_api() for r in recommendations],
         "next_action": recommendations[0].to_api() if recommendations else None,
         "marketing": customer_marketing(
-            monthly, score, settings.horizon_days, paid, exit_moment(ctx.all_services, as_of), as_of
+            monthly,
+            None if loss_share is None else 100.0 * loss_share,
+            settings.horizon_days,
+            paid,
+            exit_moment(ctx.all_services, as_of),
+            as_of,
         ),
     }
     return CustomerResult(
@@ -540,6 +635,8 @@ def score_account(
         paid_total=paid.total,
         payments=paid.count,
         first_seen=paid.first_seen,
+        calibrated_probability=calibrated_share,
+        challenger_score=challenger_score,
     )
 
 

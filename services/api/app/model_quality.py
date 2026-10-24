@@ -131,6 +131,7 @@ class Params(_Model):
     simulator_sources: str
     weights: dict[str, float]
     thresholds: dict[Literal["medium", "high"], float]
+    groups: dict[str, float] = {}
 
 
 class RobustnessScenario(_Model):
@@ -148,12 +149,62 @@ class RobustnessRow(_Model):
     scenarios: dict[Literal["stream", "calendar"], RobustnessScenario]
 
 
+class HonestyMethod(_Model):
+    service_roc_auc: Prob = None
+    service_brier: Prob = None
+    service_lift_top10: Prob = None
+    mean_predicted: Prob = None
+    actual_rate: Prob = None
+    customer_roc_auc: Prob = None
+    customer_lift_top10: Prob = None
+    expected_loss: float | None = None
+    actual_loss: float | None = None
+
+
+class ReliabilityPoint(_Model):
+    n: int
+    predicted: float
+    actual: float
+
+
+class HonestyScenario(_Model):
+    methods: dict[str, HonestyMethod]
+    reliability: dict[str, list[ReliabilityPoint]]
+
+
+class HonestyCalibration(_Model):
+    fit_scenario: Literal["stream", "calendar"]
+    services: int
+    brier_cross: dict[str, dict[str, Prob]]
+    by_scenario: dict[Literal["stream", "calendar"], HonestyScenario]
+    logreg: dict[str, Any] | None = None
+
+
+class GroupVariant(_Model):
+    label: str
+    cap: float | None
+    level_changes: int
+    levels: dict[str, int]
+    expected_loss_raw: float | None = None
+    scenarios: dict[str, dict[str, Prob]]
+
+
+class Honesty(_Model):
+    """Калибровка, челленджер и группы признаков (tools/calibration/honesty.py)."""
+
+    calibration: HonestyCalibration
+    groups: list[GroupVariant] = []
+    case: dict[str, Any] | None = None
+    tables_sha: str | None = None
+
+
 class Report(_Model):
     """Та часть results.json, которую отдаёт API. Всё остальное (события, деньги по услугам) — в tables.md."""
 
     params: Params
     scenarios: dict[Literal["stream", "calendar"], Scenario]
     robustness: list[RobustnessRow] = []
+    honesty: Honesty | None = None
 
 
 class QualityUnavailable(Exception):
@@ -185,6 +236,19 @@ def parse_report(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 @lru_cache(maxsize=1)
+def current_tables_sha() -> str | None:
+    """Отпечаток установленной таблицы калибровки — тот же, что пишет tools/calibration/honesty.py."""
+    try:
+        import riskcore
+    except ImportError:
+        return None
+    path = Path(riskcore.__file__).resolve().parent / "model_tables.json"
+    if not path.exists():
+        return None
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()[:12]
+
+
+@lru_cache(maxsize=1)
 def current_riskcore_sources() -> str | None:
     try:
         import riskcore
@@ -206,10 +270,14 @@ def load(path: str) -> dict[str, Any]:
             f"results.json не прошёл проверку схемы: {exc}"
         ) from exc
     current = current_riskcore_sources()
+    tables = current_tables_sha()
+    expected_tables = (report.get("honesty") or {}).get("tables_sha")
     report["current_model"] = {
         "riskcore_sources": current,
         "matches": None
         if current is None
         else current == report["params"]["riskcore_sources"],
+        "tables_sha": tables,
+        "tables_match": None if tables is None or expected_tables is None else tables == expected_tables,
     }
     return report

@@ -37,6 +37,8 @@ class PreviewRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     settings: dict[str, Any]
+    # Сравнение двух версий: «было» считается по baseline, а не по текущим настройкам.
+    baseline: dict[str, Any] | None = None
 
 
 class State:
@@ -85,7 +87,7 @@ def create_http_app(config: Config, state: State) -> FastAPI:
         if state.previewer is None:
             raise ApiError(503, "scoring_starting", "Сервис оценки ещё запускается")
         try:
-            return await state.previewer.preview(body.settings)
+            return await state.previewer.preview(body.settings, baseline=body.baseline)
         except PreviewSuperseded as exc:
             raise ApiError(409, "preview_superseded", "Пришёл более новый запрос предпросмотра") from exc
         except TimeoutError as exc:

@@ -90,7 +90,7 @@ def test_customer_money_block():
     money = result.detail["money"]
     assert money["monthly_revenue"] == 4_000 == result.monthly_revenue
     outcomes = [o for o in result.services if o.probability is not None]
-    assert money["expected_loss"] == round(sum(o.probability * o.revenue for o in outcomes))
+    assert money["expected_loss"] == round(sum(o.loss_probability * o.revenue for o in outcomes))
     assert money["exposure"] == sum(round(o.revenue) for o in outcomes if o.level in ("medium", "high"))
     # Баланс тратится только на автопродления по графику: €7 в неделю с 100-го дня, на €60 хватит
     # восьми продлений, девятое (100 + 8 недель) уже не оплатится.

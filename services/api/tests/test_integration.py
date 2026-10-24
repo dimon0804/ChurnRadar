@@ -331,6 +331,58 @@ async def test_settings_flow(client):
     assert history[0]["changed_by"] == "admin" and history[0]["changed_at"].endswith("Z")
 
 
+async def test_settings_groups_rollback_and_compare(client, monkeypatch):
+    first = (await client.get("/api/v1/model/settings", headers=ANALYST)).json()
+    assert first["calibrated"] is True
+    assert first["groups"][0]["code"] == "payment" and first["groups"][0]["enabled"] is False
+    assert first["calibration"]["available"] is True
+
+    v2 = await client.patch(
+        "/api/v1/model/settings",
+        json={"groups": [{"code": "payment", "enabled": True, "cap": 60}], "calibrated": False},
+        headers=ADMIN,
+    )
+    assert v2.status_code == 200, v2.text
+    assert v2.json()["version"] == 2 and v2.json()["calibrated"] is False
+    assert v2.json()["groups"][0] == {**first["groups"][0], "enabled": True, "cap": 60.0}
+    # таблица калибровки обучена без группы — честно говорим, что числа приблизительные
+    assert v2.json()["calibration"]["matches_settings"] is False
+
+    v3 = (await client.patch("/api/v1/model/settings", json={"horizon_days": 45}, headers=ADMIN)).json()
+    assert v3["version"] == 3
+
+    # сравнение: различия есть, эффект null — scoring в этом тесте не поднят
+    denied = await client.get("/api/v1/model/settings/compare?from=1&to=3", headers=ANALYST)
+    assert denied.status_code == 403
+    cmp = await client.get("/api/v1/model/settings/compare?from=1&to=3", headers=ADMIN)
+    assert cmp.status_code == 200, cmp.text
+    body = cmp.json()
+    assert body["from"]["version"] == 1 and body["to"]["version"] == 3
+    assert {c["path"] for c in body["changes"]} == {
+        "horizon_days", "groups.payment.cap", "groups.payment.enabled", "calibrated",
+    }
+    assert body["impact"] is None
+    missing = await client.get("/api/v1/model/settings/compare?from=1&to=99", headers=ADMIN)
+    assert missing.status_code == 404 and missing.json()["error"]["code"] == "version_not_found"
+
+    # откат к версии 1 создаёт новую версию 4 с настройками по умолчанию
+    assert (await client.post("/api/v1/model/settings/rollback", json={"version": 1}, headers=ANALYST)).status_code == 403
+    back = await client.post("/api/v1/model/settings/rollback", json={"version": 1}, headers=ADMIN)
+    assert back.status_code == 200, back.text
+    b = back.json()
+    assert b["version"] == 4 and b["horizon_days"] == 30 and b["calibrated"] is True
+    assert b["groups"][0]["enabled"] is False
+    # откат к версии 2 возвращает её содержимое
+    to_v2 = (await client.post("/api/v1/model/settings/rollback", json={"version": 2}, headers=ADMIN)).json()
+    assert to_v2["version"] == 5 and to_v2["groups"][0]["cap"] == 60.0 and to_v2["horizon_days"] == 30
+    # повторный откат к тому же ничего не меняет
+    again = (await client.post("/api/v1/model/settings/rollback", json={"version": 2}, headers=ADMIN)).json()
+    assert again["version"] == 5
+    assert (await client.post("/api/v1/model/settings/rollback", json={"version": 42}, headers=ADMIN)).status_code == 404
+    history = (await client.get("/api/v1/model/settings/history?limit=10", headers=ANALYST)).json()["items"]
+    assert [h["version"] for h in history] == [5, 4, 3, 2]
+
+
 async def test_settings_event_waits_in_outbox_while_nats_is_down(monkeypatch):
     """NATS лежит: PATCH проходит, событие в scoring.outbox; NATS вернулся — оно уходит один раз."""
     if not DB_URL or not NATS_URL:

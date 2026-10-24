@@ -4,10 +4,13 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
+from . import calibration
+from .groups import GROUPS, default_groups
 from .registry import all_features
 from .types import (
     DEFAULT_HORIZON_DAYS,
     DEFAULT_THRESHOLDS,
+    GroupSetting,
     Settings,
     Thresholds,
     WeightSetting,
@@ -18,6 +21,11 @@ WEIGHT_MIN = 0.0
 WEIGHT_MAX = 100.0
 HORIZON_MIN = 1
 HORIZON_MAX = 365
+# Считать деньги и прогнозы по калиброванной вероятности (calibration.py). Включено, потому что
+# на синтетическом будущем Brier score калиброванной вероятности лучше сырой (docs/model.md).
+DEFAULT_CALIBRATED = True
+GROUP_CAP_MIN = 0.0
+GROUP_CAP_MAX = 100.0
 
 
 def _clip(value: float, low: float, high: float) -> float:
@@ -30,6 +38,8 @@ def default_settings() -> Settings:
         horizon_days=DEFAULT_HORIZON_DAYS,
         thresholds=Thresholds(**DEFAULT_THRESHOLDS),
         weights={f.code: WeightSetting(weight=float(f.default_weight), enabled=True) for f in all_features()},
+        groups=default_groups(),
+        calibrated=DEFAULT_CALIBRATED,
     )
 
 
@@ -65,12 +75,26 @@ def merge_settings(stored: Mapping[str, Any] | None, version: int | None = None)
             enabled=bool(entry.get("enabled", default["enabled"])),
         )
 
+    raw_groups: Mapping[str, Any] = stored.get("groups") or {}
+    groups: dict[str, GroupSetting] = {}
+    for code, default_group in base.groups.items():
+        entry = raw_groups.get(code)
+        if not isinstance(entry, Mapping):
+            groups[code] = GroupSetting(**default_group)
+            continue
+        groups[code] = GroupSetting(
+            cap=_clip(float(entry.get("cap", default_group["cap"])), GROUP_CAP_MIN, GROUP_CAP_MAX),
+            enabled=bool(entry.get("enabled", default_group["enabled"])),
+        )
+
     resolved_version = version if version is not None else int(stored.get("version", base.version))
     return Settings(
         version=resolved_version,
         horizon_days=horizon,
         thresholds=thresholds,
         weights=weights,
+        groups=groups,
+        calibrated=bool(stored.get("calibrated", base.calibrated)),
     )
 
 
@@ -102,4 +126,21 @@ def settings_to_api(s: Settings, updated_at: datetime, updated_by: str | None) -
         "horizon_days": s.horizon_days,
         "thresholds": {"medium": float(s.thresholds["medium"]), "high": float(s.thresholds["high"])},
         "weights": weights,
+        "groups": [
+            {
+                "code": code,
+                "title": spec.title,
+                "description": spec.description,
+                "features": list(spec.features),
+                "cap": float((s.groups.get(code) or default_groups()[code])["cap"]),
+                "default_cap": spec.default_cap,
+                "enabled": bool((s.groups.get(code) or default_groups()[code])["enabled"]),
+            }
+            for code, spec in GROUPS.items()
+        ],
+        "calibrated": s.calibrated,
+        "calibration": {
+            "available": calibration.available(),
+            "matches_settings": calibration.matches(s),
+        },
     }

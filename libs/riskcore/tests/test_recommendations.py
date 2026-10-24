@@ -7,7 +7,7 @@ from datetime import timedelta
 
 import pytest
 
-from riskcore import merge_settings, noisy_or, score_customers
+from riskcore import calibration, merge_settings, noisy_or, score_customers
 from riskcore.money import format_eur, offer_size
 from riskcore.text import format_deadline, format_funds
 
@@ -49,7 +49,7 @@ def test_saving_is_counterfactual_loss_reduction():
     # Одна услуга, две причины: выключен сервер (0.35) и понедельная оплата (0.15 · 0.7).
     account = make_account()
     service = make_service(status="suspended", payment_term="week", price=700, expires_in_days=60)
-    [result] = score_customers([account], [service], [], merge_settings(None), AS_OF)
+    [result] = score_customers([account], [service], [], merge_settings({"calibrated": False}), AS_OF)
     [outcome] = result.services
     totals = {t.code: t for t in result.feature_totals}
     revenue = outcome.revenue
@@ -58,6 +58,20 @@ def test_saving_is_counterfactual_loss_reduction():
     assert totals["short_commitment"].saving == pytest.approx(revenue * (p - 0.35))
     assert result.detail["next_action"]["code"] == "suspended"
     assert result.detail["next_action"]["service_id"] == service.id
+
+
+def test_saving_with_calibration_compares_calibrated_probabilities():
+    """С калибровкой эффект — разница калиброванных вероятностей «с причиной» и «без неё»."""
+    account = make_account()
+    service = make_service(status="suspended", payment_term="week", price=700, expires_in_days=60)
+    [result] = score_customers([account], [service], [], merge_settings({"calibrated": True}), AS_OF)
+    [outcome] = result.services
+    totals = {t.code: t for t in result.feature_totals}
+    q = calibration.calibrate
+    p = noisy_or([0.35, 0.105])
+    assert outcome.calibrated == pytest.approx(q(p, 30))
+    assert totals["suspended"].saving == pytest.approx(outcome.revenue * (q(p, 30) - q(0.105, 30)))
+    assert totals["short_commitment"].saving == pytest.approx(outcome.revenue * (q(p, 30) - q(0.35, 30)))
 
 
 def test_account_level_action_has_no_service():

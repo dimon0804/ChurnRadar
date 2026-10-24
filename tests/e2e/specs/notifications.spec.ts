@@ -56,7 +56,7 @@ test('порог «крупный клиент» → правка модели �
 
   // тестовое уведомление доходит до почтового ящика
   await page.getByRole('button', { name: 'Отправить тестовое уведомление' }).click()
-  await expect(page.getByTestId('test-results')).toContainText('Почта: отправлено')
+  await expect(page.getByTestId('test-results')).toContainText(/Почта:\s*отправлено/)
   await expect
     .poll(async () => (await mailsTo(page.request, EMAIL)).map((m) => m.Subject), { timeout: 30_000 })
     .toContain('ChurnRadar: Тестовое уведомление')

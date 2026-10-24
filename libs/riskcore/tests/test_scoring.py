@@ -224,5 +224,6 @@ def test_to_row_matches_table_columns():
         "money",
         "recommendations",
         "next_action",
+        "marketing",
     }
     assert row["scored_at"] == AS_OF

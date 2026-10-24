@@ -2,6 +2,7 @@
 
 from .base import AccountFeature, Feature, FeatureSpec, Recommendation, ServiceFeature, Signal
 from .context import AccountContext, Funds, ServiceContext
+from .marketing import apply_economics, build_marketing, scale_customer
 from .money import monthly_price
 from .registry import REGISTRY, feature_catalog, register
 from .scoring import CustomerResult, ServiceOutcome, decompose, noisy_or, score_customers
@@ -40,6 +41,8 @@ __all__ = [
     "Thresholds",
     "Transaction",
     "WeightSetting",
+    "apply_economics",
+    "build_marketing",
     "build_summary",
     "decision_moment",
     "decompose",
@@ -54,6 +57,7 @@ __all__ = [
     "parse_status_change",
     "parse_transaction",
     "register",
+    "scale_customer",
     "score_customers",
     "settings_to_api",
 ]

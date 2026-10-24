@@ -57,3 +57,10 @@ def test_results_survive_pickle(sample_data) -> None:  # type: ignore[no-untyped
     assert riskcore.build_summary(back_slim, services, [], settings, REFERENCE) == riskcore.build_summary(
         slim, services, [], settings, REFERENCE
     )
+    # поля для маркетинга (платежи, первый контакт) тоже переживают pickle
+    assert [(r.paid_total, r.payments, r.first_seen) for r in back_slim] == [
+        (r.paid_total, r.payments, r.first_seen) for r in slim
+    ]
+    with_marketing = engine.build_summary(back_slim, services, [], settings, REFERENCE)
+    assert with_marketing["marketing"] == riskcore.build_marketing(slim, [], settings.horizon_days, REFERENCE)
+    assert with_marketing["marketing"]["mrr"] == with_marketing["monthly_revenue_total"]

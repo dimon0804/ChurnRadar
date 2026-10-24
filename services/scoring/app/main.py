@@ -14,16 +14,18 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict
 from svckit.auth import make_current_user, make_require_admin
+from svckit.bus import EventBus
 from svckit.db import db_ready
 from svckit.errors import ApiError, install_error_handlers
 from svckit.health import install_probes
 from svckit.logs import configure_logging, get_logger
 from svckit.metrics import METRICS_TOKEN_MESSAGE, bearer_token_valid, render
+from svckit.outbox import OutboxRelay
 
 from . import repository as repo
 from .config import Config
 from .engine import Scorer
-from .metrics import ERRORS
+from .metrics import ERRORS, OUTBOX
 from .preview import Previewer, PreviewSuperseded
 from .worker import Worker
 
@@ -187,6 +189,12 @@ async def run() -> int:
     worker = Worker(config, state.pool, scorer)
     state.worker = worker
     await _connect_with_retry(worker.connect, "nats")
+    # scores.updated пишется в scoring.scores_outbox в транзакции пересчёта, отправляет relay
+    bus = EventBus(config.nats_url, producer="scoring")
+    await bus.start()
+    relay = OutboxRelay(state.pool, bus, repo.SCORES_OUTBOX, metrics=OUTBOX)
+    relay.start()
+    worker.relay = relay
 
     # Схему может ещё накатывать migrate — ждём, а не падаем.
     await _connect_with_retry(worker.initial, "scoring.initial", attempts=200)
@@ -203,6 +211,8 @@ async def run() -> int:
     # новая пачка уже не берётся; текущей даём закончиться, потом отмена (сообщения уйдут в nak)
     await shutdown_tasks(tasks, config.shutdown_grace_s)
     await worker.close()
+    await relay.stop()
+    await bus.close()
     await scorer.wait_maintenance()
     scorer.close()
     await state.pool.close()

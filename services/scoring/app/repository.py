@@ -12,6 +12,9 @@ from typing import Any
 import asyncpg
 from riskcore.types import Account, Service, StatusChange, Transaction
 from svckit import db
+from svckit.outbox import add_event
+
+from .events import SUBJECT_SCORES
 
 SCORE_COLUMNS: tuple[str, ...] = (
     "customer_id",
@@ -349,8 +352,9 @@ async def write_results(
     model_version: int,
     scored_at: datetime,
     event_ids: Sequence[str],
+    scores_event: dict[str, Any] | None = None,
 ) -> None:
-    """Одна транзакция: upsert клиентов, удаление исчезнувших, summary, отметка событий."""
+    """Одна транзакция: upsert клиентов, удаление исчезнувших, summary, отметка событий и outbox."""
     async with conn.transaction():
         if full:
             await replace_all_scores_begin(conn)
@@ -368,6 +372,16 @@ async def write_results(
                 )
         await save_summary(conn, summary, model_version, scored_at)
         await mark_processed(conn, event_ids)
+        if scores_event is not None:
+            await enqueue_scores_updated(conn, scores_event)
+
+
+SCORES_OUTBOX = "scoring.scores_outbox"
+
+
+async def enqueue_scores_updated(conn: asyncpg.Connection, payload: dict[str, Any]) -> str:
+    """churn.scores.updated в outbox: уйдёт в NATS вместе с коммитом оценок, даже если шина лежит."""
+    return await add_event(conn, SCORES_OUTBOX, SUBJECT_SCORES, "scores.updated", payload)
 
 
 async def vacuum_scores(conn: asyncpg.Connection) -> None:

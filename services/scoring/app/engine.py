@@ -25,6 +25,7 @@ from riskcore.types import Service, Settings
 from svckit.logs import get_logger
 
 from . import repository as repo
+from .events import scores_updated_payload
 from .metrics import CUSTOMERS, DURATION, RUNS
 
 log = get_logger("scoring.engine")
@@ -327,6 +328,17 @@ class Scorer:
                 timings["summary_s"] = time.perf_counter() - started
                 await repo.save_summary(writer, summary, version, scored_at)
                 await repo.mark_processed(writer, event_ids)
+                await repo.enqueue_scores_updated(
+                    writer,
+                    scores_updated_payload(
+                        model_version=version,
+                        scored_at=scored_at,
+                        changed_customer_ids=[],
+                        full=True,
+                        duration_ms=(time.perf_counter() - t0) * 1000,
+                        summary=summary,
+                    ),
+                )
                 await repo.prune_processed(writer)
         duration_ms = (time.perf_counter() - t0) * 1000
 
@@ -411,6 +423,14 @@ class Scorer:
                 model_version=version,
                 scored_at=scored_at,
                 event_ids=event_ids,
+                scores_event=scores_updated_payload(
+                    model_version=version,
+                    scored_at=scored_at,
+                    changed_customer_ids=sorted(set(fresh) | set(removed)),
+                    full=False,
+                    duration_ms=(time.perf_counter() - t0) * 1000,
+                    summary=summary,
+                ),
             )
         except Exception:
             self._cache = None

@@ -18,6 +18,7 @@ from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy
 from nats.js.errors import NotFoundError
 from svckit.bus import ensure_stream
 from svckit.logs import get_logger
+from svckit.outbox import OutboxRelay
 
 from . import repository as repo
 from .config import Config
@@ -262,6 +263,8 @@ class Worker:
         self.scorer = scorer
         self.nc: NATS | None = None
         self.js: JetStreamContext | None = None
+        # relay scoring.scores_outbox; без него (тесты) событие уходит напрямую
+        self.relay: OutboxRelay | None = None
         self._stop = asyncio.Event()
         self.subscribed = False
         self.processor = BatchProcessor(
@@ -319,6 +322,10 @@ class Worker:
         return False
 
     async def publish(self, result: RunResult) -> None:
+        # событие уже лежит в scoring.scores_outbox (записано в транзакции пересчёта): будим relay
+        if self.relay is not None:
+            self.relay.kick()
+            return
         if self.js is None:
             return
         payload = scores_updated_payload(

@@ -26,12 +26,33 @@ class Settings(BaseSettings):
     login_max_attempts: int = 5
     login_window_seconds: int = 60
 
+    # OIDC (Authorization Code + PKCE). Браузер ходит на публичный issuer, обмен кода и JWKS —
+    # по внутреннему адресу; пустой internal = тот же, что публичный.
     oidc_enabled: bool = True
-    oidc_public_issuer: str = "http://localhost:8081/realms/churn-radar"
-    oidc_internal_issuer: str = "http://keycloak:8080/realms/churn-radar"
+    oidc_public_issuer: str = "http://localhost:9000/application/o/churn-radar/"
+    oidc_internal_issuer: str = "http://authentik-server:9000/application/o/churn-radar/"
     oidc_client_id: str = "churn-radar"
     oidc_client_secret: str = "churn-radar-demo-secret"
-    oidc_display_name: str = "Войти через SSO"
+    oidc_scopes: str = "openid profile email"
+    oidc_display_name: str = "Войти через Authentik (OIDC)"
+
+    # SAML 2.0 SP. Метаданные IdP: URL, файл или XML прямо в переменной (что задано первым из
+    # xml → file → url). public_url IdP нужен, когда метаданные качаются по внутреннему адресу.
+    saml_enabled: bool = True
+    saml_display_name: str = "Войти через Authentik (SAML)"
+    saml_idp_metadata_url: str = "http://authentik-server:9000/application/saml/churn-radar-saml/metadata/"
+    saml_idp_metadata_file: str = ""
+    saml_idp_metadata_xml: str = ""
+    saml_idp_public_url: str = "http://localhost:9000"
+    saml_sp_entity_id: str = ""
+    saml_roles_attribute: str = "churn-radar-role"
+    saml_groups_attribute: str = "http://schemas.xmlsoap.org/claims/Group"
+    saml_clock_skew_seconds: int = 90
+
+    # роли из групп IdP (через запятую). Пустая роль по умолчанию — без групп в панель не пускаем.
+    sso_admin_groups: str = "churn-admins"
+    sso_analyst_groups: str = "churn-analysts"
+    sso_default_role: str = ""
 
     log_level: str = "info"
 
@@ -49,6 +70,14 @@ class Settings(BaseSettings):
     @property
     def oidc_redirect_uri(self) -> str:
         return self.public_url.rstrip("/") + "/api/v1/auth/oidc/callback"
+
+    @property
+    def saml_acs_url(self) -> str:
+        return self.public_url.rstrip("/") + "/api/v1/auth/saml/acs"
+
+    @property
+    def saml_entity_id(self) -> str:
+        return self.saml_sp_entity_id or self.public_url.rstrip("/") + "/api/v1/auth/saml/metadata"
 
 
 @lru_cache

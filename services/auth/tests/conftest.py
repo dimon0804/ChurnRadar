@@ -18,7 +18,7 @@ def offline_transport(request: httpx.Request) -> httpx.Response:
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings(oidc_enabled=False, log_level="warning")
+    return Settings(oidc_enabled=False, saml_enabled=False, log_level="warning")
 
 
 @pytest.fixture

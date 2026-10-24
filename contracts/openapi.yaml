@@ -9,14 +9,14 @@ info:
     Время — ISO 8601 в UTC.
 
     Доступ: все методы, кроме `POST /api/v1/auth/login`, `GET /api/v1/auth/providers`
-    и OIDC-редиректов, требуют сессию (cookie `cr_session`) или `Authorization: Bearer`.
+    и SSO-редиректов (OIDC, SAML), требуют сессию (cookie `cr_session`) или `Authorization: Bearer`.
     `GET /metrics` закрыт отдельным токеном сборщика метрик.
 servers:
   - url: http://localhost:8080
     description: Локальный запуск через Docker Compose
 tags:
   - name: auth
-    description: Вход, сессия, OIDC
+    description: Вход, сессия, SSO (OIDC и SAML)
   - name: customers
     description: Клиенты и их оценки риска
   - name: actions
@@ -100,16 +100,25 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [password, oidc]
+                required: [password, oidc, saml]
                 properties:
                   password: { type: boolean }
                   oidc:
                     type: object
+                    description: Есть, только когда IdP настроен и отвечает
                     required: [enabled]
                     properties:
                       enabled: { type: boolean }
-                      display_name: { type: string, examples: ['Войти через SSO'] }
+                      display_name: { type: string, examples: ['Войти через Authentik (OIDC)'] }
                       login_url: { type: string, examples: ['/api/v1/auth/oidc/login'] }
+                  saml:
+                    type: object
+                    description: Есть, только когда метаданные IdP загружены
+                    required: [enabled]
+                    properties:
+                      enabled: { type: boolean }
+                      display_name: { type: string, examples: ['Войти через Authentik (SAML)'] }
+                      login_url: { type: string, examples: ['/api/v1/auth/saml/login'] }
 
   /api/v1/auth/oidc/login:
     get:
@@ -137,6 +146,59 @@ paths:
       responses:
         '302': { description: 'Сессия создана, редирект в панель' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/auth/saml/metadata:
+    get:
+      tags: [auth]
+      summary: Метаданные SAML Service Provider (entityID и ACS для настройки IdP)
+      operationId: samlMetadata
+      security: []
+      responses:
+        '200':
+          description: XML метаданных SP
+          content:
+            application/samlmetadata+xml:
+              schema: { type: string }
+        '404': { description: SAML выключен }
+
+  /api/v1/auth/saml/login:
+    get:
+      tags: [auth]
+      summary: Начало входа через SAML (SP-initiated, HTTP-Redirect AuthnRequest)
+      operationId: samlLogin
+      security: []
+      parameters:
+        - name: next
+          in: query
+          schema: { type: string, default: / }
+      responses:
+        '302': { description: Редирект на IdP с SAMLRequest }
+        '404': { description: SAML не настроен или IdP недоступен }
+
+  /api/v1/auth/saml/acs:
+    post:
+      tags: [auth]
+      summary: Assertion Consumer Service (HTTP-POST от IdP)
+      description: |
+        Проверяются подпись ассерции сертификатом IdP, Issuer, Audience, Recipient,
+        NotBefore/NotOnOrAfter, InResponseTo (одноразовый ID нашего запроса) и повтор ассерции.
+      operationId: samlAcs
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [SAMLResponse]
+              properties:
+                SAMLResponse: { type: string, description: base64 от samlp:Response }
+                RelayState: { type: string }
+      responses:
+        '303':
+          description: >-
+            Сессия создана и редирект в панель, либо редирект на /login?error=sso
+            (ответ не прошёл проверку) или /login?error=forbidden (у пользователя нет роли)
 
   /api/v1/customers:
     get:
@@ -810,7 +872,7 @@ components:
         roles:
           type: array
           items: { type: string, enum: [admin, analyst] }
-        auth_method: { type: string, enum: [password, oidc] }
+        auth_method: { type: string, enum: [password, oidc, saml] }
 
     RiskLevel:
       type: string

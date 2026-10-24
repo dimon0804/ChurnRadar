@@ -8,6 +8,7 @@ from uuid import uuid4
 import asyncpg
 
 VALID_ROLES = ("admin", "analyst")
+SSO_PROVIDERS = ("oidc", "saml")
 
 
 @dataclass
@@ -29,8 +30,8 @@ class UserRepo(Protocol):
         self, username: str, password_hash: str, display_name: str, roles: list[str]
     ) -> bool: ...
 
-    async def upsert_oidc_user(
-        self, subject: str, username: str, display_name: str, roles: list[str]
+    async def upsert_sso_user(
+        self, provider: str, subject: str, username: str, display_name: str, roles: list[str]
     ) -> UserRecord: ...
 
     async def record_login(self, username: str, provider: str, success: bool, ip: str | None) -> None: ...
@@ -78,11 +79,15 @@ class PostgresUserRepo:
         )
         return result.endswith("1")
 
-    async def upsert_oidc_user(self, subject: str, username: str, display_name: str, roles: list[str]) -> UserRecord:
+    async def upsert_sso_user(
+        self, provider: str, subject: str, username: str, display_name: str, roles: list[str]
+    ) -> UserRecord:
+        if provider not in SSO_PROVIDERS:
+            raise ValueError(f"unknown SSO provider {provider!r}")
         row = await self.pool.fetchrow(
             """
             INSERT INTO auth.users (username, display_name, roles, provider, subject, last_login_at)
-            VALUES ($1, $2, $3, 'oidc', $4, now())
+            VALUES ($1, $2, $3, $5, $4, now())
             ON CONFLICT (provider, subject) WHERE subject IS NOT NULL
             DO UPDATE SET username = EXCLUDED.username,
                           display_name = EXCLUDED.display_name,
@@ -94,6 +99,7 @@ class PostgresUserRepo:
             display_name,
             roles,
             subject,
+            provider,
         )
         return _row_to_user(row)
 
@@ -139,12 +145,16 @@ class MemoryUserRepo:
         self.users[user.id] = user
         return True
 
-    async def upsert_oidc_user(self, subject: str, username: str, display_name: str, roles: list[str]) -> UserRecord:
+    async def upsert_sso_user(
+        self, provider: str, subject: str, username: str, display_name: str, roles: list[str]
+    ) -> UserRecord:
+        if provider not in SSO_PROVIDERS:
+            raise ValueError(f"unknown SSO provider {provider!r}")
         for user in self.users.values():
-            if user.provider == "oidc" and user.subject == subject:
+            if user.provider == provider and user.subject == subject:
                 user.username, user.display_name, user.roles = username, display_name, roles
                 return user
-        user = UserRecord(str(uuid4()), username, display_name, roles, "oidc", None, subject)
+        user = UserRecord(str(uuid4()), username, display_name, roles, provider, None, subject)
         self.users[user.id] = user
         return user
 

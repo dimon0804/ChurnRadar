@@ -2,8 +2,9 @@ import asyncio
 import logging
 import secrets
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Annotated
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 import asyncpg
 import httpx
@@ -20,7 +21,17 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .config import Settings, get_settings
 from .observability import LOGINS, VERIFY, RequestContextMiddleware, request_id_var, setup_logging
 from .oidc import OidcClient, OidcError, pkce_pair
-from .sessions import LoginRateLimiter, OidcStateStore, Session, SessionStore, now
+from .roles import map_roles
+from .saml import NAME_ATTRS, USERNAME_ATTRS, SamlClient, SamlError, new_request_id
+from .sessions import (
+    SAML_REQUEST_PREFIX,
+    LoginRateLimiter,
+    OidcStateStore,
+    ReplayGuard,
+    Session,
+    SessionStore,
+    now,
+)
 from .users import PostgresUserRepo, UserRepo
 
 log = logging.getLogger("auth")
@@ -59,6 +70,9 @@ class State:
     limiter: LoginRateLimiter
     oidc_states: OidcStateStore
     oidc: OidcClient
+    saml_requests: OidcStateStore
+    saml_replay: ReplayGuard
+    saml: SamlClient
 
 
 async def seed_users(state: State) -> None:
@@ -110,6 +124,9 @@ def create_app(
         state.limiter = LoginRateLimiter(state.redis, settings.login_max_attempts, settings.login_window_seconds)
         state.oidc_states = OidcStateStore(state.redis)
         state.oidc = OidcClient(settings, state.http)
+        state.saml_requests = OidcStateStore(state.redis, prefix=SAML_REQUEST_PREFIX)
+        state.saml_replay = ReplayGuard(state.redis)
+        state.saml = SamlClient(settings, state.http)
         await seed_users(state)
         yield
         if http is None:
@@ -239,11 +256,40 @@ def create_app(
 
     @app.get("/api/v1/auth/providers")
     async def providers(st: Ctx):
-        enabled = await st.oidc.available()
-        oidc = {"enabled": enabled}
-        if enabled:
+        oidc_up, saml_up = await asyncio.gather(st.oidc.available(), st.saml.available())
+        oidc: dict = {"enabled": oidc_up}
+        if oidc_up:
             oidc.update(display_name=settings.oidc_display_name, login_url="/api/v1/auth/oidc/login")
-        return {"password": True, "oidc": oidc}
+        saml: dict = {"enabled": saml_up}
+        if saml_up:
+            saml.update(display_name=settings.saml_display_name, login_url="/api/v1/auth/saml/login")
+        return {"password": True, "oidc": oidc, "saml": saml}
+
+    async def start_sso_session(
+        st: State,
+        method: str,
+        subject: str,
+        username: str,
+        display: str,
+        roles: list[str],
+        ip: str,
+        next_url: str,
+        status_code: int = 302,
+    ) -> Response:
+        """Same session as after a password login, then back to the panel."""
+        if not roles:
+            log.warning("sso user without panel role", extra={"fields": {"method": method, "username": username}})
+            LOGINS.labels(method, "forbidden").inc()
+            await st.repo.record_login(username, method, False, ip)
+            return RedirectResponse("/login?error=forbidden", status_code=status_code)
+        user = await st.repo.upsert_sso_user(method, subject, username, display, roles)
+        await st.repo.record_login(user.username, method, True, ip)
+        session = Session(user.id, user.username, user.display_name, user.roles, method, now())
+        token = await st.sessions.create(session)
+        LOGINS.labels(method, "success").inc()
+        response = RedirectResponse(next_url, status_code=status_code)
+        set_session_cookie(response, token)
+        return response
 
     def safe_next(value: str | None) -> str:
         if not value or not value.startswith("/") or value.startswith("//") or "\\" in value:
@@ -257,8 +303,12 @@ def create_app(
         state_token = secrets.token_urlsafe(24)
         nonce = secrets.token_urlsafe(24)
         verifier, challenge = pkce_pair()
+        try:
+            url = await st.oidc.authorize_url(state_token, nonce, challenge)
+        except OidcError as exc:
+            raise ApiError(404, "oidc_disabled", "Вход через SSO сейчас недоступен") from exc
         await st.oidc_states.put(state_token, {"verifier": verifier, "nonce": nonce, "next": safe_next(next)})
-        return RedirectResponse(st.oidc.authorize_url(state_token, nonce, challenge), status_code=302)
+        return RedirectResponse(url, status_code=302)
 
     @app.get("/api/v1/auth/oidc/callback")
     async def oidc_callback(
@@ -276,16 +326,75 @@ def create_app(
             await st.repo.record_login("?", "oidc", False, client_ip(request))
             return RedirectResponse("/login?error=sso", status_code=302)
 
-        user = await st.repo.upsert_oidc_user(
-            identity.subject, identity.username, identity.display_name, identity.roles
+        return await start_sso_session(
+            st,
+            "oidc",
+            identity.subject,
+            identity.username,
+            identity.display_name,
+            identity.roles,
+            client_ip(request),
+            saved["next"],
         )
-        await st.repo.record_login(user.username, "oidc", True, client_ip(request))
-        session = Session(user.id, user.username, user.display_name, user.roles, "oidc", now())
-        token = await st.sessions.create(session)
-        LOGINS.labels("oidc", "success").inc()
-        response = RedirectResponse(saved["next"], status_code=302)
-        set_session_cookie(response, token)
-        return response
+
+    # ---- SAML 2.0 SP -------------------------------------------------------------------
+
+    @app.get("/api/v1/auth/saml/metadata")
+    async def saml_metadata(st: Ctx):
+        if not settings.saml_enabled:
+            raise ApiError(404, "saml_disabled", "Вход через SAML выключен")
+        return Response(st.saml.metadata(), media_type="application/samlmetadata+xml")
+
+    @app.get("/api/v1/auth/saml/login")
+    async def saml_login(st: Ctx, next: str = "/"):
+        request_id = new_request_id()
+        try:
+            url = await st.saml.login_url(request_id)
+        except SamlError as exc:
+            raise ApiError(404, "saml_disabled", "Вход через SAML сейчас недоступен") from exc
+        await st.saml_requests.put(request_id, {"next": safe_next(next)})
+        return RedirectResponse(url, status_code=302)
+
+    @app.post("/api/v1/auth/saml/acs")
+    async def saml_acs(request: Request, st: Ctx):
+        # IdP присылает форму со своего домена: Origin чужой, это нормально. Защищают подпись,
+        # InResponseTo (ID нашего запроса, одноразовый) и запрет повторного использования ассерции.
+        ip = client_ip(request)
+        body = await request.body()
+        fields = parse_qs(body.decode("latin-1"), max_num_fields=10) if len(body) <= 400_000 else {}
+        saml_response = (fields.get("SAMLResponse") or [""])[0]
+
+        def reject(reason: str) -> Response:
+            log.warning("saml response rejected", extra={"fields": {"reason": reason}})
+            LOGINS.labels("saml", "failure").inc()
+            return RedirectResponse("/login?error=sso", status_code=303)
+
+        if not saml_response:
+            return reject("no SAMLResponse")
+        try:
+            assertion = await st.saml.parse(saml_response)
+        except SamlError as exc:
+            await st.repo.record_login("?", "saml", False, ip)
+            return reject(str(exc))
+
+        saved = await st.saml_requests.pop(assertion.in_response_to)
+        if saved is None:
+            return reject("unknown or reused InResponseTo")
+        ttl = (assertion.expires_at - datetime.now(timezone.utc)).total_seconds() + settings.saml_clock_skew_seconds
+        if not await st.saml_replay.first_use(assertion.assertion_id, int(ttl)):
+            return reject("assertion replay")
+
+        attrs = assertion.attributes
+        roles = map_roles(
+            settings,
+            attrs.get(settings.saml_roles_attribute, []) if settings.saml_roles_attribute else [],
+            attrs.get(settings.saml_groups_attribute, []) if settings.saml_groups_attribute else [],
+        )
+        username = assertion.first(*USERNAME_ATTRS) or assertion.subject
+        display = assertion.first(*NAME_ATTRS) or username
+        return await start_sso_session(
+            st, "saml", assertion.subject, username[:128], display, roles, ip, saved["next"], 303
+        )
 
     # ---- gateway hooks -----------------------------------------------------------------
 

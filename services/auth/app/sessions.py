@@ -11,6 +11,8 @@ from redis.asyncio import Redis
 SESSION_PREFIX = "cr:sess:"
 RATE_PREFIX = "cr:rl:login:"
 OIDC_STATE_PREFIX = "cr:oidc:"
+SAML_REQUEST_PREFIX = "cr:saml:req:"
+SAML_SEEN_PREFIX = "cr:saml:seen:"
 
 
 @dataclass
@@ -94,16 +96,33 @@ class LoginRateLimiter:
 
 
 class OidcStateStore:
-    def __init__(self, redis: Redis, ttl_seconds: int = 600):
+    """One-shot state of a redirect login: OIDC `state` or the ID of a SAML AuthnRequest."""
+
+    def __init__(self, redis: Redis, ttl_seconds: int = 600, prefix: str = OIDC_STATE_PREFIX):
         self.redis = redis
         self.ttl = ttl_seconds
+        self.prefix = prefix
 
     async def put(self, state: str, data: dict) -> None:
-        await self.redis.set(OIDC_STATE_PREFIX + state, json.dumps(data), ex=self.ttl)
+        await self.redis.set(self.prefix + state, json.dumps(data), ex=self.ttl)
 
     async def pop(self, state: str) -> dict | None:
-        raw = await self.redis.getdel(OIDC_STATE_PREFIX + state)
+        if not state or len(state) > 256:
+            return None
+        raw = await self.redis.getdel(self.prefix + state)
         return json.loads(raw) if raw else None
+
+
+class ReplayGuard:
+    """Remembers SAML assertion IDs until they expire: the same assertion is accepted once."""
+
+    def __init__(self, redis: Redis, prefix: str = SAML_SEEN_PREFIX):
+        self.redis = redis
+        self.prefix = prefix
+
+    async def first_use(self, assertion_id: str, ttl_seconds: int) -> bool:
+        key = self.prefix + hashlib.sha256(assertion_id.encode()).hexdigest()
+        return bool(await self.redis.set(key, "1", ex=max(int(ttl_seconds), 60), nx=True))
 
 
 def now() -> float:

@@ -109,14 +109,19 @@ async def test_session_ttl_slides(client, redis):
     assert await redis.ttl(key) > 3600
 
 
-async def test_providers_without_keycloak(client):
+async def test_providers_without_idp(client):
     resp = await client.get("/api/v1/auth/providers")
-    assert resp.json() == {"password": True, "oidc": {"enabled": False}}
+    assert resp.json() == {"password": True, "oidc": {"enabled": False}, "saml": {"enabled": False}}
 
 
 async def test_oidc_login_404_when_disabled(client):
     resp = await client.get("/api/v1/auth/oidc/login")
     assert resp.status_code == 404
+
+
+async def test_saml_endpoints_404_when_disabled(client):
+    assert (await client.get("/api/v1/auth/saml/login")).status_code == 404
+    assert (await client.get("/api/v1/auth/saml/metadata")).status_code == 404
 
 
 async def test_login_audit_recorded(client, repo):

@@ -11,4 +11,7 @@ DURATION = Histogram(
 )
 CUSTOMERS = Gauge("scoring_customers", "Клиентов в последнем расчёте")
 EVENTS = Counter("scoring_events_total", "Полученные события", ["type", "result"])
+ERRORS = Counter("scoring_processing_errors_total", "Ошибки обработки", ["stage"])
+RETRIES = Counter("scoring_retries_total", "Входные события, возвращённые на повторную доставку")
+DEAD_LETTERS = Counter("scoring_dead_letters_total", "Входные события, ушедшие в DLQ", ["subject"])
 LAST_RUN = Gauge("scoring_last_run_timestamp_seconds", "Время последнего успешного пересчёта")

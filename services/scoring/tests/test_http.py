@@ -37,13 +37,24 @@ async def test_probes() -> None:
     assert (await _get(app, "/healthz")).json() == {"status": "ok"}
     resp = await _get(app, "/readyz")
     assert resp.status_code == 503
-    assert resp.json()["checks"] == {"database": False, "nats": False, "consumer": False, "initial_scoring": False}
+    assert resp.json()["checks"] == {
+        "database": False,
+        "nats": False,
+        "consumer": False,
+        "initial_scoring": False,
+        "background_tasks": True,
+    }
 
     state.pool = _Pool()
     state.worker = SimpleNamespace(nats_connected=True, subscribed=True)  # type: ignore[assignment]
     state.ready = True
     resp = await _get(app, "/readyz")
     assert resp.status_code == 200 and resp.json()["status"] == "ok"
+
+    # упавшая фоновая задача снимает готовность
+    state.failed_task = "consume"
+    resp = await _get(app, "/readyz")
+    assert resp.status_code == 503 and resp.json()["checks"]["background_tasks"] is False
 
 
 async def test_metrics_token_is_exact() -> None:

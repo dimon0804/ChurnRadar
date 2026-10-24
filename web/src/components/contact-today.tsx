@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { ArrowRight, Download, Mail, Mails, PartyPopper, PiggyBank, TrendingDown, Undo2, Users } from 'lucide-react'
+import { ArrowRight, Download, Mail, Mails, PartyPopper, TrendingDown, Undo2, Users } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { errorMessage } from '@/api/client'
@@ -14,7 +14,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCustomerAction, type ActionVariables } from '@/hooks/use-customer-action'
-import { CONTACT_LIST_CSV_URL, emailedUpdate, resolvedUpdate, savingText, snoozeUpdate, statsLine } from '@/lib/contact-today'
+import { CustomerFocus, UrgentBadge } from '@/components/customer-focus'
+import { CONTACT_LIST_CSV_URL, emailedUpdate, massCount, resolvedUpdate, snoozeUpdate, statsLine } from '@/lib/contact-today'
 import { countLabel, formatMoney } from '@/lib/format'
 import { useAuth } from '@/providers/auth'
 
@@ -39,8 +40,6 @@ export function ContactTodayList({
   return (
     <ol className="divide-y divide-border" data-testid="contact-today-list">
       {items.map((c, i) => {
-        const action = c.next_action
-        const saving = savingText(action)
         const busy = busyId === c.id
         return (
           <li key={c.id} className="flex flex-col gap-3 py-3.5 first:pt-0 last:pb-0 sm:flex-row sm:items-center" data-testid="contact-today-row">
@@ -55,17 +54,12 @@ export function ContactTodayList({
                   {c.email}
                 </Link>
                 <RiskBadge level={c.risk_level} />
+                <UrgentBadge item={c} />
                 <ActionBadge action={c.action} />
               </div>
-              <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-muted-foreground">
-                {action?.title ?? c.main_reason ?? 'Готового действия нет — откройте карточку и посмотрите причины'}
-              </p>
-              {saving && (
-                <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-md bg-risk-low-bg px-2 py-0.5 text-xs font-medium text-risk-low num">
-                  <PiggyBank className="size-3.5" aria-hidden />
-                  {saving}
-                </p>
-              )}
+              <div className="mt-1">
+                <CustomerFocus reason={c.main_reason} action={c.next_action} />
+              </div>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 sm:shrink-0 sm:flex-nowrap sm:justify-end">
               <div className="text-left sm:w-28 sm:text-right">
@@ -158,14 +152,19 @@ export function ContactTodayCard() {
           <CardDescription className="mt-1 max-w-2xl">
             {marked
               ? 'Кому написали, кто ответил и кого отложили. Клиент вернётся в список сам, если на письмо не ответят за неделю, кончится отложка или вырастет риск.'
-              : 'Сортируем по деньгам, которые можно спасти: сверху тот, на ком мы потеряем больше всего, если ничего не делать. Клиенты без оценки сюда не попадают.'}
+              : 'Сначала срочные — у кого срок по риску наступит в ближайшие два дня, дальше по деньгам, которые можно спасти. Клиенты без оценки сюда не попадают.'}
           </CardDescription>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-          {canAct && !marked && data && data.queue_total > 0 && (
-            <Button size="sm" onClick={() => setMass(true)} data-testid="contact-today-mass">
+          {canAct && !marked && data && massCount(data.queue_by_level) > 0 && (
+            <Button
+              size="sm"
+              onClick={() => setMass(true)}
+              data-testid="contact-today-mass"
+              title="Клиентам высокого и среднего риска; уровни можно поменять в окне рассылки"
+            >
               <Mails />
-              Написать всем · {data.queue_total}
+              Написать высокому и среднему · {massCount(data.queue_by_level)}
             </Button>
           )}
           <Button variant="ghost" size="sm" onClick={() => setMarked((v) => !v)} aria-pressed={marked}>
@@ -240,7 +239,12 @@ export function ContactTodayCard() {
           onOpenChange={(open) => !open && setWriteTo(null)}
         />
       )}
-      <CampaignDialog target={{ worklist: true }} title="Написать всем в очереди" open={mass} onOpenChange={setMass} />
+      <CampaignDialog
+        target={{ worklist: true, byLevel: data?.queue_by_level }}
+        title="Написать клиентам из очереди"
+        open={mass}
+        onOpenChange={setMass}
+      />
     </Card>
   )
 }

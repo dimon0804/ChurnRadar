@@ -140,3 +140,21 @@ test('рассылка выбранным: предпросмотр количе
   await dialog.getByRole('button', { name: 'Отмена' }).click()
   await expect(dialog).toHaveCount(0)
 })
+
+
+test('шаблон на /mail показан на настоящем клиенте, подпись — из настроек писем', async ({ page, request }) => {
+  await loginApi(request)
+  const settings = (await (await request.get('/api/v1/mail/settings')).json()) as { company: string }
+  await loginUi(page)
+  await page.goto('/mail')
+  const preview = page.getByTestId('template-preview')
+  await expect(preview).toContainText(/настоящие данные: клиент \d+|Пример на данных: клиент \d+|заглушки/)
+  // данные те же, что в карточке: тот же email, что вернул сервер для этого клиента
+  const caption = (await preview.locator('p').first().textContent()) ?? ''
+  const id = caption.match(/клиент (\d+)/)?.[1]
+  if (id) {
+    const card = (await (await request.get(`/api/v1/customers/${id}`)).json()) as { email: string }
+    await expect(preview).toContainText(card.email)
+  }
+  await expect(page.getByTestId('mail-settings').getByLabel('Название компании')).toHaveValue(settings.company)
+})

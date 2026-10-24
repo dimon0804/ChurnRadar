@@ -1,15 +1,16 @@
-/** Шаблоны писем на клиенте: предпросмотр с примером и проверка подстановок до сохранения. */
+/** Шаблоны писем на клиенте: подпись к примеру и проверка подстановок до сохранения. */
+
+import type { MailTemplatePreview } from '@/api/types'
 
 const PLACEHOLDER = /\{\{\s*([a-z_]+)\s*\}\}/g
 
-/** Пример клиента для предпросмотра шаблона в редакторе. */
-export const SAMPLE_VALUES: Record<string, string> = {
-  email: 'user-0009@example.test',
-  service: 'service-0019',
-  date: '24 октября',
-  amount: '€8,55 в час',
-  balance: '€915,06',
-  company: 'ChurnRadar',
+/** Подпись над примером письма: чей это пример и подходит ли шаблон этому клиенту. */
+export function previewCaption(p: MailTemplatePreview): string {
+  if (p.customer_id === null) return 'Оценённых клиентов с такой причиной нет — вместо данных стоят заглушки'
+  const who = `клиент ${p.customer_id}${p.to ? `, ${p.to}` : ''}`
+  return p.applicable
+    ? `Так письмо увидит клиент (настоящие данные: ${who})`
+    : `Пример на данных: ${who}. Такой причины у него нет — при рассылке ему уйдёт письмо по его причине`
 }
 
 export function renderTemplate(text: string, values: Record<string, string>): string {

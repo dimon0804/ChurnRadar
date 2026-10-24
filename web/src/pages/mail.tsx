@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Lock, Mail, RotateCcw, Save } from 'lucide-react'
+import { Building2, Lock, Mail, RotateCcw, Save } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { errorMessage } from '@/api/client'
 import { api, queryKeys } from '@/api/endpoints'
@@ -17,7 +17,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { statsLine, TEMPLATE_TITLE } from '@/lib/contact-today'
 import { formatDateTime } from '@/lib/format'
-import { insertAt, renderTemplate, SAMPLE_VALUES, unknownPlaceholders } from '@/lib/mail'
+import { useDebouncedValue } from '@/hooks/use-debounced'
+import { insertAt, previewCaption, unknownPlaceholders } from '@/lib/mail'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/providers/auth'
 
@@ -122,15 +123,110 @@ function TemplateEditor({
           </p>
         )}
       </div>
-      <div className="space-y-1.5">
-        <p className="text-[13px] text-muted-foreground">Так письмо увидит клиент (пример с данными клиента 9)</p>
-        <LetterPreview
-          to={SAMPLE_VALUES.email ?? ''}
-          subject={renderTemplate(subject, SAMPLE_VALUES)}
-          text={renderTemplate(body, SAMPLE_VALUES)}
-        />
-      </div>
+      <TemplatePreview code={template.code} subject={subject} body={body} disabled={bad.length > 0} />
     </div>
+  )
+}
+
+/** Пример письма на настоящем клиенте: сервер подставляет его данные той же функцией, что при отправке. */
+function TemplatePreview({ code, subject, body, disabled }: { code: string; subject: string; body: string; disabled: boolean }) {
+  const draft = useDebouncedValue({ subject, body }, 400)
+  const ready = !disabled && draft.subject.trim() !== '' && draft.body.trim() !== ''
+  const preview = useQuery({
+    queryKey: queryKeys.mailPreview(code, draft.subject, draft.body),
+    queryFn: ({ signal }) => api.previewMailTemplate(code, { subject: draft.subject, body: draft.body }, signal),
+    enabled: ready,
+    placeholderData: (prev) => prev,
+  })
+  const data = preview.data
+  return (
+    <div className="space-y-1.5" data-testid="template-preview">
+      <p className="text-[13px] text-muted-foreground">{data ? previewCaption(data) : 'Так письмо увидит клиент'}</p>
+      {preview.isError ? (
+        <p role="alert" className="text-[13px] text-risk-high">
+          {errorMessage(preview.error)}
+        </p>
+      ) : data ? (
+        <LetterPreview to={data.to ?? ''} subject={data.subject} text={data.text} />
+      ) : (
+        <Skeleton className="h-64 w-full" />
+      )}
+    </div>
+  )
+}
+
+/** Название компании в подписи писем ({{company}}). Менять может администратор. */
+function MailSettingsCard({ canEdit }: { canEdit: boolean }) {
+  const queryClient = useQueryClient()
+  const settings = useQuery({ queryKey: queryKeys.mailSettings, queryFn: ({ signal }) => api.mailSettings(signal) })
+  const [company, setCompany] = useState<string | null>(null)
+  const value = company ?? settings.data?.company ?? ''
+  const save = useMutation({
+    mutationFn: () => api.putMailSettings({ company: value.trim() }),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(queryKeys.mailSettings, saved)
+      setCompany(null)
+      void queryClient.invalidateQueries({ queryKey: ['customers', 'mail-preview'] })
+    },
+  })
+  const dirty = settings.data !== undefined && value.trim() !== settings.data.company
+  return (
+    <Card data-testid="mail-settings">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Building2 className="size-4 text-muted-foreground" aria-hidden />
+          Настройки писем
+        </CardTitle>
+        <CardDescription>Название компании подставляется в подпись вместо {'{{company}}'}: «С уважением, команда …»</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {settings.isPending ? (
+          <Skeleton className="h-9 w-80" />
+        ) : settings.isError ? (
+          <ErrorState error={settings.error} onRetry={() => void settings.refetch()} className="py-4" />
+        ) : (
+          <form
+            className="flex flex-wrap items-end gap-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (dirty && value.trim()) save.mutate()
+            }}
+          >
+            <div className="w-full max-w-xs space-y-1.5">
+              <Label htmlFor="mail-company">Название компании</Label>
+              <Input
+                id="mail-company"
+                value={value}
+                maxLength={100}
+                disabled={!canEdit}
+                onChange={(e) => setCompany(e.target.value)}
+              />
+            </div>
+            {canEdit ? (
+              <Button type="submit" disabled={!dirty || !value.trim() || save.isPending}>
+                <Save />
+                {save.isPending ? 'Сохраняем…' : 'Сохранить'}
+              </Button>
+            ) : (
+              <p className="flex items-center gap-2 pb-2 text-[13px] text-muted-foreground">
+                <Lock className="size-3.5" aria-hidden />
+                Менять может администратор.
+              </p>
+            )}
+            {settings.data?.updated_by && (
+              <span className="pb-2 text-xs text-subtle-foreground">
+                Изменил {settings.data.updated_by}, {formatDateTime(settings.data.updated_at)}
+              </span>
+            )}
+            {save.isError && (
+              <p role="alert" className="w-full text-[13px] text-risk-high">
+                {errorMessage(save.error)}
+              </p>
+            )}
+          </form>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -235,6 +331,7 @@ export default function MailPage() {
             ) : null}
           </CardContent>
         </Card>
+        <MailSettingsCard canEdit={isAdmin} />
         <Campaigns />
       </div>
     </>

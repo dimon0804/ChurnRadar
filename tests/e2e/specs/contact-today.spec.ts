@@ -10,8 +10,14 @@ const MARKETER = {
   password: process.env.MARKETER_PASSWORD ?? 'marketer',
 }
 
-type QueueItem = { id: number; email: string; risk_level: string; expected_loss: number }
-type Queue = { items: QueueItem[]; queue_total: number; marked_total: number }
+type QueueItem = { id: number; email: string; risk_level: string; expected_loss: number; urgent: boolean; deadline_days: number | null }
+type Queue = {
+  items: QueueItem[]
+  queue_total: number
+  marked_total: number
+  urgent_total: number
+  queue_by_level: { high: number; medium: number; low: number }
+}
 
 const touched = new Set<number>()
 
@@ -29,7 +35,7 @@ test.afterAll(async ({ request }) => {
   }
 })
 
-test('очередь: только клиенты с риском, по убыванию ожидаемой потери', async ({ request }) => {
+test('очередь: только клиенты с риском, сначала срочные, дальше по убыванию ожидаемой потери', async ({ request }) => {
   await loginApi(request, MARKETER)
   const q = await queue(request)
   expect(q.items.length).toBeGreaterThan(0)
@@ -37,8 +43,15 @@ test('очередь: только клиенты с риском, по убыв
     expect(item.risk_level).not.toBe('unknown')
     expect(item.expected_loss).toBeGreaterThan(0)
   }
-  const losses = q.items.map((i) => i.expected_loss)
-  expect(losses).toEqual([...losses].sort((a, b) => b - a))
+  // срочные (срок по риску не дальше 2 дней) — наверху при любом уровне риска
+  const urgent = q.items.filter((i) => i.urgent)
+  expect(q.items.slice(0, urgent.length)).toEqual(urgent)
+  for (const item of urgent) expect(item.deadline_days).toBeLessThanOrEqual(2)
+  for (const group of [urgent, q.items.filter((i) => !i.urgent)]) {
+    const losses = group.map((i) => i.expected_loss)
+    expect(losses).toEqual([...losses].sort((a, b) => b - a))
+  }
+  expect(q.queue_by_level.high + q.queue_by_level.medium + q.queue_by_level.low).toBe(q.queue_total)
 
   // в данных кейса 4 high и 2 medium: все шестеро с ненулевой потерей, unknown не попадают
   const res = await request.get('/api/v1/customers', { params: { level: 'high,medium', page_size: '200' } })
@@ -105,7 +118,7 @@ test('выгрузка CSV: UTF-8 с BOM, «;», те же фильтры, чт�
   expect([...raw.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf])
   const lines = raw.toString('utf-8').replace(/^﻿/, '').trim().split('\r\n')
   expect(lines[0]).toBe(
-    'ID;Email;Уровень риска;Риск, баллы;Ожидаемая потеря, €;Баланс, €;Пополнения всего, €;Главная причина;Что сделать;Статус',
+    'ID;Email;Уровень риска;Риск, баллы;Ожидаемая потеря, €;Баланс, €;Пополнения всего, €;Срочно;Главная причина риска;Самое выгодное действие;Статус',
   )
   const list = await request.get('/api/v1/customers', { params: { level: 'high', sort: 'expected_loss', order: 'desc', page_size: '200' } })
   const ids = ((await list.json()) as { items: QueueItem[] }).items.map((c) => String(c.id))

@@ -17,7 +17,7 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip } from '@/components/ui/tooltip'
-import { countLabel, formatDecimal, formatInt, formatShare, plural } from '@/lib/format'
+import { countLabel, formatDecimal, formatInt, formatShare, plural, sentences } from '@/lib/format'
 import { labelOf, PAYMENT_TERM_LABEL, RISK_LABEL_LONG } from '@/lib/labels'
 import {
   eur,
@@ -29,6 +29,7 @@ import {
   parsePercent,
   RATIO_TEXT,
   ratioVerdict,
+  retentionRevenueLine,
   retentionSentence,
   targetSentence,
 } from '@/lib/marketing'
@@ -105,10 +106,10 @@ function KpiGrid({ m }: { m: Marketing }) {
         value={ue.ltv_cac === null ? <span className="text-muted-foreground">укажите CAC</span> : formatRatio(ue.ltv_cac)}
         sub={
           ue.payback_months !== null
-            ? `Окупается за ${formatMonths(ue.payback_months)}. ${RATIO_TEXT[verdict]}`
+            ? sentences(`Окупается за ${formatMonths(ue.payback_months)}`, RATIO_TEXT[verdict], hints.cacSource)
             : verdict === 'none'
               ? 'Её задаёт администратор в блоке «Экономика привлечения»'
-              : RATIO_TEXT[verdict]
+              : sentences(RATIO_TEXT[verdict], hints.cacSource)
         }
         info={hints.ltvCac}
         infoClassName={HINT_WIDTH}
@@ -118,14 +119,11 @@ function KpiGrid({ m }: { m: Marketing }) {
 }
 
 function ScenarioLine({ s, main }: { s: RetentionScenario; main?: boolean }) {
+  const line = retentionRevenueLine(s)
   return (
     <div className={cn(main ? 'text-[17px] leading-7 font-medium' : 'text-sm leading-6 text-muted-foreground')}>
       {retentionSentence(s)}
-      {s.ltv_uplift !== null && s.ltv_retained !== null && s.customers > 0 && (
-        <span className={cn('block num', main ? 'mt-1 text-sm font-normal text-muted-foreground' : '')}>
-          LTV этих клиентов: {eur(s.ltv_now)} сейчас → {eur(s.ltv_retained)}, если удержим.
-        </span>
-      )}
+      {line && <span className={cn('block num', main ? 'mt-1 text-sm font-normal text-muted-foreground' : '')}>{line}</span>}
     </div>
   )
 }
@@ -159,7 +157,7 @@ function Retention({ m }: { m: Marketing }) {
             </dd>
           </div>
           <div>
-            <dt className="text-xs text-muted-foreground">Можно сохранить в месяц</dt>
+            <dt className="text-xs text-muted-foreground">Можно сохранить в первый месяц</dt>
             <dd className="mt-0.5 text-[20px] font-semibold num">{eur(main?.saved_mrr)}</dd>
             <dd className="text-xs text-muted-foreground">регулярной выручки</dd>
           </div>

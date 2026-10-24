@@ -9,10 +9,15 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent } from '@/components/ui/dialog'
 import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { campaignSummary, TEMPLATE_TITLE } from '@/lib/contact-today'
+import { campaignSummary, DEFAULT_MASS_LEVELS, MASS_LEVELS, massCount, type MassLevel, type QueueByLevel, TEMPLATE_TITLE } from '@/lib/contact-today'
+import { RISK_LABEL_LONG } from '@/lib/labels'
 import { countLabel } from '@/lib/format'
 
-export type CampaignTarget = { worklist: true } | { customer_ids: number[] } | { reason: string; reason_scope: 'main' | 'any' }
+/** Вся очередь (с выбором уровней риска и счётчиками по ним), выбранные в таблице или все с причиной. */
+export type CampaignTarget =
+  | { worklist: true; byLevel?: QueueByLevel }
+  | { customer_ids: number[] }
+  | { reason: string; reason_scope: 'main' | 'any' }
 
 const AUTO = 'auto'
 const SKIP_OPTIONS = [
@@ -74,11 +79,13 @@ export function CampaignDialog({
   const [template, setTemplate] = useState(reasonTemplate)
   const [skipDays, setSkipDays] = useState('7')
   const [campaignId, setCampaignId] = useState<number | null>(null)
+  const [levels, setLevels] = useState<MassLevel[]>([...DEFAULT_MASS_LEVELS])
+  const byLevel = 'worklist' in target ? target.byLevel : undefined
   const templates = useQuery({ queryKey: queryKeys.mailTemplates, queryFn: ({ signal }) => api.mailTemplates(signal) })
 
   const request: CampaignRequest = {
     ...('worklist' in target
-      ? { worklist: true }
+      ? { worklist: true, levels }
       : 'reason' in target
         ? { worklist: false, reason: target.reason }
         : { worklist: false, customer_ids: target.customer_ids }),
@@ -89,7 +96,7 @@ export function CampaignDialog({
   const preview = useQuery({
     queryKey: ['mail-campaign-preview', request],
     queryFn: ({ signal }) => api.previewCampaign(request, signal),
-    enabled: open && campaignId === null,
+    enabled: open && campaignId === null && levels.length > 0,
     gcTime: 0,
     refetchOnWindowFocus: false,
   })
@@ -129,6 +136,7 @@ export function CampaignDialog({
       onOpenChange={(next) => {
         if (!next) {
           setCampaignId(null)
+          setLevels([...DEFAULT_MASS_LEVELS])
           create.reset()
         }
         onOpenChange(next)
@@ -151,7 +159,7 @@ export function CampaignDialog({
               </DialogClose>
               <Button
                 onClick={() => create.mutate()}
-                disabled={!p || p.to_send === 0 || !p.enabled || create.isPending}
+                disabled={!p || levels.length === 0 || p.to_send === 0 || !p.enabled || create.isPending}
                 data-testid="campaign-send"
               >
                 <Send />
@@ -173,6 +181,34 @@ export function CampaignDialog({
           )
         ) : (
           <div className="space-y-4">
+            {'worklist' in target && (
+              <fieldset className="space-y-1.5 text-[13px]" data-testid="campaign-levels">
+                <legend className="mb-1.5 text-muted-foreground">Кому писать: уровни риска в очереди</legend>
+                <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                  {MASS_LEVELS.map((level) => (
+                    <label key={level} className="inline-flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="size-4 accent-primary"
+                        checked={levels.includes(level)}
+                        onChange={(e) =>
+                          setLevels((prev) => (e.target.checked ? MASS_LEVELS.filter((l) => l === level || prev.includes(l)) : prev.filter((l) => l !== level)))
+                        }
+                      />
+                      {RISK_LABEL_LONG[level]}
+                      {byLevel && <span className="text-muted-foreground num">· {byLevel[level]}</span>}
+                    </label>
+                  ))}
+                </div>
+                {byLevel && (
+                  <p className="text-xs text-muted-foreground" data-testid="campaign-levels-count">
+                    {levels.length === 0
+                      ? 'Выберите хотя бы один уровень'
+                      : `В очереди выбранных уровней: ${countLabel(massCount(byLevel, levels), ['клиент', 'клиента', 'клиентов'])}`}
+                  </p>
+                )}
+              </fieldset>
+            )}
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="space-y-1.5 text-[13px]">
                 <span className="text-muted-foreground">Шаблон</span>
@@ -183,7 +219,7 @@ export function CampaignDialog({
                 <Select value={skipDays} onValueChange={setSkipDays} options={SKIP_OPTIONS} ariaLabel="Защита от повторной отправки" className="w-full" />
               </label>
             </div>
-            {preview.isPending ? (
+            {levels.length === 0 ? null : preview.isPending ? (
               <Skeleton className="h-40 w-full" />
             ) : preview.isError ? (
               <p role="alert" className="text-sm text-risk-high">

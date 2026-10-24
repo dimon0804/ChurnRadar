@@ -18,9 +18,10 @@ import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useDebouncedValue } from '@/hooks/use-debounced'
-import { countLabel, formatInt, formatMoney } from '@/lib/format'
+import { balanceLabel, countLabel, formatInt, formatMoney, spendableBalance } from '@/lib/format'
 import { RISK_LABEL } from '@/lib/labels'
-import { FEATURE_TITLE, isChurned, reasonAction, reasonTooltip, shortReasonTitle } from '@/lib/reasons'
+import { bestAction, FEATURE_TITLE, isChurned, shortReasonTitle } from '@/lib/reasons'
+import { CustomerFocus, UrgentBadge } from '@/components/customer-focus'
 import { diffRows, scoreTrend } from '@/lib/recalc'
 import {
   clearReason,
@@ -106,7 +107,15 @@ const columns = [
   col.accessor('balance', {
     header: 'Баланс',
     meta: { align: 'right', className: 'max-md:hidden' },
-    cell: (c) => <span className="num">{formatMoney(c.getValue())}</span>,
+    cell: (c) => {
+      const { total, bonus } = spendableBalance(c.row.original)
+      return (
+        <span className="num" title={balanceLabel(c.row.original)}>
+          {formatMoney(total)}
+          {bonus > 0 && <span className="block text-xs text-muted-foreground">вкл. бонусы {formatMoney(bonus)}</span>}
+        </span>
+      )
+    },
   }),
   col.accessor('total_replenished', {
     header: 'Пополнено всего',
@@ -128,47 +137,31 @@ const columns = [
     header: 'Уровень',
     enableSorting: false,
     meta: { className: 'w-[124px] whitespace-nowrap' },
-    cell: (c) => <RiskBadge level={c.getValue()} churned={isChurned(c.row.original)} />,
+    cell: (c) => (
+      <span className="inline-flex flex-col items-start gap-1">
+        <RiskBadge level={c.getValue()} churned={isChurned(c.row.original)} />
+        <UrgentBadge item={c.row.original} />
+      </span>
+    ),
   }),
   col.display({
     id: 'reason',
-    header: 'Главная причина и что сделать',
+    header: 'Главная причина риска и самое выгодное действие',
     meta: { className: 'w-full min-w-[160px] max-w-0' },
     cell: (c) => {
       const reason = c.row.original.reasons?.[0]
-      const unknown = c.row.original.risk_level === 'unknown'
       if (!reason) return <span className="text-subtle-foreground">—</span>
       const meta = c.table.options.meta as CellContext | undefined
-      const titles = meta?.titles
-      const action = reasonAction(reason)
-      const label = shortReasonTitle(reason, titles)
       return (
-        <div className="min-w-0" title={reasonTooltip(reason)}>
-          {meta?.reasonLink ? (
-            <Link
-              to={meta.reasonLink(reason.code)}
-              data-reason={reason.code}
-              aria-label={`${label}: показать всех клиентов с этой главной причиной`}
-              className={cn(
-                'block max-w-full truncate rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring',
-                unknown ? 'text-muted-foreground' : 'font-medium',
-              )}
-            >
-              {label}
-            </Link>
-          ) : (
-            <p className={cn('truncate', unknown ? 'text-muted-foreground' : 'font-medium')}>{label}</p>
-          )}
-          {action && (
-            <p className="truncate text-xs leading-5 text-muted-foreground">
-              <span className="text-subtle-foreground" aria-hidden>
-                →{' '}
-              </span>
-              <span className="sr-only">Что сделать: </span>
-              {action}
-            </p>
-          )}
-        </div>
+        <CustomerFocus
+          compact
+          reason={shortReasonTitle(reason, meta?.titles)}
+          reasonTitle={reason.title}
+          reasonCode={reason.code}
+          reasonLink={meta?.reasonLink?.(reason.code)}
+          action={bestAction(c.row.original.next_action, reason)}
+          muted={c.row.original.risk_level === 'unknown'}
+        />
       )
     },
   }),

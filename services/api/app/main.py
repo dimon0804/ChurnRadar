@@ -19,7 +19,7 @@ from svckit.logs import configure_logging
 from svckit.metrics import HttpMetricsMiddleware, check_metrics_token, render
 from svckit.outbox import OutboxRelay
 
-from app import actions, metrics, model_quality, model_settings, queries
+from app import actions, metrics, model_quality, model_settings, preview, queries
 from app.config import settings
 from app.docs import router as docs_router
 
@@ -58,8 +58,10 @@ async def lifespan(app: FastAPI):
     )
     app.state.relay.start()
     app.state.http = httpx.AsyncClient(base_url=settings.simulator_url, timeout=settings.simulator_timeout_s)
+    app.state.scoring_http = httpx.AsyncClient(base_url=settings.scoring_url, timeout=settings.scoring_timeout_s)
     log.info("api_started")
     yield
+    await app.state.scoring_http.aclose()
     await app.state.http.aclose()
     await app.state.relay.stop()
     await app.state.bus.close()
@@ -182,6 +184,15 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
             log.info("settings_changed", version=state["version"], user=user.name)
             kick_relay(request)
         return state
+
+    @app.post("/api/v1/model/settings/preview", tags=["model"])
+    async def preview_model_settings(
+        request: Request,
+        user: AdminUser,
+        pool: Pool,
+        patch: Annotated[model_settings.ModelSettingsPatch, Body()],
+    ) -> JSONResponse:
+        return await preview.preview(request, user, pool, patch)
 
     @app.post("/api/v1/model/settings/reset", tags=["model"])
     async def reset_model_settings(request: Request, user: AdminUser, pool: Pool) -> dict[str, Any]:

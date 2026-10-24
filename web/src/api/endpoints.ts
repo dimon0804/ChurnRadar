@@ -10,6 +10,7 @@ import type {
   ModelQuality,
   ModelSettings,
   ModelSettingsPatch,
+  ModelSettingsPreview,
   SettingsHistory,
   SimulatorCommand,
   SimulatorState,
@@ -44,6 +45,8 @@ export const api = {
   patchSettings: (body: ModelSettingsPatch) =>
     request<ModelSettings>('/api/v1/model/settings', { method: 'PATCH', body }),
   resetSettings: () => request<ModelSettings>('/api/v1/model/settings/reset', { method: 'POST' }),
+  previewSettings: (body: ModelSettingsPatch, signal?: AbortSignal) =>
+    request<ModelSettingsPreview>('/api/v1/model/settings/preview', { method: 'POST', body, signal }),
   settingsHistory: (limit = 50, signal?: AbortSignal) =>
     request<SettingsHistory>('/api/v1/model/settings/history', { query: { limit }, signal }),
   modelQuality: (signal?: AbortSignal) => request<ModelQuality>('/api/v1/model/quality', { signal }),
@@ -69,5 +72,6 @@ export const queryKeys = {
   settings: ['settings'] as const,
   history: ['settings-history'] as const,
   modelQuality: ['model-quality'] as const,
+  settingsPreview: (patch: ModelSettingsPatch) => ['settings-preview', patch] as const,
   simulator: ['simulator'] as const,
 }

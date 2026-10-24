@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
+import { useSettingsPreview, WhatIfBar, WhatIfChanges } from '@/components/what-if'
 import { useChangeStamp, usePreviousDistinct } from '@/hooks/use-change-stamp'
 import { useNow } from '@/hooks/use-now'
 import { formatAgo, formatDateTime, formatDecimal, formatDuration, formatInt, formatMoney, formatShare, NBSP, plural } from '@/lib/format'
@@ -453,10 +454,27 @@ export default function ModelPage() {
   const pending = useRef<ModelSettingsPatch>({})
   const inFlight = useRef(0)
   const timer = useRef<number | undefined>(undefined)
+  // «Что если»: правки копятся здесь и не сохраняются до «Применить»
+  const [whatIf, setWhatIf] = useState(false)
+  const [whatIfPatch, setWhatIfPatch] = useState<ModelSettingsPatch>({})
+  const preview = useSettingsPreview(whatIf ? whatIfPatch : null)
 
-  const current = draft ?? settings.data ?? null
+  const saved = draft ?? settings.data ?? null
+  const current = whatIf && saved ? applyPatch(saved, whatIfPatch) : saved
 
   const mutation = useMutation({ mutationFn: api.patchSettings })
+  const apply = useMutation({
+    mutationFn: api.patchSettings,
+    onSuccess: (data) => {
+      queryClient.setQueryData(queryKeys.settings, data)
+      setAwaitingVersion((v) => Math.max(v ?? 0, data.version))
+      setWhatIf(false)
+      setWhatIfPatch({})
+      setSave({ kind: 'idle' })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.history })
+    },
+    onError: (error) => setSave({ kind: 'error', message: errorMessage(error) }),
+  })
   const reset = useMutation({
     mutationFn: api.resetSettings,
     onSuccess: (data) => {
@@ -499,6 +517,10 @@ export default function ModelPage() {
 
   const change = useCallback(
     (patch: ModelSettingsPatch) => {
+      if (whatIf) {
+        setWhatIfPatch((p) => mergePatch(p, patch))
+        return
+      }
       const base = draft ?? settings.data
       if (!base) return
       setDraft(applyPatch(base, patch))
@@ -506,8 +528,18 @@ export default function ModelPage() {
       window.clearTimeout(timer.current)
       timer.current = window.setTimeout(flush, DEBOUNCE_MS)
     },
-    [draft, settings.data, flush],
+    [whatIf, draft, settings.data, flush],
   )
+
+  const toggleWhatIf = (on: boolean) => {
+    if (on) {
+      // несохранённая правка из обычного режима уходит сразу, «было» считается уже с ней
+      window.clearTimeout(timer.current)
+      flush()
+    }
+    setWhatIf(on)
+    setWhatIfPatch({})
+  }
 
   // уходим со страницы — не теряем последнее изменение
   useEffect(
@@ -527,7 +559,7 @@ export default function ModelPage() {
     <>
       <PageHeader
         title="Модель риска"
-        description="Коэффициенты применяются сразу, без кнопки «Сохранить»: оценки клиентов пересчитываются за секунды."
+        description="Коэффициенты применяются сразу, без кнопки «Сохранить»: оценки клиентов пересчитываются за секунды. Хотите сначала посмотреть, что изменится, — включите «Что если»."
       />
 
       {settings.isPending ? (
@@ -538,9 +570,24 @@ export default function ModelPage() {
         </Card>
       ) : (
         <>
-          <div className="sticky top-14 z-20 -mx-4 mb-4 border-b border-border bg-background/90 px-4 py-2.5 backdrop-blur-md md:-mx-6 md:px-6">
-            <ImpactBar />
-            <div className="mt-2 flex items-center justify-between gap-4">
+          {/* в режиме «Что если» панель высокая: на телефоне не прилипает, чтобы не закрывать ползунки */}
+          <div
+            className={cn(
+              whatIf ? 'relative md:sticky' : 'sticky',
+              'top-14 z-20 -mx-4 mb-4 border-b border-border bg-background/90 px-4 py-2.5 backdrop-blur-md md:-mx-6 md:px-6',
+            )}
+          >
+            {whatIf ? (
+              <WhatIfBar
+                preview={preview}
+                applying={apply.isPending}
+                onApply={() => apply.mutate(whatIfPatch)}
+                onCancel={() => toggleWhatIf(false)}
+              />
+            ) : (
+              <ImpactBar />
+            )}
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
               <StatusLine
                 save={save}
                 settings={current}
@@ -550,23 +597,29 @@ export default function ModelPage() {
                   void settings.refetch()
                 }}
               />
-              <ConfirmDialog
-                title="Сбросить настройки модели?"
-                description="Все коэффициенты, пороги и горизонт вернутся к значениям по умолчанию. Оценки клиентов пересчитаются автоматически."
-                confirmLabel="Сбросить"
-                destructive
-                onConfirm={() => {
-                  window.clearTimeout(timer.current)
-                  pending.current = {}
-                  reset.mutate()
-                }}
-                trigger={
-                  <Button variant="outline" size="sm" disabled={reset.isPending}>
-                    {reset.isPending ? <Loader2 className="animate-spin" /> : <RotateCcw />}
-                    Сбросить к умолчаниям
-                  </Button>
-                }
-              />
+              <div className="flex shrink-0 items-center gap-3">
+                <label className="flex cursor-pointer items-center gap-2 text-[13px] font-medium" title="Двигайте ползунки и смотрите, что изменится, до сохранения">
+                  <Switch checked={whatIf} onCheckedChange={toggleWhatIf} disabled={apply.isPending || reset.isPending} />
+                  Что если
+                </label>
+                <ConfirmDialog
+                  title="Сбросить настройки модели?"
+                  description="Все коэффициенты, пороги и горизонт вернутся к значениям по умолчанию. Оценки клиентов пересчитаются автоматически."
+                  confirmLabel="Сбросить"
+                  destructive
+                  onConfirm={() => {
+                    window.clearTimeout(timer.current)
+                    pending.current = {}
+                    reset.mutate()
+                  }}
+                  trigger={
+                    <Button variant="outline" size="sm" disabled={reset.isPending || whatIf}>
+                      {reset.isPending ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+                      Сбросить к умолчаниям
+                    </Button>
+                  }
+                />
+              </div>
             </div>
           </div>
 
@@ -605,6 +658,7 @@ export default function ModelPage() {
               </p>
             </div>
             <div className="space-y-4">
+              {whatIf && <WhatIfChanges preview={preview.ready ? preview.data : undefined} />}
               <ThresholdsCard s={current} onChange={(t) => change({ thresholds: t })} />
               <HorizonCard s={current} onChange={(d) => change({ horizon_days: d })} />
               <HistoryCard titles={titles} />

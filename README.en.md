@@ -157,6 +157,18 @@ the balance will last) and concrete actions for the marketer.
 away, creates a new settings version with change history, and scores are recalculated within
 seconds. Only the `admin` role can open this page.
 
+To try a change before committing to it, turn on the "Что если" (what if) switch. In this mode
+the sliders save nothing; the bar on top shows what the expected loss, the share of revenue at
+risk and the number of customers per level would become, and a list shows who would move into
+or out of high risk. "Применить" saves as usual, "Отменить" puts everything back. scoring
+computes the preview with the same code as the real rescoring, so the numbers match after you
+apply. Above 2000 customers it scores a sample, and the panel says plainly that the totals are
+approximate (the threshold is `PREVIEW_SAMPLE_SIZE` on scoring). scoring keeps the snapshot and
+the "before" side in memory until the next rescoring, so on 100 thousand customers the first
+answer takes a few seconds and every further slider move about a second. If a full rescoring
+of a large base is running at that moment, the preview may not fit into `PREVIEW_TIMEOUT_S`
+(20 s); the panel then offers to retry.
+
 ![Weight editor](docs/img/screens/model.png)
 
 **Model quality.** The answer to "how far can we trust the model": how many times more often
@@ -591,6 +603,7 @@ types are generated from it. Main resources:
 | `GET /api/v1/analytics/summary` | base summary, actual and forecast chart, top reasons |
 | `GET/PATCH /api/v1/model/settings` | weights, thresholds and horizon (PATCH changes only the fields you send); next to it `POST …/reset` and `GET …/history` |
 | `GET /api/v1/model/quality` | model check results on a synthetic future: lift, ROC, baselines, calibration, robustness |
+| `POST /api/v1/model/settings/preview` | "what if": same body as PATCH, returns "before → after", saves nothing |
 | `PUT /api/v1/source/snapshot` | upload a snapshot in the `data.json` format, gzip allowed |
 | `POST /api/v1/source/events` | a batch of real-time changes |
 | `GET /api/v1/stream` | live updates (SSE) |

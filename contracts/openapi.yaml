@@ -281,6 +281,8 @@ paths:
         Формат тела совпадает с `data.json` из комплекта кейса. Замена атомарная.
         Пересчёт асинхронный, о завершении сообщает `scores.updated`. Требуется роль `admin`.
       operationId: putSnapshot
+      parameters:
+        - $ref: '#/components/parameters/ContentEncoding'
       requestBody:
         required: true
         content:
@@ -292,9 +294,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SnapshotAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
-        '413': { description: Тело слишком большое }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
   /api/v1/source/events:
@@ -305,6 +309,8 @@ paths:
         Пакет upsert-изменений аккаунтов, услуг и транзакций. Так источник шлёт изменения
         в реальном времени, без полной замены снимка. Требуется роль `admin` или сервисный токен.
       operationId: postSourceEvents
+      parameters:
+        - $ref: '#/components/parameters/ContentEncoding'
       requestBody:
         required: true
         content:
@@ -320,8 +326,11 @@ paths:
                 required: [accepted]
                 properties:
                   accepted: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
   /api/v1/stream:
@@ -421,7 +430,32 @@ components:
       scheme: bearer
       description: Статический токен сборщика метрик (`METRICS_TOKEN`)
 
+  parameters:
+    ContentEncoding:
+      name: Content-Encoding
+      in: header
+      required: false
+      description: |
+        Тело можно сжать gzip. Лимиты задаются переменными ingest: `MAX_COMPRESSED_BODY_BYTES`
+        (сжатое тело) и `MAX_BODY_BYTES` (после распаковки).
+      schema: { type: string, enum: [gzip, identity] }
+
   responses:
+    BadRequest:
+      description: Тело не читается (например, повреждённый gzip)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PayloadTooLarge:
+      description: Тело больше лимита (до или после распаковки)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UnsupportedMediaType:
+      description: Неподдерживаемый Content-Encoding
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     Unauthorized:
       description: Нет сессии или неверные учётные данные
       content:

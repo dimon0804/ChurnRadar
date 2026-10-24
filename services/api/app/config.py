@@ -23,6 +23,9 @@ class Settings(ServiceSettings):
 
     simulator_url: str = "http://simulator:8000"
     simulator_timeout_s: float = 120.0
+    # «что если» считает scoring; его собственный лимит PREVIEW_TIMEOUT_S меньше этого
+    scoring_url: str = "http://scoring:8000"
+    scoring_timeout_s: float = 30.0
     openapi_path: str = _default_openapi_path()
     summary_cache_ttl_s: float = 30.0
 

@@ -17,6 +17,7 @@ data:
   HTTP_PORT: {{ $app.port | quote }}
   INGEST_URL: {{ printf "http://%s:8000" (include "cr.backend" (dict "root" $ "key" "ingest")) | quote }}
   SIMULATOR_URL: {{ printf "http://%s:8000" (include "cr.backend" (dict "root" $ "key" "simulator")) | quote }}
+  SCORING_URL: {{ printf "http://%s:8000" (include "cr.backend" (dict "root" $ "key" "scoring")) | quote }}
   {{- range $k, $v := $.Values.commonEnv }}
   {{ $k }}: {{ $v | quote }}
   {{- end }}

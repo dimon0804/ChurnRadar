@@ -7,7 +7,7 @@ export const SAMPLE_VALUES: Record<string, string> = {
   email: 'user-0009@example.test',
   service: 'service-0019',
   date: '24 октября',
-  amount: '€61,65',
+  amount: '€8,55 в час',
   balance: '€915,06',
   company: 'ChurnRadar',
 }

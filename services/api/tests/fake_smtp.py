@@ -18,7 +18,9 @@ class FakeSMTP:
     def messages(self) -> list[EmailMessage]:
         return [message_from_bytes(raw, policy=default) for raw in self.received]  # type: ignore[misc]
 
-    async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def handle(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         def say(line: str) -> None:
             writer.write(line.encode() + b"\r\n")
 

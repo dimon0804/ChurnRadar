@@ -28,7 +28,7 @@ import { formatDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 const TONE_CLASS: Record<ActionTone, string> = {
-  emailed: 'bg-chart-forecast/10 text-chart-forecast',
+  emailed: 'bg-secondary text-secondary-foreground',
   resolved: 'bg-risk-low-bg text-risk-low',
   snoozed: 'bg-muted text-muted-foreground',
   returned: 'bg-risk-high-bg text-risk-high',

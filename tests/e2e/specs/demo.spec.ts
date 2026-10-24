@@ -50,16 +50,16 @@ test('шаг сценария ведёт на нужную страницу и �
   await expect(cue).toContainText('Шаг 5 из')
 })
 
-test('шаги «Кому позвонить» и «Качество модели» подсвечивают нужные блоки', async ({ page }) => {
+test('шаги «С кем связаться» и «Качество модели» подсвечивают нужные блоки', async ({ page }) => {
   await loginUi(page)
   await page.goto('/customers?demo=1')
   const panel = page.getByTestId('demo-panel')
   const spotlight = page.locator('[data-demo-spotlight] > div').first()
 
-  await panel.getByRole('button', { name: /^Показать: Кому позвонить сегодня/ }).click()
+  await panel.getByRole('button', { name: /^Показать: С кем связаться сегодня/ }).click()
   await expect(page).toHaveURL(/\/$/)
-  await expect(page.getByTestId('call-today')).toBeVisible()
-  await expect(page.getByTestId('call-today-csv')).toBeVisible()
+  await expect(page.getByTestId('contact-today')).toBeVisible()
+  await expect(page.getByTestId('contact-today-mass')).toBeVisible()
   const cue = page.getByTestId('demo-cue')
   await expect(cue).toContainText('Шаг 2 из 10')
   await expect(spotlight).toBeVisible()

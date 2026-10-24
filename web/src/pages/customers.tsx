@@ -62,6 +62,7 @@ const columns = [
           type="checkbox"
           className="size-4 cursor-pointer accent-primary align-middle"
           aria-label="Выбрать всех на странице"
+          disabled={ids.length === 0}
           checked={all}
           onChange={(e) => meta?.onToggle?.(ids, e.target.checked)}
         />

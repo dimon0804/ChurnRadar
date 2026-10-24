@@ -56,13 +56,21 @@ class ActionUpdate(BaseModel):
     def _snooze_fields(self) -> ActionUpdate:
         given = (self.snooze_days is not None) + (self.snoozed_until is not None)
         if self.status == "snoozed" and given != 1:
-            raise ValueError("Чтобы отложить, укажите snooze_days или snoozed_until (что-то одно)")
+            raise ValueError(
+                "Чтобы отложить, укажите snooze_days или snoozed_until (что-то одно)"
+            )
         if self.status == "emailed" and given > 1:
-            raise ValueError("Для «Письмо отправлено» укажите snooze_days или snoozed_until, не оба")
+            raise ValueError(
+                "Для «Письмо отправлено» укажите snooze_days или snoozed_until, не оба"
+            )
         if self.status == "resolved" and given:
-            raise ValueError("Для «Решено» срок не нужен: snooze_days и snoozed_until не указывайте")
+            raise ValueError(
+                "Для «Решено» срок не нужен: snooze_days и snoozed_until не указывайте"
+            )
         if self.snoozed_until is not None and self.snoozed_until.tzinfo is None:
-            raise ValueError("snoozed_until — дата и время с часовым поясом, например 2026-11-01T09:00:00Z")
+            raise ValueError(
+                "snoozed_until — дата и время с часовым поясом, например 2026-11-01T09:00:00Z"
+            )
         return self
 
 
@@ -75,7 +83,9 @@ def _invalid_until(message: str, detail: str, kind: str) -> ApiError:
     )
 
 
-def snooze_deadline(update: ActionUpdate, now: datetime, followup_days: int = DEFAULT_FOLLOWUP_DAYS) -> datetime | None:
+def snooze_deadline(
+    update: ActionUpdate, now: datetime, followup_days: int = DEFAULT_FOLLOWUP_DAYS
+) -> datetime | None:
     """До какого момента клиент не показывается в очереди. Срок в прошлом или дальше года — 422."""
     if update.status == "resolved":
         return None
@@ -89,15 +99,21 @@ def snooze_deadline(update: ActionUpdate, now: datetime, followup_days: int = DE
         raise _invalid_until("Срок должен быть в будущем", "Дата уже прошла", "in_past")
     if until > now + timedelta(days=MAX_SNOOZE_DAYS):
         raise _invalid_until(
-            f"Срок не может быть дальше чем через {MAX_SNOOZE_DAYS} дней", "Слишком далёкая дата", "out_of_range"
+            f"Срок не может быть дальше чем через {MAX_SNOOZE_DAYS} дней",
+            "Слишком далёкая дата",
+            "out_of_range",
         )
     return until
 
 
-def risk_grew(loss_at_mark: int, level_at_mark: str, loss_now: int | None, level_now: str | None) -> bool:
+def risk_grew(
+    loss_at_mark: int, level_at_mark: str, loss_now: int | None, level_now: str | None
+) -> bool:
     if loss_now is None or level_now is None:
         return False
-    return loss_now > loss_at_mark or LEVEL_RANK.get(level_now, 0) > LEVEL_RANK.get(level_at_mark, 0)
+    return loss_now > loss_at_mark or LEVEL_RANK.get(level_now, 0) > LEVEL_RANK.get(
+        level_at_mark, 0
+    )
 
 
 def return_reason(
@@ -119,14 +135,22 @@ def return_reason(
     return None
 
 
-def action_out(row: asyncpg.Record | dict[str, Any], now: datetime) -> dict[str, Any] | None:
+def action_out(
+    row: asyncpg.Record | dict[str, Any], now: datetime
+) -> dict[str, Any] | None:
     """Отметка для API. row — колонки customer_actions (a_*) плюс текущие потеря и уровень клиента."""
     status = row["a_status"]
     if status is None:
         return None
     until = row["a_until"]
     reason = return_reason(
-        status, until, row["a_loss"], row["a_level"], row["expected_loss"], row["risk_level"], now
+        status,
+        until,
+        row["a_loss"],
+        row["a_level"],
+        row["expected_loss"],
+        row["risk_level"],
+        now,
     )
     return {
         "status": status,
@@ -172,7 +196,9 @@ ACTION_COLUMNS = (
     "a.updated_by AS a_by, a.expected_loss_at_mark AS a_loss, a.risk_level_at_mark AS a_level"
 )
 
-_RANK = "(CASE {0} WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END)"
+_RANK = (
+    "(CASE {0} WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END)"
+)
 _NOT_GROWN = (
     f"cs.expected_loss <= a.expected_loss_at_mark AND {_RANK.format('cs.risk_level')} <= "
     f"{_RANK.format('a.risk_level_at_mark')}"
@@ -210,11 +236,15 @@ def queue_item(row: asyncpg.Record, now: datetime) -> dict[str, Any]:
 def queue_condition(marked: bool) -> str:
     hidden = f"({HIDDEN_SQL})"
     return f"{CANDIDATE_SQL} AND " + (
-        f"a.status IS NOT NULL AND {hidden}" if marked else f"NOT COALESCE({hidden}, false)"
+        f"a.status IS NOT NULL AND {hidden}"
+        if marked
+        else f"NOT COALESCE({hidden}, false)"
     )
 
 
-async def contact_today(pool: asyncpg.Pool, *, limit: int, marked: bool) -> dict[str, Any]:
+async def contact_today(
+    pool: asyncpg.Pool, *, limit: int, marked: bool
+) -> dict[str, Any]:
     """Очередь «С кем связаться» или (marked=true) те, кого сейчас прячут отметки."""
     hidden = f"({HIDDEN_SQL})"
     async with pool.acquire() as conn:
@@ -266,7 +296,9 @@ async def state(conn: asyncpg.Connection, customer_id: int) -> dict[str, Any]:
     now = await conn.fetchval("SELECT now()")
     row = await conn.fetchrow(_STATE_SQL, customer_id)
     if row is None:
-        raise ApiError(404, "not_found", f"Клиент {customer_id} не найден или ещё не оценён")
+        raise ApiError(
+            404, "not_found", f"Клиент {customer_id} не найден или ещё не оценён"
+        )
     history = await conn.fetch(
         "SELECT status, snoozed_until, note, expected_loss, email_id, changed_at, changed_by "
         "FROM scoring.customer_actions_log WHERE customer_id = $1 ORDER BY id DESC LIMIT $2",
@@ -359,12 +391,18 @@ async def set_action(
         now = await conn.fetchval("SELECT now()")
         until = snooze_deadline(update, now, followup_days)
         note = (update.note or "").strip() or None
-        if not await record_action(conn, customer_id, update.status, until, note, user_name):
-            raise ApiError(404, "not_found", f"Клиент {customer_id} не найден или ещё не оценён")
+        if not await record_action(
+            conn, customer_id, update.status, until, note, user_name
+        ):
+            raise ApiError(
+                404, "not_found", f"Клиент {customer_id} не найден или ещё не оценён"
+            )
         return await state(conn, customer_id)
 
 
-async def clear_action(pool: asyncpg.Pool, customer_id: int, user_name: str | None) -> dict[str, Any]:
+async def clear_action(
+    pool: asyncpg.Pool, customer_id: int, user_name: str | None
+) -> dict[str, Any]:
     check_id(customer_id)
     async with pool.acquire() as conn, conn.transaction():
         deleted = await conn.fetchrow(

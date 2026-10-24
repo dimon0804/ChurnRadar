@@ -51,7 +51,9 @@ class CampaignRequest(BaseModel):
     """Кому писать: выбранным (customer_ids) или всей очереди (worklist). Ровно что-то одно."""
 
     model_config = ConfigDict(extra="forbid")
-    customer_ids: list[int] | None = Field(default=None, min_length=1, max_length=MAX_CAMPAIGN)
+    customer_ids: list[int] | None = Field(
+        default=None, min_length=1, max_length=MAX_CAMPAIGN
+    )
     worklist: bool = False
     template_code: str | None = Field(default=None, max_length=64)
     skip_days: int = Field(default=7, ge=0, le=90)
@@ -74,16 +76,26 @@ def _check_template(code: str | None) -> None:
             422,
             "validation_error",
             f"Шаблона «{code}» нет",
-            [{"field": "template_code", "message": "Неизвестный шаблон", "type": "enum"}],
+            [
+                {
+                    "field": "template_code",
+                    "message": "Неизвестный шаблон",
+                    "type": "enum",
+                }
+            ],
         )
 
 
 def _check_enabled(config: MailConfig) -> None:
     if not config.enabled:
-        raise ApiError(503, "mail_disabled", "Отправка писем не настроена: задайте SMTP_HOST")
+        raise ApiError(
+            503, "mail_disabled", "Отправка писем не настроена: задайте SMTP_HOST"
+        )
 
 
-async def _customers(conn: asyncpg.Connection, ids: list[int]) -> dict[int, dict[str, Any]]:
+async def _customers(
+    conn: asyncpg.Connection, ids: list[int]
+) -> dict[int, dict[str, Any]]:
     rows = await conn.fetch(_CUSTOMER_SQL, ids)
     return {r["customer_id"]: dict(r) for r in rows}
 
@@ -97,10 +109,16 @@ def _compose(
 ) -> tuple[str, str, str]:
     """(код шаблона, тема, текст) для клиента."""
     if code is None:
-        code = mail_templates.choose_template(customer.get("reasons") or [], customer["risk_level"], set(templates))
+        code = mail_templates.choose_template(
+            customer.get("reasons") or [], customer["risk_level"], set(templates)
+        )
     values = mail_templates.context(customer, code, ref, company)
     tpl = templates[code]
-    return code, mail_templates.render(tpl["subject"], values), mail_templates.render(tpl["body"], values)
+    return (
+        code,
+        mail_templates.render(tpl["subject"], values),
+        mail_templates.render(tpl["body"], values),
+    )
 
 
 async def _last_sent(conn: asyncpg.Connection, customer_id: int) -> datetime | None:
@@ -111,7 +129,11 @@ async def _last_sent(conn: asyncpg.Connection, customer_id: int) -> datetime | N
 
 
 async def draft(
-    pool: asyncpg.Pool, customer_id: int, body: EmailDraft, config: MailConfig, reply_to: str
+    pool: asyncpg.Pool,
+    customer_id: int,
+    body: EmailDraft,
+    config: MailConfig,
+    reply_to: str,
 ) -> dict[str, Any]:
     actions.check_id(customer_id)
     _check_template(body.template_code)
@@ -119,10 +141,14 @@ async def draft(
         clock = await conn.fetchrow(_NOW_SQL)
         customer = (await _customers(conn, [customer_id])).get(customer_id)
         if customer is None:
-            raise ApiError(404, "not_found", f"Клиент {customer_id} не найден или ещё не оценён")
+            raise ApiError(
+                404, "not_found", f"Клиент {customer_id} не найден или ещё не оценён"
+            )
         templates = await mail_templates.load_all(conn)
         last = await _last_sent(conn, customer_id)
-    code, subject, text = _compose(customer, templates, body.template_code, clock["ref"], config.from_name)
+    code, subject, text = _compose(
+        customer, templates, body.template_code, clock["ref"], config.from_name
+    )
     return {
         "customer_id": customer_id,
         "to": customer["email"],
@@ -184,7 +210,12 @@ def _mail(row: dict[str, Any] | asyncpg.Record) -> Mail:
 
 
 async def _mark_sent(
-    conn: asyncpg.Connection, email_id: int, message_id: str, customer_id: int, subject: str, user: str | None,
+    conn: asyncpg.Connection,
+    email_id: int,
+    message_id: str,
+    customer_id: int,
+    subject: str,
+    user: str | None,
     followup_days: int,
 ) -> None:
     async with conn.transaction():
@@ -194,13 +225,19 @@ async def _mark_sent(
             email_id,
             message_id,
         )
-        until = await conn.fetchval("SELECT now() + make_interval(days => $1)", followup_days)
-        await actions.record_action(conn, customer_id, "emailed", until, subject, user, email_id)
+        until = await conn.fetchval(
+            "SELECT now() + make_interval(days => $1)", followup_days
+        )
+        await actions.record_action(
+            conn, customer_id, "emailed", until, subject, user, email_id
+        )
 
 
 async def _mark_failed(conn: asyncpg.Connection, email_id: int, error: str) -> None:
     await conn.execute(
-        "UPDATE scoring.customer_emails SET status = 'failed', error = $2 WHERE id = $1", email_id, error[:500]
+        "UPDATE scoring.customer_emails SET status = 'failed', error = $2 WHERE id = $1",
+        email_id,
+        error[:500],
     )
 
 
@@ -238,42 +275,77 @@ async def send_one(
         clock = await conn.fetchrow(_NOW_SQL)
         customer = (await _customers(conn, [customer_id])).get(customer_id)
         if customer is None:
-            raise ApiError(404, "not_found", f"Клиент {customer_id} не найден или ещё не оценён")
+            raise ApiError(
+                404, "not_found", f"Клиент {customer_id} не найден или ещё не оценён"
+            )
         if not customer["email"]:
             raise ApiError(422, "validation_error", "У клиента нет email")
         # сотрудник мог оставить подстановки в тексте — дозаполняем их
         code = body.template_code
-        values = mail_templates.context(customer, code or mail_templates.GENERAL, clock["ref"], config.from_name)
+        values = mail_templates.context(
+            customer, code or mail_templates.GENERAL, clock["ref"], config.from_name
+        )
         subject = mail_templates.render(body.subject.strip(), values)
         text = mail_templates.render(body.text.strip(), values)
         email_id = await _snapshot_insert(
-            conn, customer, campaign_id=None, reply_to=reply_to, code=code, subject=subject, text=text,
-            status="sending", user=user,
+            conn,
+            customer,
+            campaign_id=None,
+            reply_to=reply_to,
+            code=code,
+            subject=subject,
+            text=text,
+            status="sending",
+            user=user,
         )
-        row = {"to_email": customer["email"], "subject": subject, "body": text, "reply_to": reply_to,
-               "customer_id": customer_id}
+        row = {
+            "to_email": customer["email"],
+            "subject": subject,
+            "body": text,
+            "reply_to": reply_to,
+            "customer_id": customer_id,
+        }
         try:
             message_id = await send_mail(config, _mail(row))
-        except Exception as exc:  # SMTP-ошибки разных видов: письмо помечаем, сотруднику — 502
-            log.warning("customer_email_failed", customer_id=customer_id, error=str(exc))
+        except (
+            Exception
+        ) as exc:  # SMTP-ошибки разных видов: письмо помечаем, сотруднику — 502
+            log.warning(
+                "customer_email_failed", customer_id=customer_id, error=str(exc)
+            )
             await _mark_failed(conn, email_id, str(exc) or exc.__class__.__name__)
-            raise ApiError(502, "mail_failed", "Почтовый сервер не принял письмо. Попробуйте ещё раз позже.") from exc
-        await _mark_sent(conn, email_id, message_id, customer_id, subject, user, followup_days)
-        email = await conn.fetchrow("SELECT * FROM scoring.customer_emails WHERE id = $1", email_id)
+            raise ApiError(
+                502,
+                "mail_failed",
+                "Почтовый сервер не принял письмо. Попробуйте ещё раз позже.",
+            ) from exc
+        await _mark_sent(
+            conn, email_id, message_id, customer_id, subject, user, followup_days
+        )
+        email = await conn.fetchrow(
+            "SELECT * FROM scoring.customer_emails WHERE id = $1", email_id
+        )
         state = await actions.state(conn, customer_id)
-    log.info("customer_email_sent", customer_id=customer_id, email_id=email_id, user=user)
+    log.info(
+        "customer_email_sent", customer_id=customer_id, email_id=email_id, user=user
+    )
     return {"email": email_out(email), "state": state}
 
 
 # --- рассылка --------------------------------------------------------------------------------
 
 
-async def _recipients(conn: asyncpg.Connection, req: CampaignRequest) -> tuple[list[int], int]:
+async def _recipients(
+    conn: asyncpg.Connection, req: CampaignRequest
+) -> tuple[list[int], int]:
     """(id получателей по порядку, сколько id не нашлось)."""
     if req.worklist:
         return await actions.queue_ids(conn, MAX_CAMPAIGN), 0
     ids = list(dict.fromkeys(i for i in req.customer_ids or [] if 0 < i <= BIGINT_MAX))
-    found = await conn.fetch("SELECT customer_id FROM scoring.customer_scores WHERE customer_id = ANY($1::bigint[])", ids)
+    found = await conn.fetch(
+        "SELECT customer_id FROM scoring.customer_scores WHERE customer_id = ANY($1::bigint[])",
+        ids,
+    )
     known = {r["customer_id"] for r in found}
     return [i for i in ids if i in known], len(ids) - len(known)
 
@@ -291,7 +363,9 @@ async def _recent(conn: asyncpg.Connection, ids: list[int], skip_days: int) -> s
     return {r["customer_id"] for r in rows}
 
 
-async def _plan(conn: asyncpg.Connection, req: CampaignRequest, company: str) -> dict[str, Any]:
+async def _plan(
+    conn: asyncpg.Connection, req: CampaignRequest, company: str
+) -> dict[str, Any]:
     _check_template(req.template_code)
     clock = await conn.fetchrow(_NOW_SQL)
     ids, missing = await _recipients(conn, req)
@@ -307,7 +381,14 @@ async def _plan(conn: asyncpg.Connection, req: CampaignRequest, company: str) ->
         elif not customer["email"]:
             skipped.append((customer, "no_email"))
         else:
-            send.append((customer, *_compose(customer, templates, req.template_code, clock["ref"], company)))
+            send.append(
+                (
+                    customer,
+                    *_compose(
+                        customer, templates, req.template_code, clock["ref"], company
+                    ),
+                )
+            )
     return {"send": send, "skipped": skipped, "missing": missing}
 
 
@@ -318,20 +399,30 @@ def _plan_summary(plan: dict[str, Any]) -> dict[str, Any]:
     sample = None
     if plan["send"]:
         customer, code, subject, text = plan["send"][0]
-        sample = {"customer_id": customer["customer_id"], "to": customer["email"], "template_code": code,
-                  "subject": subject, "text": text}
+        sample = {
+            "customer_id": customer["customer_id"],
+            "to": customer["email"],
+            "template_code": code,
+            "subject": subject,
+            "text": text,
+        }
     return {
         "total": len(plan["send"]) + len(plan["skipped"]),
         "to_send": len(plan["send"]),
         "skipped_recent": sum(1 for _, why in plan["skipped"] if why == "recent"),
         "skipped_no_email": sum(1 for _, why in plan["skipped"] if why == "no_email"),
         "not_found": plan["missing"],
-        "templates": [{"code": k, "count": v} for k, v in sorted(used.items(), key=lambda kv: -kv[1])],
+        "templates": [
+            {"code": k, "count": v}
+            for k, v in sorted(used.items(), key=lambda kv: -kv[1])
+        ],
         "sample": sample,
     }
 
 
-async def preview_campaign(pool: asyncpg.Pool, req: CampaignRequest, config: MailConfig) -> dict[str, Any]:
+async def preview_campaign(
+    pool: asyncpg.Pool, req: CampaignRequest, config: MailConfig
+) -> dict[str, Any]:
     async with pool.acquire() as conn:
         plan = await _plan(conn, req, config.from_name)
     return {**_plan_summary(plan), "enabled": config.enabled}
@@ -358,18 +449,29 @@ def campaign_out(row: asyncpg.Record) -> dict[str, Any]:
         "created_by": row["created_by"],
         "finished_at": iso_z(row["finished_at"]),
         "status": "done" if row["finished_at"] is not None else "running",
-        **{k: row[k] for k in ("total", "queued", "sending", "sent", "failed", "skipped")},
+        **{
+            k: row[k]
+            for k in ("total", "queued", "sending", "sent", "failed", "skipped")
+        },
     }
 
 
 async def create_campaign(
-    pool: asyncpg.Pool, req: CampaignRequest, config: MailConfig, reply_to: str, user: str | None
+    pool: asyncpg.Pool,
+    req: CampaignRequest,
+    config: MailConfig,
+    reply_to: str,
+    user: str | None,
 ) -> dict[str, Any]:
     _check_enabled(config)
     async with pool.acquire() as conn, conn.transaction():
         plan = await _plan(conn, req, config.from_name)
         if not plan["send"]:
-            raise ApiError(422, "nothing_to_send", "Отправлять некому: все получатели недавно получали письмо или без email")
+            raise ApiError(
+                422,
+                "nothing_to_send",
+                "Отправлять некому: все получатели недавно получали письмо или без email",
+            )
         campaign_id = await conn.fetchval(
             "INSERT INTO scoring.mail_campaigns (template_code, skip_days, created_by) VALUES ($1, $2, $3) RETURNING id",
             req.template_code,
@@ -377,13 +479,39 @@ async def create_campaign(
             user,
         )
         for customer, code, subject, text in plan["send"]:
-            await _snapshot_insert(conn, customer, campaign_id=campaign_id, reply_to=reply_to, code=code,
-                                   subject=subject, text=text, status="queued", user=user)
+            await _snapshot_insert(
+                conn,
+                customer,
+                campaign_id=campaign_id,
+                reply_to=reply_to,
+                code=code,
+                subject=subject,
+                text=text,
+                status="queued",
+                user=user,
+            )
         for customer, why in plan["skipped"]:
-            await _snapshot_insert(conn, customer, campaign_id=campaign_id, reply_to=reply_to, code=None,
-                                   subject="", text="", status="skipped", user=user, skip_reason=why)
-        row = await conn.fetchrow(_CAMPAIGN_SQL + " WHERE c.id = $1 GROUP BY c.id", campaign_id)
-    log.info("mail_campaign_created", campaign_id=campaign_id, queued=row["queued"], user=user)
+            await _snapshot_insert(
+                conn,
+                customer,
+                campaign_id=campaign_id,
+                reply_to=reply_to,
+                code=None,
+                subject="",
+                text="",
+                status="skipped",
+                user=user,
+                skip_reason=why,
+            )
+        row = await conn.fetchrow(
+            _CAMPAIGN_SQL + " WHERE c.id = $1 GROUP BY c.id", campaign_id
+        )
+    log.info(
+        "mail_campaign_created",
+        campaign_id=campaign_id,
+        queued=row["queued"],
+        user=user,
+    )
     return campaign_out(row)
 
 
@@ -391,7 +519,9 @@ async def get_campaign(pool: asyncpg.Pool, campaign_id: int) -> dict[str, Any]:
     if campaign_id < 1 or campaign_id > BIGINT_MAX:
         raise ApiError(404, "not_found", "Рассылка не найдена")
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(_CAMPAIGN_SQL + " WHERE c.id = $1 GROUP BY c.id", campaign_id)
+        row = await conn.fetchrow(
+            _CAMPAIGN_SQL + " WHERE c.id = $1 GROUP BY c.id", campaign_id
+        )
     if row is None:
         raise ApiError(404, "not_found", "Рассылка не найдена")
     return campaign_out(row)
@@ -399,7 +529,9 @@ async def get_campaign(pool: asyncpg.Pool, campaign_id: int) -> dict[str, Any]:
 
 async def list_campaigns(pool: asyncpg.Pool, limit: int) -> dict[str, Any]:
     async with pool.acquire() as conn:
-        rows = await conn.fetch(_CAMPAIGN_SQL + " GROUP BY c.id ORDER BY c.id DESC LIMIT $1", limit)
+        rows = await conn.fetch(
+            _CAMPAIGN_SQL + " GROUP BY c.id ORDER BY c.id DESC LIMIT $1", limit
+        )
     return {"items": [campaign_out(r) for r in rows]}
 
 
@@ -477,7 +609,9 @@ class MailWorker:
                 sent = await self.run_once()
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # база недоступна и т.п. — подождём и попробуем снова
+            except (
+                Exception
+            ) as exc:  # база недоступна и т.п. — подождём и попробуем снова
                 log.warning("mail_worker_error", error=str(exc))
                 sent = 0
             if sent == 0:
@@ -500,11 +634,20 @@ class MailWorker:
                 try:
                     message_id = await send_mail(self.config, _mail(row))
                 except Exception as exc:
-                    log.warning("campaign_email_failed", email_id=row["id"], error=str(exc))
-                    await _mark_failed(conn, row["id"], str(exc) or exc.__class__.__name__)
+                    log.warning(
+                        "campaign_email_failed", email_id=row["id"], error=str(exc)
+                    )
+                    await _mark_failed(
+                        conn, row["id"], str(exc) or exc.__class__.__name__
+                    )
                     continue
                 await _mark_sent(
-                    conn, row["id"], message_id, row["customer_id"], row["subject"], row["created_by"],
+                    conn,
+                    row["id"],
+                    message_id,
+                    row["customer_id"],
+                    row["subject"],
+                    row["created_by"],
                     self.followup_days,
                 )
             if rows:

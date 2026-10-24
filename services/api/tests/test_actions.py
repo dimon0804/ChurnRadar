@@ -37,7 +37,15 @@ def _row(**over: Any) -> dict[str, Any]:
 
 
 def _marked(status: str, until=None, **over: Any) -> dict[str, Any]:
-    return _row(a_status=status, a_until=until, a_at=NOW, a_by="analyst", a_loss=138497, a_level="high", **over)
+    return _row(
+        a_status=status,
+        a_until=until,
+        a_at=NOW,
+        a_by="analyst",
+        a_loss=138497,
+        a_level="high",
+        **over,
+    )
 
 
 # --- тело запроса ------------------------------------------------------------------------
@@ -62,12 +70,23 @@ def test_action_update_valid(body):
     "body",
     [
         {"status": "snoozed"},
-        {"status": "snoozed", "snooze_days": 3, "snoozed_until": "2026-11-01T09:00:00Z"},
-        {"status": "emailed", "snooze_days": 3, "snoozed_until": "2026-11-01T09:00:00Z"},
+        {
+            "status": "snoozed",
+            "snooze_days": 3,
+            "snoozed_until": "2026-11-01T09:00:00Z",
+        },
+        {
+            "status": "emailed",
+            "snooze_days": 3,
+            "snoozed_until": "2026-11-01T09:00:00Z",
+        },
         {"status": "resolved", "snooze_days": 3},
         {"status": "snoozed", "snooze_days": 0},
         {"status": "snoozed", "snooze_days": 366},
-        {"status": "snoozed", "snoozed_until": "2026-11-01T09:00:00"},  # без часового пояса
+        {
+            "status": "snoozed",
+            "snoozed_until": "2026-11-01T09:00:00",
+        },  # без часового пояса
         {"status": "done"},  # старый статус больше не принимаем
         {"status": "resolved", "note": "x" * 501},
         {"status": "resolved", "extra": 1},
@@ -83,12 +102,18 @@ def test_snooze_deadline():
     assert actions.snooze_deadline(days, NOW) == NOW + timedelta(days=7)
     assert actions.snooze_deadline(actions.ActionUpdate(status="resolved"), NOW) is None
     # письмо без срока — ждём ответа по настройке
-    assert actions.snooze_deadline(actions.ActionUpdate(status="emailed"), NOW, 5) == NOW + timedelta(days=5)
-    exact = actions.ActionUpdate(status="snoozed", snoozed_until=NOW + timedelta(hours=5))
+    assert actions.snooze_deadline(
+        actions.ActionUpdate(status="emailed"), NOW, 5
+    ) == NOW + timedelta(days=5)
+    exact = actions.ActionUpdate(
+        status="snoozed", snoozed_until=NOW + timedelta(hours=5)
+    )
     assert actions.snooze_deadline(exact, NOW) == NOW + timedelta(hours=5)
     for until in (NOW - timedelta(minutes=1), NOW + timedelta(days=366)):
         with pytest.raises(ApiError) as err:
-            actions.snooze_deadline(actions.ActionUpdate(status="snoozed", snoozed_until=until), NOW)
+            actions.snooze_deadline(
+                actions.ActionUpdate(status="snoozed", snoozed_until=until), NOW
+            )
         assert err.value.status == 422
 
 
@@ -99,13 +124,24 @@ def test_return_reason():
     later = NOW + timedelta(days=3)
     rr = actions.return_reason
     assert rr("resolved", None, 1000, "medium", 1000, "medium", NOW) is None
-    assert rr("resolved", None, 1000, "medium", 900, "medium", NOW) is None  # потеря упала — не возвращаем
+    assert (
+        rr("resolved", None, 1000, "medium", 900, "medium", NOW) is None
+    )  # потеря упала — не возвращаем
     assert rr("resolved", None, 1000, "medium", 1001, "medium", NOW) == "risk_grew"
-    assert rr("resolved", None, 1000, "medium", 500, "high", NOW) == "risk_grew"  # уровень вырос
-    assert rr("emailed", later, 1000, "medium", 1000, "medium", NOW) is None  # ждём ответа
+    assert (
+        rr("resolved", None, 1000, "medium", 500, "high", NOW) == "risk_grew"
+    )  # уровень вырос
+    assert (
+        rr("emailed", later, 1000, "medium", 1000, "medium", NOW) is None
+    )  # ждём ответа
     assert rr("emailed", later, 1000, "medium", 2000, "medium", NOW) == "risk_grew"
-    assert rr("emailed", NOW - timedelta(seconds=1), 1000, "medium", 900, "medium", NOW) == "no_reply"
-    assert rr("snoozed", later, 1000, "medium", 5000, "high", NOW) is None  # отложка — до даты, что бы ни было
+    assert (
+        rr("emailed", NOW - timedelta(seconds=1), 1000, "medium", 900, "medium", NOW)
+        == "no_reply"
+    )
+    assert (
+        rr("snoozed", later, 1000, "medium", 5000, "high", NOW) is None
+    )  # отложка — до даты, что бы ни было
     assert rr("snoozed", NOW, 1000, "medium", 1000, "medium", NOW) == "snooze_over"
 
 
@@ -113,33 +149,56 @@ def test_action_out_states():
     assert actions.action_out(_row(), NOW) is None
 
     resolved = actions.action_out(_marked("resolved"), NOW)
-    assert resolved["status"] == "resolved" and resolved["active"] is True and resolved["return_reason"] is None
-    assert resolved["updated_at"] == "2026-10-19T15:00:00Z" and resolved["updated_by"] == "analyst"
+    assert (
+        resolved["status"] == "resolved"
+        and resolved["active"] is True
+        and resolved["return_reason"] is None
+    )
+    assert (
+        resolved["updated_at"] == "2026-10-19T15:00:00Z"
+        and resolved["updated_by"] == "analyst"
+    )
 
     grown = actions.action_out(_marked("resolved", expected_loss=150000), NOW)
     assert grown["active"] is False and grown["return_reason"] == "risk_grew"
 
     emailed = _marked("emailed", NOW + timedelta(days=7))
     assert actions.action_out(emailed, NOW)["active"] is True
-    assert actions.action_out(emailed, NOW + timedelta(days=8))["return_reason"] == "no_reply"
+    assert (
+        actions.action_out(emailed, NOW + timedelta(days=8))["return_reason"]
+        == "no_reply"
+    )
 
     snoozed = _marked("snoozed", NOW + timedelta(days=2))
     out = actions.action_out(snoozed, NOW)
     assert out["active"] is True and out["until"] == "2026-10-21T15:00:00Z"
-    assert actions.action_out(snoozed, NOW + timedelta(days=3))["return_reason"] == "snooze_over"
+    assert (
+        actions.action_out(snoozed, NOW + timedelta(days=3))["return_reason"]
+        == "snooze_over"
+    )
 
 
 def test_status_text():
     assert actions.status_text(None) == ""
     assert actions.status_text(actions.action_out(_marked("resolved"), NOW)) == "Решено"
     emailed = _marked("emailed", NOW + timedelta(days=7))
-    assert actions.status_text(actions.action_out(emailed, NOW)) == "Письмо отправлено 19.10.2026"
-    assert "ответа нет" in actions.status_text(actions.action_out(emailed, NOW + timedelta(days=8)))
+    assert (
+        actions.status_text(actions.action_out(emailed, NOW))
+        == "Письмо отправлено 19.10.2026"
+    )
+    assert "ответа нет" in actions.status_text(
+        actions.action_out(emailed, NOW + timedelta(days=8))
+    )
     grown = actions.action_out(_marked("resolved", expected_loss=10**6), NOW)
     assert "снова в списке" in actions.status_text(grown)
     snoozed = _marked("snoozed", NOW + timedelta(days=2))
-    assert actions.status_text(actions.action_out(snoozed, NOW)) == "Отложено до 21.10.2026"
-    assert actions.status_text(actions.action_out(snoozed, NOW + timedelta(days=5))) == ""
+    assert (
+        actions.status_text(actions.action_out(snoozed, NOW))
+        == "Отложено до 21.10.2026"
+    )
+    assert (
+        actions.status_text(actions.action_out(snoozed, NOW + timedelta(days=5))) == ""
+    )
 
 
 # --- CSV ---------------------------------------------------------------------------------------
@@ -171,7 +230,10 @@ def test_csv_row_and_render():
         "Напомнить пополнить",
         "Решено",
     ]
-    unknown = actions.csv_row(_row(risk_score=None, risk_level="unknown", next_action=None, main_reason=None), NOW)
+    unknown = actions.csv_row(
+        _row(risk_score=None, risk_level="unknown", next_action=None, main_reason=None),
+        NOW,
+    )
     assert unknown[2:4] == ["Нет оценки", ""] and unknown[7:] == ["", "", ""]
 
     data = actions.render_csv([row]).decode("utf-8")
@@ -215,12 +277,23 @@ async def test_requires_user(client, method, path, body):
 
 async def test_export_csv_endpoint(client, app):
     app.state.pool = FakePool(
-        {"SELECT now()": NOW, "LEFT JOIN scoring.customer_actions": [_marked("resolved"), _row(customer_id=1)]}
+        {
+            "SELECT now()": NOW,
+            "LEFT JOIN scoring.customer_actions": [
+                _marked("resolved"),
+                _row(customer_id=1),
+            ],
+        }
     )
-    resp = await client.get("/api/v1/customers/export.csv?level=high&sort=expected_loss&order=desc", headers=ANALYST)
+    resp = await client.get(
+        "/api/v1/customers/export.csv?level=high&sort=expected_loss&order=desc",
+        headers=ANALYST,
+    )
     assert resp.status_code == 200, resp.text
     assert resp.headers["content-type"] == "text/csv; charset=utf-8"
-    assert resp.headers["content-disposition"].startswith('attachment; filename="churnradar-clients-')
+    assert resp.headers["content-disposition"].startswith(
+        'attachment; filename="churnradar-clients-'
+    )
     assert resp.content.startswith(b"\xef\xbb\xbf")
     lines = resp.content.decode("utf-8-sig").split("\r\n")
     assert lines[0].split(";")[0] == "ID" and len(lines[0].split(";")) == 10
@@ -231,19 +304,31 @@ async def test_export_csv_endpoint(client, app):
 
 
 async def test_export_csv_worklist_and_validation(client, app):
-    app.state.pool = FakePool({"SELECT now()": NOW, "LEFT JOIN scoring.customer_actions": []})
-    resp = await client.get("/api/v1/customers/export.csv?worklist=true", headers=ANALYST)
+    app.state.pool = FakePool(
+        {"SELECT now()": NOW, "LEFT JOIN scoring.customer_actions": []}
+    )
+    resp = await client.get(
+        "/api/v1/customers/export.csv?worklist=true", headers=ANALYST
+    )
     assert resp.status_code == 200
     assert "NOT COALESCE((" in app.state.pool.conn.queries[-1]
     assert resp.content.decode("utf-8-sig").count("\r\n") == 1  # только заголовок
-    assert (await client.get("/api/v1/customers/export.csv?level=extreme", headers=ANALYST)).status_code == 422
-    assert (await client.get("/api/v1/customers/export.csv?sort=password", headers=ANALYST)).status_code == 422
+    assert (
+        await client.get("/api/v1/customers/export.csv?level=extreme", headers=ANALYST)
+    ).status_code == 422
+    assert (
+        await client.get("/api/v1/customers/export.csv?sort=password", headers=ANALYST)
+    ).status_code == 422
 
 
 async def test_put_action_validation_before_db(client):
-    bad = await client.put("/api/v1/customers/1/action", json={"status": "snoozed"}, headers=ANALYST)
+    bad = await client.put(
+        "/api/v1/customers/1/action", json={"status": "snoozed"}, headers=ANALYST
+    )
     assert bad.status_code == 422 and bad.json()["error"]["code"] == "validation_error"
-    bad_id = await client.put("/api/v1/customers/abc/action", json={"status": "resolved"}, headers=ANALYST)
+    bad_id = await client.put(
+        "/api/v1/customers/abc/action", json={"status": "resolved"}, headers=ANALYST
+    )
     assert bad_id.status_code == 422
 
 
@@ -293,10 +378,16 @@ async def test_analyst_can_mark_resolved(client, app):
         }
     )
     app.state.pool = pool
-    resp = await client.put("/api/v1/customers/10/action", json={"status": "resolved"}, headers=ANALYST)
+    resp = await client.put(
+        "/api/v1/customers/10/action", json={"status": "resolved"}, headers=ANALYST
+    )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["customer_id"] == 10 and body["action"]["status"] == "resolved" and body["action"]["active"] is True
+    assert (
+        body["customer_id"] == 10
+        and body["action"]["status"] == "resolved"
+        and body["action"]["active"] is True
+    )
     upsert, log_insert = pool.conn.executed
     assert "ON CONFLICT (customer_id) DO UPDATE" in upsert[0]
     assert upsert[1] == (10, "resolved", None, None, 600, "high", "analyst")
@@ -305,8 +396,15 @@ async def test_analyst_can_mark_resolved(client, app):
 
 async def test_mark_unknown_customer_is_404(client, app):
     pool = FakePool()
-    pool.conn = TxConn({"SELECT now()": NOW, "SELECT expected_loss, risk_level FROM scoring.customer_scores": None})
+    pool.conn = TxConn(
+        {
+            "SELECT now()": NOW,
+            "SELECT expected_loss, risk_level FROM scoring.customer_scores": None,
+        }
+    )
     app.state.pool = pool
-    resp = await client.put("/api/v1/customers/999/action", json={"status": "resolved"}, headers=ANALYST)
+    resp = await client.put(
+        "/api/v1/customers/999/action", json={"status": "resolved"}, headers=ANALYST
+    )
     assert resp.status_code == 404
     assert pool.conn.executed == []

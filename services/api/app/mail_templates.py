@@ -20,7 +20,7 @@ PLACEHOLDERS: dict[str, str] = {
     "email": "Email клиента",
     "service": "Услуга, к которой относится причина (например, service-0019)",
     "date": "Ключевая дата: когда кончатся деньги на балансе или оплаченный срок услуги",
-    "amount": "Стоимость продления услуги",
+    "amount": "Цена услуги за период оплаты, например «€8,50 в месяц»",
     "balance": "Баланс клиента",
     "company": "Название компании из настройки SMTP_FROM_NAME",
 }
@@ -30,7 +30,7 @@ FALLBACK: dict[str, str] = {
     "email": "",
     "service": "вашей услуги",
     "date": "конца оплаченного срока",
-    "amount": "по вашему тарифу",
+    "amount": "столько, сколько указано в тарифе",
     "balance": "немного",
     "company": "ChurnRadar",
 }
@@ -52,7 +52,7 @@ DEFAULTS: tuple[TemplateDefault, ...] = (
         "Не хватит денег на продление",
         "Пополните баланс до {{date}}, чтобы {{service}} работала без перерыва",
         "Здравствуйте!\n\n"
-        "На вашем балансе сейчас {{balance}}, а следующее продление {{service}} стоит {{amount}}. "
+        "На вашем балансе сейчас {{balance}}, а {{service}} стоит {{amount}}. "
         "Пополните, пожалуйста, баланс до {{date}} — тогда услуга продлится сама и сервер не остановится.\n\n"
         "Если нужен другой тариф или удобнее платить иначе, просто ответьте на это письмо, подберём вариант."
         + SIGNATURE,
@@ -64,7 +64,7 @@ DEFAULTS: tuple[TemplateDefault, ...] = (
         "Здравствуйте!\n\n"
         "У {{service}} выключено автопродление, а оплаченный срок действует до {{date}}. "
         "Чтобы сервер не остановился, включите автопродление в личном кабинете или продлите услугу вручную. "
-        "Продление стоит {{amount}}.\n\n"
+        "Услуга стоит {{amount}}.\n\n"
         "Если услуга больше не нужна, ответьте на письмо — подскажем, как сохранить данные."
         + SIGNATURE,
     ),
@@ -74,7 +74,7 @@ DEFAULTS: tuple[TemplateDefault, ...] = (
         "{{service}} ждёт оплаты",
         "Здравствуйте!\n\n"
         "Срок оплаты {{service}} уже наступил, и услуга ждёт продления. Если её не продлить, сервер "
-        "и данные на нём могут удалить. Продлить можно в личном кабинете, это стоит {{amount}}.\n\n"
+        "и данные на нём могут удалить. Продлить можно в личном кабинете, услуга стоит {{amount}}.\n\n"
         "Если с оплатой что-то не получается, ответьте на это письмо — разберёмся вместе."
         + SIGNATURE,
     ),
@@ -95,8 +95,7 @@ DEFAULTS: tuple[TemplateDefault, ...] = (
         "Последние платежи за {{service}} не прошли. Чаще всего у карты закончился срок действия "
         "или на ней не хватило денег. Проверьте, пожалуйста, способ оплаты в личном кабинете, "
         "чтобы услуга продлилась вовремя.\n\n"
-        "Если нужна помощь, просто ответьте на это письмо."
-        + SIGNATURE,
+        "Если нужна помощь, просто ответьте на это письмо." + SIGNATURE,
     ),
     TemplateDefault(
         "inactivity",
@@ -113,8 +112,7 @@ DEFAULTS: tuple[TemplateDefault, ...] = (
         "Будем рады видеть вас снова",
         "Здравствуйте!\n\n"
         "Ваши услуги у нас сейчас закрыты. Если захотите вернуться, ответьте на это письмо: "
-        "подберём тариф и поможем перенести проекты."
-        + SIGNATURE,
+        "подберём тариф и поможем перенести проекты." + SIGNATURE,
     ),
     TemplateDefault(
         "general",
@@ -122,8 +120,7 @@ DEFAULTS: tuple[TemplateDefault, ...] = (
         "Нужна помощь с {{service}}?",
         "Здравствуйте!\n\n"
         "Хотим убедиться, что с {{service}} всё в порядке. Если есть вопросы по оплате, тарифу "
-        "или настройке, просто ответьте на это письмо — поможем."
-        + SIGNATURE,
+        "или настройке, просто ответьте на это письмо — поможем." + SIGNATURE,
     ),
 )
 BY_CODE = {t.code: t for t in DEFAULTS}
@@ -131,8 +128,18 @@ GENERAL = "general"
 WIN_BACK = "win_back"
 
 MONTHS_GEN = (
-    "января", "февраля", "марта", "апреля", "мая", "июня",
-    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+    "января",
+    "февраля",
+    "марта",
+    "апреля",
+    "мая",
+    "июня",
+    "июля",
+    "августа",
+    "сентября",
+    "октября",
+    "ноября",
+    "декабря",
 )
 
 
@@ -143,7 +150,9 @@ class TemplatePatch(BaseModel):
 
 
 def unknown_placeholders(text: str) -> list[str]:
-    return sorted({m.group(1) for m in PLACEHOLDER_RE.finditer(text)} - set(PLACEHOLDERS))
+    return sorted(
+        {m.group(1) for m in PLACEHOLDER_RE.finditer(text)} - set(PLACEHOLDERS)
+    )
 
 
 def validate(patch: TemplatePatch) -> None:
@@ -151,13 +160,19 @@ def validate(patch: TemplatePatch) -> None:
     for field in ("subject", "body"):
         value = getattr(patch, field)
         if not value.strip():
-            errors.append({"field": field, "message": "Не может быть пустым", "type": "empty"})
+            errors.append(
+                {"field": field, "message": "Не может быть пустым", "type": "empty"}
+            )
         bad = unknown_placeholders(value)
         if bad:
             names = ", ".join("{{" + b + "}}" for b in bad)
             allowed = ", ".join("{{" + p + "}}" for p in PLACEHOLDERS)
             errors.append(
-                {"field": field, "message": f"Неизвестные подстановки: {names}. Можно: {allowed}", "type": "placeholder"}
+                {
+                    "field": field,
+                    "message": f"Неизвестные подстановки: {names}. Можно: {allowed}",
+                    "type": "placeholder",
+                }
             )
     if errors:
         raise ApiError(422, "validation_error", "Шаблон не прошёл проверку", errors)
@@ -185,6 +200,28 @@ def money_text(cents: int | None) -> str:
     return f"€{whole:,}".replace(",", " ") + f",{rest:02d}"
 
 
+TERM_TEXT = {
+    "hour": "в час",
+    "week": "в неделю",
+    "month": "в месяц",
+    "quarter_year": "за квартал",
+    "half_year": "за полгода",
+    "year": "в год",
+}
+
+
+def price_text(service: dict[str, Any] | None) -> str:
+    """«€8,55 в час»: цена за период оплаты, без периода сумма вводит в заблуждение."""
+    if not service or not service.get("price"):
+        return ""
+    term = TERM_TEXT.get(service.get("payment_term") or "")
+    return (
+        f"{money_text(service['price'])} {term}"
+        if term
+        else money_text(service["price"])
+    )
+
+
 def date_text(value: datetime | None) -> str:
     if value is None:
         return ""
@@ -201,7 +238,9 @@ def _parse(value: Any) -> datetime | None:
         return None
 
 
-def choose_template(reasons: list[dict[str, Any]], risk_level: str, codes: set[str]) -> str:
+def choose_template(
+    reasons: list[dict[str, Any]], risk_level: str, codes: set[str]
+) -> str:
     """Шаблон по главной причине; у ушедших клиентов — «вернуться», иначе общий."""
     if risk_level == "unknown":
         return WIN_BACK if WIN_BACK in codes else GENERAL
@@ -209,12 +248,19 @@ def choose_template(reasons: list[dict[str, Any]], risk_level: str, codes: set[s
     return main if main in codes else GENERAL
 
 
-def context(customer: dict[str, Any], template_code: str, now: datetime, company: str) -> dict[str, str]:
+def context(
+    customer: dict[str, Any], template_code: str, now: datetime, company: str
+) -> dict[str, str]:
     """Значения подстановок по оценке клиента. Даты в прошлом не подставляем."""
     detail = customer.get("detail") or {}
-    services = {s.get("id"): s for s in detail.get("services") or [] if isinstance(s, dict)}
+    services = {
+        s.get("id"): s for s in detail.get("services") or [] if isinstance(s, dict)
+    }
     reasons = customer.get("reasons") or []
-    reason = next((r for r in reasons if r.get("code") == template_code), reasons[0] if reasons else {})
+    reason = next(
+        (r for r in reasons if r.get("code") == template_code),
+        reasons[0] if reasons else {},
+    )
     service = services.get(reason.get("service_id")) if reason else None
     if service is None and services:
         service = max(services.values(), key=lambda s: s.get("expected_loss") or 0)
@@ -231,7 +277,7 @@ def context(customer: dict[str, Any], template_code: str, now: datetime, company
         "email": customer.get("email") or "",
         "service": (service or {}).get("name") or "",
         "date": date_text(date),
-        "amount": money_text((service or {}).get("price")) if service and service.get("price") else "",
+        "amount": price_text(service),
         "balance": money_text(customer.get("balance")),
         "company": company,
     }
@@ -255,7 +301,11 @@ def template_out(row: asyncpg.Record | dict[str, Any]) -> dict[str, Any]:
         "title": default.title if default else row["code"],
         "subject": row["subject"],
         "body": row["body"],
-        "is_default": bool(default and default.subject == row["subject"] and default.body == row["body"]),
+        "is_default": bool(
+            default
+            and default.subject == row["subject"]
+            and default.body == row["body"]
+        ),
         "updated_at": iso_z(row["updated_at"]),
         "updated_by": row["updated_by"],
     }
@@ -274,7 +324,9 @@ async def load_all(conn: asyncpg.Connection) -> dict[str, dict[str, Any]]:
             [t.code for t in DEFAULTS],
         )
     order = {t.code: i for i, t in enumerate(DEFAULTS)}
-    return {r["code"]: template_out(r) for r in sorted(rows, key=lambda r: order[r["code"]])}
+    return {
+        r["code"]: template_out(r) for r in sorted(rows, key=lambda r: order[r["code"]])
+    }
 
 
 async def list_templates(pool: asyncpg.Pool) -> dict[str, Any]:
@@ -282,7 +334,9 @@ async def list_templates(pool: asyncpg.Pool) -> dict[str, Any]:
         templates = await load_all(conn)
     return {
         "items": list(templates.values()),
-        "placeholders": [{"name": k, "description": v} for k, v in PLACEHOLDERS.items()],
+        "placeholders": [
+            {"name": k, "description": v} for k, v in PLACEHOLDERS.items()
+        ],
     }
 
 
@@ -293,7 +347,9 @@ def _known(code: str) -> TemplateDefault:
     return default
 
 
-async def save_template(pool: asyncpg.Pool, code: str, patch: TemplatePatch, user: str | None) -> dict[str, Any]:
+async def save_template(
+    pool: asyncpg.Pool, code: str, patch: TemplatePatch, user: str | None
+) -> dict[str, Any]:
     _known(code)
     validate(patch)
     async with pool.acquire() as conn:
@@ -309,6 +365,10 @@ async def save_template(pool: asyncpg.Pool, code: str, patch: TemplatePatch, use
     return template_out(row)
 
 
-async def reset_template(pool: asyncpg.Pool, code: str, user: str | None) -> dict[str, Any]:
+async def reset_template(
+    pool: asyncpg.Pool, code: str, user: str | None
+) -> dict[str, Any]:
     default = _known(code)
-    return await save_template(pool, code, TemplatePatch(subject=default.subject, body=default.body), user)
+    return await save_template(
+        pool, code, TemplatePatch(subject=default.subject, body=default.body), user
+    )

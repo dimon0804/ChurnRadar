@@ -69,7 +69,7 @@ make k8s-down
 
 Чарт `deploy/helm/churn-radar` подходит и для настоящего кластера: образы берутся из
 `ghcr.io/dimon0804/churn-radar-*`, внешние PostgreSQL/Redis/NATS подключаются через values,
-секреты передаются через `existingSecret`. Подробности в `deploy/helm/churn-radar/README.md`.
+секреты передаются через `existingSecret`. Все параметры с комментариями в `deploy/helm/churn-radar/values.yaml`.
 
 ## CI/CD
 

@@ -793,7 +793,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(churn_scoring_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(scoring_duration_seconds_bucket[5m])))",
           "legendFormat": "p95",
           "refId": "A",
           "range": true
@@ -803,7 +803,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(churn_scoring_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(scoring_duration_seconds_bucket[5m])))",
           "legendFormat": "p50",
           "refId": "B",
           "range": true

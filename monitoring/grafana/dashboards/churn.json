@@ -1067,7 +1067,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(churn_scoring_runs_total[5m])) * 60",
+          "expr": "sum(rate(scoring_runs_total[5m])) * 60",
           "legendFormat": "Пересчётов в минуту",
           "refId": "A",
           "range": true

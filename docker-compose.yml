@@ -45,7 +45,7 @@ services:
       notifier: {condition: service_healthy}
     deploy:
       resources:
-        limits: {cpus: "1", memory: 256M}
+        limits: {cpus: "1", memory: 512M}
 
   # ---------------------------------------------------------------- data
   postgres:

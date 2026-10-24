@@ -29,7 +29,7 @@ function KpiRow({ s }: { s: Summary }) {
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         <KpiCard
           label="Клиенты под высоким риском"
           testId="kpi-high"
@@ -181,7 +181,7 @@ function TopReasons({ s }: { s: Summary }) {
               >
                 <span className="w-5 shrink-0 text-right text-[13px] text-subtle-foreground num">{i + 1}</span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm" title={r.title}>
+                  <p className="line-clamp-2 text-sm break-words sm:line-clamp-1" title={r.title}>
                     {r.title}
                   </p>
                   <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted">
@@ -191,7 +191,7 @@ function TopReasons({ s }: { s: Summary }) {
                     />
                   </div>
                 </div>
-                <div className="shrink-0 text-right">
+                <div className="max-w-[45%] shrink-0 text-right">
                   <p className="text-sm font-medium num">{countLabel(r.count, ['клиент', 'клиента', 'клиентов'])}</p>
                   <p className="text-xs text-muted-foreground num">
                     {[
@@ -216,7 +216,7 @@ function TopReasons({ s }: { s: Summary }) {
 function OverviewSkeleton() {
   return (
     <div className="space-y-4" aria-busy="true" aria-label="Загружаем сводку">
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         {Array.from({ length: 4 }, (_, i) => (
           <KpiSkeleton key={i} />
         ))}

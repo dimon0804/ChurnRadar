@@ -120,7 +120,7 @@ export function CustomerActionPanel({ id, email, atRisk }: { id: number; email: 
   if (state.isError) return null
 
   return (
-    <section className="px-6 py-5" data-testid="customer-action">
+    <section className="px-4 py-5 sm:px-6" data-testid="customer-action">
       <div className="mb-3 flex items-baseline justify-between gap-3">
         <h3 className="text-[13px] font-semibold tracking-wide text-muted-foreground uppercase">Связь с клиентом</h3>
         {status && <ActionBadge action={action} />}

@@ -30,7 +30,7 @@ export function KpiCard({
 }) {
   const stamp = useChangeStamp(watch ?? null)
   return (
-    <Card className="relative flex flex-col px-5 py-4" data-testid={testId}>
+    <Card className="relative flex min-w-0 flex-col px-4 py-4 sm:px-5" data-testid={testId}>
       {stamp > 0 && <FlashOverlay key={stamp} />}
       <div className="flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground">
         {emphasis && <RiskGlyph level="high" className="text-risk-high" />}
@@ -47,7 +47,7 @@ export function KpiCard({
           </Tooltip>
         )}
       </div>
-      <div className="mt-2 text-[28px] leading-none font-semibold tracking-[-0.025em] num" data-role="value">
+      <div className="mt-2 text-[24px] leading-none font-semibold tracking-[-0.025em] break-words num sm:text-[28px]" data-role="value">
         {value}
       </div>
       {sub && <div className="mt-2.5 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{sub}</div>}
@@ -58,9 +58,9 @@ export function KpiCard({
 export function KpiSkeleton() {
   return (
     <Card className="px-5 py-4">
-      <Skeleton className="h-4 w-36" />
-      <Skeleton className="mt-3 h-7 w-28" />
-      <Skeleton className="mt-3 h-4 w-44" />
+      <Skeleton className="h-4 w-36 max-w-full" />
+      <Skeleton className="mt-3 h-7 w-28 max-w-full" />
+      <Skeleton className="mt-3 h-4 w-44 max-w-full" />
     </Card>
   )
 }

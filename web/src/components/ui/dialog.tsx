@@ -25,11 +25,13 @@ export function DialogContent({
       <DialogPrimitive.Content
         className={cn(
           'fixed top-1/2 left-1/2 z-50 flex max-h-[min(760px,calc(100dvh-32px))] w-[min(640px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-card shadow-pop outline-none data-[state=open]:animate-pop-in',
+          // на телефоне — на весь экран: так удобнее печатать и не наезжает клавиатура
+          'max-sm:inset-0 max-sm:h-dvh max-sm:max-h-dvh max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 max-sm:pb-[env(safe-area-inset-bottom)]',
           className,
         )}
         {...props}
       >
-        <div className="flex items-start gap-3 border-b border-border px-6 py-4">
+        <div className="flex items-start gap-3 border-b border-border px-4 py-4 sm:px-6">
           <div className="min-w-0 flex-1">
             <DialogPrimitive.Title className="text-base font-semibold">{title}</DialogPrimitive.Title>
             {description ? (
@@ -47,8 +49,8 @@ export function DialogContent({
             <X className="size-4" />
           </DialogPrimitive.Close>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">{children}</div>
-        {footer && <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-6 py-3">{footer}</div>}
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">{children}</div>
+        {footer && <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-4 py-3 sm:px-6">{footer}</div>}
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   )

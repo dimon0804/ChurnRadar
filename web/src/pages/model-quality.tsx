@@ -202,7 +202,7 @@ export function QualityHeadline({ q }: { q: ModelQuality }) {
     },
   ]
   return (
-    <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
       {items.map((it) => (
         <Card key={it.testId} className="flex flex-col px-5 py-4" data-testid={it.testId}>
           <p className="text-[13px] font-medium text-muted-foreground">{it.label}</p>
@@ -930,7 +930,7 @@ export function MethodCard({ q }: { q: ModelQuality }) {
 function QualitySkeleton() {
   return (
     <div className="space-y-4" aria-busy="true" aria-label="Загружаем результаты проверки">
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         {Array.from({ length: 4 }, (_, i) => (
           <Skeleton key={i} className="h-32 rounded-xl" />
         ))}

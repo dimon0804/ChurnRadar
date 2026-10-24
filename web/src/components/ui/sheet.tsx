@@ -25,7 +25,7 @@ export function SheetContent({
         )}
         {...props}
       >
-        <div className="flex items-start gap-3 border-b border-border bg-card px-6 py-4">
+        <div className="flex items-start gap-3 border-b border-border bg-card px-4 py-4 sm:px-6">
           <div className="min-w-0 flex-1">{header}</div>
           <DialogPrimitive.Close
             className="-mr-2 inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"

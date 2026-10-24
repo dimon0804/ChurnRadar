@@ -329,7 +329,7 @@ function ImpactStat({
   return (
     <div className="relative min-w-0 rounded-lg border border-border bg-card px-3 py-2" data-testid={testId}>
       {stamp > 0 && <FlashOverlay key={stamp} />}
-      <p className="truncate text-xs text-muted-foreground">{label}</p>
+      <p className="line-clamp-2 text-xs text-muted-foreground sm:line-clamp-1" title={label}>{label}</p>
       <p className="mt-0.5 flex items-baseline gap-2">
         <span className="text-lg leading-6 font-semibold tracking-[-0.01em] num" data-role="value">
           <AnimatedNumber value={value} format={format} />

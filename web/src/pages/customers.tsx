@@ -84,7 +84,8 @@ const columns = [
   }),
   col.accessor('id', {
     header: 'ID',
-    meta: { className: 'w-[76px]' },
+    // на телефоне прячем второстепенные колонки, чтобы риск был виден без прокрутки
+    meta: { className: 'w-[76px] max-md:hidden' },
     cell: (c) => <span className="text-muted-foreground num">{c.getValue()}</span>,
   }),
   col.accessor('email', {
@@ -98,12 +99,12 @@ const columns = [
   }),
   col.accessor('balance', {
     header: 'Баланс',
-    meta: { align: 'right' },
+    meta: { align: 'right', className: 'max-md:hidden' },
     cell: (c) => <span className="num">{formatMoney(c.getValue())}</span>,
   }),
   col.accessor('total_replenished', {
     header: 'Пополнено всего',
-    meta: { align: 'right' },
+    meta: { align: 'right', className: 'max-md:hidden' },
     cell: (c) => <span className="num">{formatMoney(c.getValue())}</span>,
   }),
   col.accessor('risk_score', {
@@ -279,8 +280,8 @@ function SkeletonRows({ count }: { count: number }) {
     <>
       {Array.from({ length: count }, (_, i) => (
         <TableRow key={i}>
-          {columns.map((_, j) => (
-            <TableCell key={j}>
+          {columns.map((c, j) => (
+            <TableCell key={j} className={(c.meta as ColumnMeta | undefined)?.className}>
               <Skeleton className={cn('h-4', j === 0 ? 'w-4' : j === 2 ? 'w-40' : j === 7 ? 'w-48' : 'w-16')} />
             </TableCell>
           ))}

@@ -242,6 +242,8 @@
   html {
     color-scheme: light;
     -webkit-text-size-adjust: 100%;
+    /* якоря и фокус не прячутся под липкой шапкой */
+    scroll-padding-top: 4.5rem;
   }
   html.dark {
     color-scheme: dark;
@@ -255,6 +257,11 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+  }
+
+  /* ячейка сетки не раздувает колонку широкой таблицей или графиком — иначе на телефоне страница уезжает вбок */
+  :where(.grid > *) {
+    min-width: 0;
   }
 
   ::selection {

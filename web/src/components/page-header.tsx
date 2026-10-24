@@ -22,7 +22,7 @@ export function PageHeader({
         <h1 className="text-[22px] leading-tight font-semibold tracking-[-0.02em]">{title}</h1>
         {description && <p className="mt-1.5 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p>}
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex max-w-full min-w-0 flex-wrap items-center gap-3">
         {meta}
         {actions}
       </div>

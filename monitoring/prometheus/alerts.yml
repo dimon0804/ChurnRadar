@@ -136,3 +136,25 @@ groups:
             Реплика alerts, которая ведёт опрос getUpdates, за 10 минут получила {{ $value }} ошибок.
             Бот не отвечает на команды и не привязывает новые чаты; уведомления в Telegram
             при этом продолжают уходить. Проверьте TELEGRAM_BOT_TOKEN и доступ к api.telegram.org.
+
+  - name: churn-connectors
+    rules:
+      # Коннекторы (pull): каждая реплика ingest отдаёт значения из source.connectors, поэтому max by (source).
+      # До первого успешного запуска connector_last_success_timestamp — момент включения коннектора.
+      - alert: ConnectorStale
+        expr: |
+          (time() - max by (source) (connector_last_success_timestamp))
+          > 3 * max by (source) (connector_interval_seconds) + 300
+          and on (source)
+          max by (source) (connector_enabled) == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Коннектор {{ $labels.source }} не обновлял данные {{ $value | humanizeDuration }}"
+          description: >-
+            Источник {{ $labels.source }} включён, но успешного запуска не было дольше трёх интервалов
+            расписания (плюс 5 минут запаса). Данные из него в панели устаревают. Откройте «Данные» →
+            «Источники»: там последняя ошибка и история запусков. Частые причины — источник недоступен,
+            истёк токен (CONNECTOR_TOKEN_*), ни одна реплика ingest не стала исполнителем
+            (connector_leader).

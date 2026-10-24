@@ -51,6 +51,13 @@ class Config:
     lock_timeout_s: float = 60.0
     publish_attempts: int = 3
     publish_retry_delay_s: float = 1.0
+    # «что если»: до скольких клиентов считаем точно, выше — выборка такого размера
+    preview_sample_size: int = 2000
+    preview_timeout_s: float = 20.0
+    # пользователь для /internal/v1/model/preview приходит заголовками X-User-* от api
+    auth_trust_headers: bool = True
+    auth_dev_user: str | None = None
+    auth_dev_roles: str = "admin"
 
     @classmethod
     def from_env(cls) -> Config:
@@ -81,4 +88,9 @@ class Config:
             lock_timeout_s=float(os.getenv("LOCK_TIMEOUT_S", "60")),
             publish_attempts=max(1, int(os.getenv("PUBLISH_ATTEMPTS", "3"))),
             publish_retry_delay_s=float(os.getenv("PUBLISH_RETRY_DELAY_S", "1")),
+            preview_sample_size=max(1, int(os.getenv("PREVIEW_SAMPLE_SIZE", "2000"))),
+            preview_timeout_s=float(os.getenv("PREVIEW_TIMEOUT_S", "20")),
+            auth_trust_headers=_env_bool("AUTH_TRUST_HEADERS", True),
+            auth_dev_user=os.getenv("AUTH_DEV_USER") or None,
+            auth_dev_roles=os.getenv("AUTH_DEV_ROLES", "admin"),
         )

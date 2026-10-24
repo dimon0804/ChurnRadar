@@ -10,9 +10,12 @@ from collections.abc import Sequence
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, ConfigDict
+from svckit.auth import User, make_current_user, make_require_admin
 from svckit.db import db_ready
+from svckit.errors import ApiError, install_error_handlers
 from svckit.health import install_probes
 from svckit.logs import configure_logging, get_logger
 from svckit.metrics import METRICS_TOKEN_MESSAGE, bearer_token_valid, render
@@ -21,14 +24,23 @@ from . import repository as repo
 from .config import Config
 from .engine import Scorer
 from .metrics import ERRORS
+from .preview import Previewer, PreviewSuperseded
 from .worker import Worker
 
 log = get_logger("scoring")
 
 
+class PreviewRequest(BaseModel):
+    """Хранимая форма настроек {horizon_days, thresholds, weights}; api уже проверил её как PATCH."""
+
+    model_config = ConfigDict(extra="forbid")
+    settings: dict[str, Any]
+
+
 class State:
     def __init__(self) -> None:
         self.pool = None
+        self.previewer: Previewer | None = None
         self.worker: Worker | None = None
         self.ready = False
         # имя фоновой задачи, завершившейся с ошибкой; после этого процесс выходит с кодом 1
@@ -61,6 +73,21 @@ def create_http_app(config: Config, state: State) -> FastAPI:
                 status_code=401,
             )
         return render()
+
+    install_error_handlers(app)
+    require_admin = make_require_admin(make_current_user(config))
+
+    @app.post("/internal/v1/model/preview")
+    async def preview(body: PreviewRequest, _: User = Depends(require_admin)) -> dict[str, Any]:
+        """«Что если»: расчёт по присланным настройкам без записи. Вызывает только api."""
+        if state.previewer is None:
+            raise ApiError(503, "scoring_starting", "Сервис оценки ещё запускается")
+        try:
+            return await state.previewer.preview(body.settings)
+        except PreviewSuperseded as exc:
+            raise ApiError(409, "preview_superseded", "Пришёл более новый запрос предпросмотра") from exc
+        except TimeoutError as exc:
+            raise ApiError(504, "preview_timeout", "Предпросмотр не уложился во время, попробуйте ещё раз") from exc
 
     return app
 
@@ -145,6 +172,9 @@ async def run() -> int:
             idle_in_transaction_timeout_ms=config.db_idle_in_transaction_timeout_ms,
         ),
         "postgres",
+    )
+    state.previewer = Previewer(
+        state.pool, sample_size=config.preview_sample_size, timeout_s=config.preview_timeout_s
     )
     scorer = Scorer(
         state.pool,

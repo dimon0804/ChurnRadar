@@ -24,6 +24,7 @@
 - [Быстрый старт](#быстрый-старт)
 - [Что посмотреть в панели](#что-посмотреть-в-панели)
 - [Как это работает](#как-это-работает)
+- [Оповещения](#оповещения)
 - [Модель риска](#модель-риска)
 - [Проверка качества](#проверка-качества)
 - [Как добавить новый признак](#как-добавить-новый-признак)
@@ -181,6 +182,7 @@ flowchart TB
         ingest["ingest<br/>снимки и поток изменений"]
         scoring["scoring x2<br/>riskcore: score, причины, деньги"]
         simulator["simulator<br/>расширенные данные и живой поток"]
+        alerts["alerts x2<br/>оповещения: лента, webhook, Telegram"]
     end
 
     subgraph data["Хранилища"]
@@ -215,6 +217,10 @@ flowchart TB
     nats --> notifier
     nats --> api
     api --> pg
+    traefik -- "/api/v1/alerts" --> alerts
+    nats -- "scores.updated" --> alerts
+    alerts --> pg
+    alerts -. "webhook, Telegram" .-> outside(["внешние каналы"])
     prom -. "/metrics" .-> api
     graf --> prom
 ```
@@ -241,6 +247,10 @@ PKCE) включается профилем `oidc`.
    `churn.scores.updated`.
 4. `notifier` раздаёт событие браузерам по SSE (`/api/v1/stream`), `api` по нему же сбрасывает
    кэш сводки. Панель перезапрашивает нужные данные и обновляется без перезагрузки страницы.
+5. `alerts` слушает то же `churn.scores.updated` своим durable consumer и сравнивает новые
+   оценки с тем, что помнит о клиентах. Если кто-то перешёл в высокий риск или у него заметно
+   выросла ожидаемая потеря, появляется запись в ленте оповещений и сообщение в webhook или
+   Telegram (подробнее в разделе [Оповещения](#оповещения)).
 
 Реплики `notifier` друг о друге не знают: каждая слушает все события и держит кольцевой буфер
 на 200 штук для `Last-Event-ID`. Если реплика упала, браузер через 3 секунды подключается к
@@ -256,6 +266,73 @@ PKCE) включается профилем `oidc`.
 
 Подробно про каждый сервис, модель угроз и отказоустойчивость: [docs/architecture.md](docs/architecture.md).
 Схемы событий: [contracts/events/](contracts/events/).
+
+## Оповещения
+
+Смотреть в панель весь день никто не будет, поэтому о важном ChurnRadar сообщает сам. В шапке
+панели колокольчик с числом новых оповещений, по клику выезжает лента, из каждой записи можно
+перейти в карточку клиента. Те же события уходят в webhook (JSON POST) и в Telegram, если
+они настроены.
+
+Оповещения шлёт отдельный сервис [`services/alerts`](services/alerts). В коде `scoring`, `api`,
+`ingest` и `notifier` для него не поменялось ни строчки: это ещё один потребитель события
+`churn.scores.updated`, которое scoring и так публикует. Добавились только своя схема `alerts`
+в базе (миграция `db/core/004_alerts.sql`), маршрут `/api/v1/alerts` в шлюзе и колокольчик
+в панели. Так же можно подключить любого следующего потребителя: CRM, рассылку, тикеты.
+
+Когда срабатывает:
+
+| Что случилось | Порог по умолчанию |
+|---|---|
+| Клиент перешёл в высокий риск (или новый клиент сразу в нём) | — |
+| Ожидаемая потеря клиента выросла больше чем на X € | `ALERT_LOSS_JUMP_EUR=50` |
+| Общая ожидаемая потеря выросла больше чем на Y % | `ALERT_TOTAL_LOSS_JUMP_PCT=10` |
+
+Рост считается от минимума после прошлого оповещения, поэтому медленное сползание тоже
+заметно, а не только скачок за один пересчёт. По одному клиенту — не чаще раза в
+`ALERT_COOLDOWN_MIN` минут (60), всё, что нашлось за один пересчёт, уходит одним сообщением.
+При самом первом запуске сервис запоминает текущее состояние и ничего не шлёт: иначе пришло бы
+оповещение обо всех, кто уже давно в высоком риске.
+
+Как устроена доставка:
+
+- Своё состояние сервис хранит в схеме `alerts`, а `scoring.*` только читает. Сравнение
+  делается одним запросом в базе: в Python попадают лишь клиенты, у которых что-то поменялось.
+- Лента и очередь доставки (`alerts.deliveries`) пишутся в одной транзакции с отметкой, что
+  событие обработано. Повтор того же события ничего не задвоит, а упавший webhook не
+  потеряет оповещение: фоновый цикл повторит отправку с паузами 5/15/60/300/900 с, после
+  8 попыток доставка помечается неудачной. Ответ 4xx (кроме 408 и 429) повторять бессмысленно,
+  такая доставка сразу считается неудачной.
+- Реплики делят события через durable consumer JetStream, состояние клиентов меняется под
+  `pg_advisory_xact_lock`, доставки разбираются через `FOR UPDATE SKIP LOCKED` с арендой на
+  60 с. Если реплика умрёт посреди отправки, через минуту доставку заберёт соседняя.
+- Событие, которое стабильно падает, после 10 попыток уходит в `churn.dlq.alerts`, как у
+  scoring.
+- Webhook получает `X-ChurnRadar-Batch-Id` (по нему можно отсечь повтор) и, если задан
+  `ALERTS_WEBHOOK_SECRET`, подпись `X-ChurnRadar-Signature: sha256=<HMAC тела>`. В теле есть поле
+  `text`, поэтому его без переделок принимают Slack и Mattermost.
+- Токен Telegram в логи не попадает: httpx пишет URL запросов, а в URL Bot API лежит токен,
+  поэтому его логгер приглушён.
+
+Пример сообщения в Telegram:
+
+```text
+ChurnRadar: 2 оповещения
+• Общая ожидаемая потеря выросла на 12,5 %: €10 400 → €11 700. http://localhost:8080/customers?level=high
+• Клиент #3 (user3@example.com) перешёл в высокий риск (был средний). Ожидаемая потеря €90. http://localhost:8080/customers/3
+```
+
+Включить каналы в compose — задать переменные в `.env` и перезапустить сервис:
+
+```bash
+ALERTS_WEBHOOK_URL=https://hooks.example.com/churn
+TELEGRAM_BOT_TOKEN=123456:ABC...   # бот от @BotFather
+TELEGRAM_CHAT_ID=-1001234567890    # чат, куда бот добавлен
+```
+
+В Helm то же самое задаётся в `secrets.alerts` (попадает в отдельный Secret) или готовым
+Secret через `secrets.alerts.existingSecret`. Выход наружу по HTTPS для alerts открывает
+своя NetworkPolicy (`networkPolicy.alertsEgress`).
 
 ## Модель риска
 
@@ -404,7 +481,8 @@ histogram: число клиентов в корзине после пересч
 работает и даёт медиану.
 
 Свои метрики есть у каждого сервиса (`scoring_runs_total`, `scoring_duration_seconds`,
-`notifier_connected_clients`, `auth_logins_total` и другие), Prometheus собирает их вместе
+`notifier_connected_clients`, `auth_logins_total`, `alerts_sent_total{channel}`,
+`alerts_failed_total{channel}` и другие), Prometheus собирает их вместе
 с экспортёрами PostgreSQL, Redis и NATS. Правила алертов лежат в
 [`monitoring/prometheus/alerts.yml`](monitoring/prometheus/alerts.yml), дашборды Grafana
 подключаются автоматически из [`monitoring/grafana/`](monitoring/grafana/).
@@ -428,9 +506,11 @@ histogram: число клиентов в корзине после пересч
 | Обрыв NATS у `notifier` | После переподключения панели приходит `resync`, и она перечитывает данные целиком | Go-тесты notifier, тест web |
 | `ingest` не принял пакет симулятора | Симулятор перечитывает мир из базы и не расходится с ней | тесты simulator |
 | Зависший запрос к Postgres | `statement_timeout` и `idle_in_transaction_session_timeout` на сервере | интеграционный тест svckit |
+| Webhook или Telegram не отвечает | Оповещение уже в ленте, доставка ждёт в `alerts.deliveries` и повторяется по backoff; метрика `alerts_failed_total`, алерт `AlertsDeliveryFailing` | интеграционные тесты alerts (webhook отдаёт 503, потом оживает; адрес недоступен) |
+| Повтор `scores.updated` у alerts | Идемпотентность по `event_id`: второй записи в ленте и второго webhook нет | интеграционный тест alerts |
 
 Если что-то застряло, это видно в Grafana на панели «Outbox: в очереди». Срабатывают и алерты:
-`OutboxStuck`, `ScoringLagHigh`, `ScoringStale`, `ServiceDown`, `HighErrorRate`.
+`OutboxStuck`, `ScoringLagHigh`, `ScoringStale`, `ServiceDown`, `HighErrorRate`, `AlertsDeliveryFailing`.
 
 ## Масштабирование и Kubernetes
 
@@ -487,6 +567,7 @@ Swagger UI открывается по адресу http://localhost:8080/api/v1
 | `POST /api/v1/source/events` | пакет изменений в реальном времени |
 | `GET /api/v1/stream` | живые обновления (SSE) |
 | `GET/PUT /api/v1/simulator` | генерация расширенного набора и демо-поток |
+| `GET /api/v1/alerts` | лента оповещений с пагинацией (сервис alerts) |
 
 Изменяющие запросы с cookie-сессией должны приходить с заголовком `Origin` того же сайта.
 События шины описаны JSON Schema в [`contracts/events/`](contracts/events/), таблица
@@ -563,7 +644,10 @@ Trivy, `helm lint` с kubeconform, e2e в Compose и установку чарт
 | `METRICS_TOKEN` | `churn-metrics-demo-token` | Bearer-токен для `/metrics` и Prometheus |
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | `churn` | база |
 | `COOKIE_SECURE` | `false` | включить за HTTPS |
-| `API_REPLICAS`, `SCORING_REPLICAS`, `NOTIFIER_REPLICAS` | `2` | число реплик |
+| `API_REPLICAS`, `SCORING_REPLICAS`, `NOTIFIER_REPLICAS`, `ALERTS_REPLICAS` | `2` | число реплик |
+| `ALERT_LOSS_JUMP_EUR`, `ALERT_TOTAL_LOSS_JUMP_PCT`, `ALERT_COOLDOWN_MIN` | `50`, `10`, `60` | пороги оповещений и анти-спам |
+| `ALERTS_WEBHOOK_URL`, `ALERTS_WEBHOOK_SECRET` | пусто | webhook для оповещений и ключ подписи |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | пусто | Telegram для оповещений, без них канал выключен |
 | `SEED_REFERENCE_TIME` | `2026-10-19T15:00:00Z` | на какой момент считать набор кейса при первом старте |
 | `GRAFANA_PORT`, `PROMETHEUS_PORT` | `3000`, `9090` | порты наблюдаемости |
 | `OIDC_*`, `KEYCLOAK_*` | см. `.env.example` | вход через Keycloak (профиль `oidc`) |

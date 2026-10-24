@@ -29,6 +29,8 @@ tags:
     description: Живые обновления (Server-Sent Events)
   - name: simulator
     description: Поток демонстрационных изменений данных
+  - name: alerts
+    description: Оповещения о росте риска (сервис alerts)
   - name: ops
     description: Метрики и служебные эндпоинты
 
@@ -365,6 +367,31 @@ paths:
             text/event-stream:
               schema: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/alerts:
+    get:
+      tags: [alerts]
+      summary: Лента оповещений
+      description: |
+        Отдаёт сервис alerts. Новые записи сверху. Оповещение появляется, когда клиент перешёл
+        в высокий риск, его ожидаемая потеря выросла больше порога или выросла общая ожидаемая
+        потеря. `latest_id` — id самой свежей записи, по нему панель считает новые.
+      operationId: listAlerts
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: customer_id, in: query, schema: { type: integer, minimum: 1 } }
+        - name: kind
+          in: query
+          schema: { type: string, enum: [high_risk, loss_jump, total_loss_jump] }
+      responses:
+        '200':
+          description: Страница ленты
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
 
   /api/v1/simulator:
     get:
@@ -1001,3 +1028,36 @@ components:
             accounts: { type: integer }
             services: { type: integer }
             transactions: { type: integer }
+
+    AlertItem:
+      type: object
+      required: [id, kind, message, link]
+      properties:
+        id: { type: integer }
+        kind: { type: string, enum: [high_risk, loss_jump, total_loss_jump] }
+        customer_id: { type: [integer, 'null'], description: 'null у total_loss_jump' }
+        email: { type: [string, 'null'] }
+        risk_level: { type: [string, 'null'] }
+        prev_level: { type: [string, 'null'] }
+        expected_loss: { type: [integer, 'null'], description: евроценты }
+        prev_loss: { type: [integer, 'null'], description: 'евроценты, точка отсчёта роста' }
+        message: { type: string }
+        created_at: { type: [string, 'null'], format: date-time }
+        link: { type: string, description: 'путь в панели: /customers/{id} или /customers?level=high' }
+
+    AlertPage:
+      type: object
+      required: [items, total, page, page_size, latest_id, channels]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AlertItem' } }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+        latest_id: { type: [integer, 'null'] }
+        channels:
+          type: object
+          required: [feed, webhook, telegram]
+          properties:
+            feed: { type: boolean }
+            webhook: { type: boolean }
+            telegram: { type: boolean }

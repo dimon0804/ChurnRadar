@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -90,6 +91,13 @@ async def test_feed_list(monkeypatch: pytest.MonkeyPatch) -> None:
     assert body["items"][0]["link"] == "/customers/42"
     assert body["items"][0]["created_at"] == "2026-10-19T15:00:00.000Z"
     assert body["items"][1]["link"] == "/customers?level=high"
+
+    # ответ совпадает со схемой AlertPage из contracts/openapi.yaml
+    jsonschema = pytest.importorskip("jsonschema")
+    yaml = pytest.importorskip("yaml")
+    spec = yaml.safe_load((Path(__file__).resolve().parents[3] / "contracts" / "openapi.yaml").read_text("utf-8"))
+    schema = {"$ref": "#/components/schemas/AlertPage", "components": spec["components"]}
+    jsonschema.validate(body, schema, cls=jsonschema.Draft202012Validator)
 
     assert (await _get(app, "/api/v1/alerts?page_size=500", USER)).status_code == 422
     assert (await _get(app, "/api/v1/alerts?kind=other", USER)).status_code == 422

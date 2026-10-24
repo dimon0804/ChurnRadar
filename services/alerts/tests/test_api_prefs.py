@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -29,6 +30,15 @@ async def _app(pool: Any, config: Config) -> tuple[Any, State]:
     return create_http_app(config, state), state
 
 
+def contract(name: str, body: Any) -> None:
+    """Ответ совпадает со схемой из contracts/openapi.yaml."""
+    jsonschema = pytest.importorskip("jsonschema")
+    yaml = pytest.importorskip("yaml")
+    spec = yaml.safe_load((Path(__file__).resolve().parents[3] / "contracts" / "openapi.yaml").read_text("utf-8"))
+    schema = {"$ref": f"#/components/schemas/{name}", "components": spec["components"]}
+    jsonschema.validate(body, schema, cls=jsonschema.Draft202012Validator)
+
+
 async def call(app: Any, method: str, path: str, headers: dict[str, str], json: Any = None) -> httpx.Response:
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://s") as c:
         return await c.request(method, path, headers=headers, json=json)
@@ -41,6 +51,7 @@ async def test_preferences_test_message_inbox_and_admin(db_pool: Any, smtp: Fake
     resp = await call(app, "GET", "/api/v1/alerts/preferences", ANNA)
     assert resp.status_code == 200
     body = resp.json()
+    contract("AlertPreferencesResponse", body)
     assert body["preferences"]["username"] == "anna"
     assert {e["code"] for e in body["catalog"]} >= {"loss_growth", "big_customer_high", "risk_share"}
     assert body["channels"]["email"]["available"] is True
@@ -83,6 +94,7 @@ async def test_preferences_test_message_inbox_and_admin(db_pool: Any, smtp: Fake
     assert smtp.messages[0]["subject"] == "ChurnRadar: Тестовое уведомление"
 
     inbox = (await call(app, "GET", "/api/v1/alerts/notifications", ANNA)).json()
+    contract("NotificationInbox", inbox)
     assert inbox["unread"] == 1 and inbox["items"][0]["link"] == "/notifications"
     assert (await call(app, "POST", "/api/v1/alerts/notifications/read", ANNA)).status_code == 204
     assert (await call(app, "GET", "/api/v1/alerts/notifications", ANNA)).json()["unread"] == 0

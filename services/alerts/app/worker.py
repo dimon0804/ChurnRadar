@@ -175,11 +175,12 @@ class BatchProcessor:
             plan = coalesce(fresh)
             cur = await repo.current_metrics(conn, now)
             prev = await repo.latest_snapshot(conn)
-            if cur is not None:
-                await repo.write_snapshot(conn, cur, timedelta(seconds=cfg.snapshot_every_s))
+            every = timedelta(seconds=cfg.snapshot_every_s)
 
             if not await repo.baseline_taken(conn):
                 remembered = await repo.take_baseline(conn, now)
+                if cur is not None:
+                    await repo.write_snapshot(conn, cur, every)
                 await repo.mark_processed(conn, plan.event_ids)
                 log.info("baseline_taken", customers=remembered)
                 outcome.baseline = True
@@ -194,6 +195,8 @@ class BatchProcessor:
                 outcome.journal = result.journal
                 outcome.personal = result.personal
                 outcome.queued_external = result.queued_external
+                # историю пишем после проверки: иначе точка отсчёта роста совпала бы с текущими цифрами
+                await repo.write_snapshot(conn, cur, every)
             await repo.mark_processed(conn, plan.event_ids)
 
         if outcome.journal:

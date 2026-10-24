@@ -189,11 +189,14 @@ async def snapshot_at(conn: asyncpg.Connection, moment: datetime) -> Snapshot | 
 
 
 async def write_snapshot(conn: asyncpg.Connection, snap: Snapshot, every: timedelta) -> None:
-    """Не чаще раза в every: свежая запись обновляется на месте, так история не растёт с каждым пересчётом."""
+    """Не чаще раза в every: свежая запись обновляется на месте, так история не растёт с каждым пересчётом.
+    Самая ранняя запись не перезаписывается никогда — она точка отсчёта, пока история короче периода."""
     updated = await conn.execute(
         """
         UPDATE alerts.metric_snapshots SET expected_loss = $1, high_count = $2, risk_share = $3, customers = $4
         WHERE id = (SELECT id FROM alerts.metric_snapshots ORDER BY at DESC, id DESC LIMIT 1) AND at > $5
+          -- самую раннюю точку не трогаем: пока истории мало, от неё считается рост
+          AND id <> (SELECT min(id) FROM alerts.metric_snapshots)
         """,
         snap.expected_loss,
         snap.high_count,

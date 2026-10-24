@@ -130,7 +130,6 @@ def make_config(**overrides: Any) -> Config:
         durable_name=f"alerts-test-{uuid.uuid4().hex[:8]}",  # свой потребитель на каждый тест
         public_url="https://churn.example",
         cooldown_s=3600,
-        snapshot_every_s=0,  # в тестах каждая точка истории — отдельный снимок
         delivery_backoff_s=(0.2, 0.2, 0.2),
         delivery_max_attempts=20,
         retry_backoff_s=(0.2,),

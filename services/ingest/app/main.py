@@ -20,6 +20,7 @@ from typing import Annotated, Any
 import asyncpg
 import structlog
 from fastapi import Depends, FastAPI, Request
+from svckit.audit import AuditMiddleware, rule
 from svckit.auth import User, make_current_user, make_require_admin
 from svckit.body import RequestBodyMiddleware, parse_json_body, read_body
 from svckit.bus import EventBus
@@ -198,6 +199,16 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         lifespan=lifespan if with_lifespan else None,
     )
     install_error_handlers(app)
+    # журнал действий: кто и когда загрузил данные (тело — мегабайты, его не пишем)
+    app.add_middleware(
+        AuditMiddleware,
+        service="ingest",
+        rules=[
+            rule("PUT", r"/api/v1/source/snapshot", "source.snapshot.upload", "source", body=False),
+            rule("POST", r"/api/v1/source/events", "source.events.push", "source", body=False),
+        ],
+        errors=metrics.audit_errors,
+    )
     app.add_middleware(
         RequestBodyMiddleware,
         max_bytes=settings.max_body_bytes,

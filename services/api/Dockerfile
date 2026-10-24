@@ -3,6 +3,8 @@
 # писать нужно только в /tmp.
 FROM python:3.12-slim AS builder
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+# шрифт с кириллицей для PDF-отчёта: ставим пакет только здесь, в итоговый образ идут два файла
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 COPY services/api/requirements.txt /tmp/requirements.txt
@@ -19,6 +21,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
     OPENAPI_PATH=/app/contracts/openapi.yaml     MODEL_QUALITY_PATH=/app/data/model_quality.json
 RUN groupadd --system --gid 10001 app && useradd --system --uid 10001 --gid app --no-create-home app
 COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf /app/fonts/
 WORKDIR /app
 COPY --chown=app:app services/api/app /app/app
 COPY --chown=app:app contracts/openapi.yaml /app/contracts/openapi.yaml

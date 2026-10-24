@@ -108,10 +108,21 @@ class FakeConn:
     async def fetchval(self, sql, *args):
         return self._answer(sql)
 
+    async def execute(self, sql, *args):
+        return self._answer(sql)
+
 
 class FakePool:
     def __init__(self, answers: dict[str, Any] | None = None) -> None:
         self.conn = FakeConn(answers or {})
+        # записи журнала действий (audit.events) от AuditMiddleware
+        self.audit: list[tuple] = []
+
+    async def execute(self, sql, *args):
+        if sql.startswith("INSERT INTO audit.events"):
+            self.audit.append(args)
+            return "INSERT 0 1"
+        return await self.conn.execute(sql, *args)
 
     def acquire(self, timeout=None):
         pool = self

@@ -17,6 +17,7 @@ import httpx
 import uvicorn
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response
+from svckit.audit import AuditMiddleware, rule, skip
 from svckit.auth import User, make_current_user
 from svckit.db import db_ready
 from svckit.errors import ApiError, RequestIdMiddleware, install_error_handlers
@@ -31,7 +32,7 @@ from .channels import TelegramApi, build_channels
 from .config import Config
 from .delivery import Dispatcher
 from .fanout import Fanout
-from .metrics import ERRORS, HTTP_DURATION, SUBSCRIBERS, TELEGRAM_LINKED
+from .metrics import AUDIT_ERRORS, ERRORS, HTTP_DURATION, SUBSCRIBERS, TELEGRAM_LINKED
 from .rules import feed_path
 from .worker import Worker
 
@@ -83,9 +84,31 @@ def feed_item(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+ALERTS_AUDIT_RULES = [
+    rule("PUT", r"/api/v1/alerts/preferences", "alerts.preferences.update", "alerts_preferences"),
+    rule("POST", r"/api/v1/alerts/preferences/test", "alerts.test", "alerts_preferences"),
+    rule("POST", r"/api/v1/alerts/telegram/link", "alerts.telegram.link", "telegram"),
+    rule("DELETE", r"/api/v1/alerts/telegram/link", "alerts.telegram.unlink", "telegram"),
+    rule(
+        "DELETE", r"/api/v1/alerts/preferences/users/(?P<user>[^/]+)", "alerts.preferences.reset", "user",
+        object_group="user",
+    ),
+    # отметка «прочитано» в колокольчике ничего не меняет в системе
+    skip("POST", r"/api/v1/alerts/notifications/read"),
+]
+
+
 def create_http_app(config: Config, state: State) -> FastAPI:
     app = FastAPI(title="ChurnRadar Alerts", docs_url=None, redoc_url=None, openapi_url=None)
     install_error_handlers(app)
+    # журнал действий: настройки уведомлений, Telegram, тестовые уведомления
+    app.add_middleware(
+        AuditMiddleware,
+        service="alerts",
+        rules=ALERTS_AUDIT_RULES,
+        pool=lambda _app: state.pool,
+        errors=AUDIT_ERRORS,
+    )
     app.add_middleware(HttpMetricsMiddleware, histogram=HTTP_DURATION)
     app.add_middleware(RequestIdMiddleware)
     current_user = make_current_user(config)

@@ -16,6 +16,14 @@ info:
     рассылки и отметки клиентов (`/customers/{id}/action`, `/customers/{id}/email*`,
     `/mail/campaigns*`) — `marketer` и выше. Модель, данные, симулятор, шаблоны писем, CAC и маржа,
     пользователи — только `admin`. Свои уведомления и профиль — любая роль. Не хватает роли — `403`.
+
+    **Интеграции.** Внешние системы ходят с API-токеном: `Authorization: Bearer cr_…`.
+    Токен выпускает администратор (страница «Интеграции» или `POST /api/v1/auth/tokens`),
+    у токена есть роль (`admin`, `marketer`, `analyst`), срок действия, необязательный список
+    разрешённых IP и лимит запросов в минуту. Права токена — права его роли, CSRF-проверка для
+    токенов не нужна. Отозванный или просроченный токен — `401`, чужой IP — `403`,
+    превышен лимит — `429` с `Retry-After`. Каждое изменяющее действие попадает в журнал
+    (`GET /api/v1/audit`) с именем токена.
 servers:
   - url: http://localhost:8080
     description: Локальный запуск через Docker Compose
@@ -46,6 +54,12 @@ tags:
     description: Поток демонстрационных изменений данных
   - name: alerts
     description: Критические события и персональные уведомления (сервис alerts)
+  - name: integrations
+    description: API-токены для внешних систем (только администратор)
+  - name: audit
+    description: Единый журнал действий (только администратор)
+  - name: reports
+    description: Еженедельный отчёт для руководства (PDF, HTML) и его рассылка
   - name: ops
     description: Метрики и служебные эндпоинты
 
@@ -279,6 +293,71 @@ paths:
                   items: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/auth/tokens:
+    get:
+      tags: [integrations]
+      summary: API-токены интеграций
+      description: Только сессия администратора (токен не может управлять токенами). Сам токен не возвращается никогда.
+      operationId: listApiTokens
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Токены, действующие сверху
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ApiToken' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [integrations]
+      summary: Выпустить API-токен
+      description: Токен (`secret`) показывается один раз, в базе хранится только его SHA-256.
+      operationId: createApiToken
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApiTokenCreate' }
+      responses:
+        '201':
+          description: Токен выпущен
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, secret]
+                properties:
+                  token: { $ref: '#/components/schemas/ApiToken' }
+                  secret: { type: string, examples: ['cr_Q2h1cm5SYWRhcg…'], description: 'Показывается один раз' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Действующий токен с таким именем уже есть
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/auth/tokens/{token_id}:
+    delete:
+      tags: [integrations]
+      summary: Отозвать API-токен
+      description: Действует сразу. Запись остаётся в списке со статусом revoked.
+      operationId: revokeApiToken
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - { name: token_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Отозван }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/auth/logout:
     post:
@@ -1812,6 +1891,156 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /api/v1/audit:
+    get:
+      tags: [audit]
+      summary: Журнал действий
+      description: |
+        Все изменяющие действия системы: вход и выход, неудачные входы, пользователи и API-токены,
+        модель, загрузка данных, письма и рассылки, настройки маркетинга и уведомлений, отчёты.
+        Кто (сотрудник или `token:<имя>`), что, когда, IP, request_id, объект. Новые сверху.
+      operationId: listAudit
+      parameters:
+        - $ref: '#/components/parameters/AuditQ'
+        - $ref: '#/components/parameters/AuditActor'
+        - $ref: '#/components/parameters/AuditAction'
+        - $ref: '#/components/parameters/AuditActorType'
+        - $ref: '#/components/parameters/AuditObjectType'
+        - $ref: '#/components/parameters/AuditService'
+        - $ref: '#/components/parameters/AuditSuccess'
+        - $ref: '#/components/parameters/AuditFrom'
+        - $ref: '#/components/parameters/AuditTo'
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        '200':
+          description: Страница журнала
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/audit/export.csv:
+    get:
+      tags: [audit]
+      summary: Выгрузка журнала в CSV
+      description: Те же фильтры, до 50 000 строк. UTF-8 с BOM, разделитель «;».
+      operationId: exportAudit
+      parameters:
+        - $ref: '#/components/parameters/AuditQ'
+        - $ref: '#/components/parameters/AuditActor'
+        - $ref: '#/components/parameters/AuditAction'
+        - $ref: '#/components/parameters/AuditActorType'
+        - $ref: '#/components/parameters/AuditObjectType'
+        - $ref: '#/components/parameters/AuditService'
+        - $ref: '#/components/parameters/AuditSuccess'
+        - $ref: '#/components/parameters/AuditFrom'
+        - $ref: '#/components/parameters/AuditTo'
+      responses:
+        '200':
+          description: CSV-файл
+          content:
+            text/csv:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/reports/weekly:
+    get:
+      tags: [reports]
+      summary: Еженедельный отчёт для руководства
+      description: |
+        Ключевые цифры (ожидаемая потеря, клиенты под риском, MRR, ARPU, LTV, отток), динамика
+        за четыре недели, прогноз, топ клиентов под риском, главные причины и что сделали за неделю
+        (письма, рассылки, помогло ли). PDF собирается на сервере.
+      operationId: weeklyReport
+      parameters:
+        - { name: format, in: query, schema: { type: string, enum: [pdf, html, json], default: pdf } }
+      responses:
+        '200':
+          description: Отчёт
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+            text/html:
+              schema: { type: string }
+            application/json:
+              schema: { $ref: '#/components/schemas/WeeklyReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/reports/weekly/send:
+    post:
+      tags: [reports]
+      summary: Отправить отчёт на почту сейчас
+      description: Письмо со сводкой и PDF во вложении. Без тела — получателям из расписания.
+      operationId: sendWeeklyReport
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                recipients: { type: array, maxItems: 20, items: { type: string, format: email } }
+      responses:
+        '200':
+          description: Отправлено
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sent_to]
+                properties:
+                  sent_to: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '502':
+          description: Почтовый сервер не принял письмо
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: Почта не настроена
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/reports/schedule:
+    get:
+      tags: [reports]
+      summary: Расписание рассылки отчёта
+      operationId: getReportSchedule
+      responses:
+        '200':
+          description: Расписание
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReportSchedule' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [reports]
+      summary: Изменить расписание рассылки отчёта
+      operationId: putReportSchedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReportScheduleUpdate' }
+      responses:
+        '200':
+          description: Новое расписание
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReportSchedule' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /metrics:
     get:
       tags: [ops]
@@ -1863,12 +2092,28 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
+      description: |
+        API-токен интеграции (`cr_…`, выпускается в разделе «Интеграции») или токен сессии.
+        Пример: `curl -H "Authorization: Bearer cr_…" http://localhost:8080/api/v1/customers`
     metricsToken:
       type: http
       scheme: bearer
       description: Статический токен сборщика метрик (`METRICS_TOKEN`)
 
   parameters:
+    AuditQ:
+      { name: q, in: query, description: 'Поиск по исполнителю, действию, объекту, IP, request_id', schema: { type: string, maxLength: 200 } }
+    AuditActor:
+      { name: actor, in: query, description: 'Точное имя: логин или token:<имя>', schema: { type: string, maxLength: 160 } }
+    AuditAction:
+      { name: action, in: query, description: 'Код действия или его начало: user — все действия с пользователями', schema: { type: string, maxLength: 80 } }
+    AuditActorType: { name: actor_type, in: query, schema: { type: string, enum: [user, token, system, anonymous] } }
+    AuditObjectType: { name: object_type, in: query, schema: { type: string, maxLength: 40 } }
+    AuditService: { name: service, in: query, schema: { type: string, enum: [auth, api, ingest, alerts] } }
+    AuditSuccess:
+      { name: success, in: query, description: 'false — неудачные входы и отказы в доступе', schema: { type: boolean } }
+    AuditFrom: { name: date_from, in: query, schema: { type: string, format: date } }
+    AuditTo: { name: date_to, in: query, description: 'Включительно', schema: { type: string, format: date } }
     ContentEncoding:
       name: Content-Encoding
       in: header
@@ -2034,6 +2279,180 @@ components:
         target: { type: [string, 'null'] }
         details: { type: object, additionalProperties: true }
         created_at: { type: string, format: date-time }
+
+    ApiToken:
+      type: object
+      required: [id, name, role, prefix, allowed_ips, rate_limit_per_min, status, expires_at, created_at, created_by, revoked_at, revoked_by, last_used_at, last_used_ip]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, examples: [aeza-billing] }
+        role: { type: string, enum: [admin, marketer, analyst] }
+        prefix: { type: string, description: 'Начало токена, чтобы узнать его в списке', examples: ['cr_Q2h…'] }
+        allowed_ips: { type: array, items: { type: string }, description: 'IP и подсети; пусто — с любого адреса' }
+        rate_limit_per_min: { type: [integer, 'null'], description: 'null — общий лимит API_TOKEN_RATE_LIMIT_PER_MIN' }
+        status: { type: string, enum: [active, expired, revoked] }
+        expires_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: [string, 'null'], format: date-time }
+        created_by: { type: string }
+        revoked_at: { type: [string, 'null'], format: date-time }
+        revoked_by: { type: [string, 'null'] }
+        last_used_at: { type: [string, 'null'], format: date-time }
+        last_used_ip: { type: [string, 'null'] }
+
+    ApiTokenCreate:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$', examples: [aeza-billing] }
+        role: { type: string, enum: [admin, marketer, analyst], default: analyst }
+        expires_in_days: { type: [integer, 'null'], minimum: 1, maximum: 3650, default: 90, description: 'null — бессрочный' }
+        allowed_ips: { type: array, maxItems: 50, items: { type: string }, examples: [['203.0.113.10', '10.0.0.0/8']] }
+        rate_limit_per_min: { type: [integer, 'null'], minimum: 1, maximum: 100000 }
+
+    AuditEvent:
+      type: object
+      required: [id, at, service, actor, actor_type, actor_role, action, action_title, object_type, object_id, success, ip, request_id, details]
+      properties:
+        id: { type: integer }
+        at: { type: string, format: date-time }
+        service: { type: string, enum: [auth, api, ingest, alerts] }
+        actor: { type: string, description: 'Логин сотрудника, token:<имя> или system' }
+        actor_type: { type: string, enum: [user, token, system, anonymous] }
+        actor_role: { type: [string, 'null'] }
+        action:
+          type: string
+          examples: [auth.login, auth.login_failed, token.create, model.settings.update, mail.campaign.create, source.snapshot.upload]
+        action_title: { type: string, description: Действие по-русски }
+        object_type: { type: [string, 'null'] }
+        object_id: { type: [string, 'null'] }
+        success: { type: boolean, description: 'false — неудачный вход или отказ в доступе (403)' }
+        ip: { type: [string, 'null'] }
+        request_id: { type: [string, 'null'] }
+        details: { type: object, additionalProperties: true, description: 'Тело запроса без паролей, токенов и секретов' }
+
+    AuditPage:
+      type: object
+      required: [items, total, page, page_size, actions]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AuditEvent' } }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+        actions:
+          type: array
+          description: Какие действия вообще есть в журнале — для фильтра
+          items:
+            type: object
+            required: [code, title]
+            properties:
+              code: { type: string }
+              title: { type: string }
+
+    ReportSchedule:
+      type: object
+      required: [enabled, weekday, send_time, timezone, recipients, last_sent_at, last_error, updated_at, updated_by]
+      properties:
+        enabled: { type: boolean }
+        weekday: { type: integer, minimum: 1, maximum: 7, description: 'ISO: 1 — понедельник' }
+        send_time: { type: string, examples: ['09:00'] }
+        timezone: { type: string, examples: [Europe/Moscow] }
+        recipients: { type: array, items: { type: string } }
+        last_sent_at: { type: [string, 'null'], format: date-time }
+        last_error: { type: [string, 'null'] }
+        updated_at: { type: [string, 'null'], format: date-time }
+        updated_by: { type: [string, 'null'] }
+
+    ReportScheduleUpdate:
+      type: object
+      additionalProperties: false
+      required: [enabled, weekday, send_time]
+      properties:
+        enabled: { type: boolean }
+        weekday: { type: integer, minimum: 1, maximum: 7 }
+        send_time: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$' }
+        timezone: { type: string, default: Europe/Moscow }
+        recipients: { type: array, maxItems: 20, items: { type: string, format: email } }
+
+    WeeklyReport:
+      type: object
+      required: [generated_at, period_from, period_to, horizon_days, kpi, history, forecast, reasons, customers, done]
+      properties:
+        generated_at: { type: string, format: date-time }
+        period_from: { type: string, format: date }
+        period_to: { type: string, format: date }
+        scored_at: { type: [string, 'null'], format: date-time }
+        model_version: { type: [integer, 'null'] }
+        horizon_days: { type: integer }
+        kpi:
+          type: object
+          required: [customers_total, high, medium, expected_loss, expected_loss_change, high_change, exposure, revenue_at_risk_share, mrr, arpu, ltv, ltv_at_risk, churn_monthly, expected_mrr_loss]
+          properties:
+            customers_total: { type: integer }
+            high: { type: integer }
+            medium: { type: integer }
+            expected_loss: { type: integer, description: евроценты }
+            expected_loss_change: { type: [number, 'null'], description: 'Изменение к неделе назад, доля' }
+            high_change: { type: [number, 'null'] }
+            exposure: { type: integer }
+            revenue_at_risk_share: { type: [number, 'null'] }
+            mrr: { type: integer }
+            arpu: { type: integer }
+            ltv: { type: integer }
+            ltv_at_risk: { type: integer }
+            churn_monthly: { type: [number, 'null'] }
+            expected_mrr_loss: { type: integer }
+        history:
+          type: array
+          items:
+            type: object
+            required: [day, expected_loss, high_count, risk_share]
+            properties:
+              day: { type: string, format: date }
+              expected_loss: { type: integer }
+              high_count: { type: integer }
+              risk_share: { type: number }
+        forecast:
+          type: array
+          items:
+            type: object
+            required: [date, expected_loss]
+            properties:
+              date: { type: string, format: date }
+              expected_loss: { type: integer }
+        reasons:
+          type: array
+          items:
+            type: object
+            required: [title, customers, expected_loss]
+            properties:
+              title: { type: string }
+              customers: { type: integer }
+              expected_loss: { type: integer }
+        customers:
+          type: array
+          items:
+            type: object
+            required: [id, email, risk_score, risk_level, expected_loss, monthly_revenue, reason]
+            properties:
+              id: { type: integer }
+              email: { type: string }
+              risk_score: { type: [number, 'null'] }
+              risk_level: { $ref: '#/components/schemas/RiskLevel' }
+              expected_loss: { type: integer }
+              monthly_revenue: { type: integer }
+              reason: { type: [string, 'null'] }
+        done:
+          type: object
+          required: [emails_sent, emails_failed, customers_contacted, helped, helped_share, campaigns, resolved, snoozed]
+          properties:
+            emails_sent: { type: integer }
+            emails_failed: { type: integer }
+            customers_contacted: { type: integer }
+            helped: { type: integer }
+            helped_share: { type: [number, 'null'] }
+            campaigns: { type: integer }
+            resolved: { type: integer }
+            snoozed: { type: integer }
 
     RiskLevel:
       type: string

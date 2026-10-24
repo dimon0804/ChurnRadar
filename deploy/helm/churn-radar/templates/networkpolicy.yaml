@@ -104,6 +104,24 @@ spec:
   egress:
     {{- toYaml $np.alertsEgress | nindent 4 }}
 {{- end }}
+{{- if and .Values.ingest.enabled $np.connectorsEgress }}
+---
+# ingest ходит к внешним источникам: Logs API Метрики (api-metrika.yandex.net) и HTTP API биллинга.
+# NetworkPolicy не умеет имена хостов, поэтому HTTPS наружу; адреса ограничивает CONNECTOR_ALLOWED_HOSTS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-ingest-connectors-egress
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cr.selectorLabels" (dict "root" . "component" "ingest") | nindent 6 }}
+  policyTypes: ["Egress"]
+  egress:
+    {{- toYaml $np.connectorsEgress | nindent 4 }}
+{{- end }}
 {{- $sso := .Values.sso }}
 {{- if and .Values.auth.enabled (or $sso.oidc.enabled $sso.saml.enabled) $sso.egress }}
 ---

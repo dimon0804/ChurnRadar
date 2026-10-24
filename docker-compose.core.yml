@@ -84,6 +84,11 @@ services:
       SEED_ON_START: "true"
       SEED_REFERENCE_TIME: "2026-10-19T15:00:00Z"
       AUTH_DEV_USER: ${AUTH_DEV_USER:-admin}
+      CONNECTOR_BILLING_URL: http://simulator:8000/demo/billing/v1
+      CONNECTOR_TOKEN_BILLING: demo-billing-token
+      CONNECTOR_METRICA_URL: http://simulator:8000/demo/metrica
+      CONNECTOR_METRICA_COUNTER: "100500"
+      CONNECTOR_TOKEN_METRICA: demo-metrica-token
     ports:
       - "127.0.0.1:8002:8000"
     depends_on:
@@ -142,6 +147,9 @@ services:
       <<: *common-env
       INGEST_URL: http://ingest:8000
       SNAPSHOT_REFERENCE: ${SNAPSHOT_REFERENCE:-null}
+      DEMO_BILLING_TOKEN: demo-billing-token
+      DEMO_METRICA_TOKEN: demo-metrica-token
+      DEMO_METRICA_COUNTER: "100500"
     ports:
       - "127.0.0.1:8003:8000"
     depends_on:

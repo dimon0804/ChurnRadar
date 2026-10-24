@@ -27,5 +27,8 @@ data:
   {{- if eq $key "auth" }}
   {{- include "cr.ssoEnv" $ | nindent 2 }}
   {{- end }}
+  {{- if or (eq $key "ingest") (eq $key "simulator") }}
+  {{- include "cr.connectorsEnv" (dict "root" $ "key" $key) | nindent 2 }}
+  {{- end }}
 {{- end }}
 {{- end }}

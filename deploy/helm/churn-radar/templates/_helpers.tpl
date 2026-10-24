@@ -104,6 +104,32 @@ true
 {{- default (printf "%s-alerts" (include "cr.fullname" .)) .Values.secrets.alerts.existingSecret -}}
 {{- end -}}
 
+{{/* Secret с токенами коннекторов-источников (CONNECTOR_TOKEN_*) */}}
+{{- define "cr.connectorsSecretName" -}}
+{{- default (printf "%s-connectors" (include "cr.fullname" .)) .Values.secrets.connectors.existingSecret -}}
+{{- end -}}
+
+{{/* Коннекторы (pull): адреса источников для ingest, демо-токены для симулятора. Токены ingest — в cr.connectorsSecretName */}}
+{{- define "cr.connectorsEnv" -}}
+{{- $root := .root -}}
+{{- $c := $root.Values.connectors -}}
+{{- $sim := printf "http://%s:8000" (include "cr.backend" (dict "root" $root "key" "simulator")) -}}
+{{- $demo := and $c.demo $root.Values.simulator.enabled -}}
+{{- if eq .key "ingest" -}}
+{{- $billing := $c.billingUrl | default (ternary (printf "%s/demo/billing/v1" $sim) "" $demo) -}}
+{{- $metrica := $c.metricaUrl | default (ternary (printf "%s/demo/metrica" $sim) "" $demo) -}}
+{{- $counter := toString ($c.metricaCounter | default (ternary "100500" "" $demo)) -}}
+CONNECTOR_BILLING_URL: {{ $billing | quote }}
+CONNECTOR_METRICA_URL: {{ $metrica | quote }}
+CONNECTOR_METRICA_COUNTER: {{ $counter | quote }}
+CONNECTOR_ALLOWED_HOSTS: {{ $c.allowedHosts | quote }}
+{{- else if $demo }}
+DEMO_BILLING_TOKEN: {{ $root.Values.secrets.connectors.billingToken | quote }}
+DEMO_METRICA_TOKEN: {{ $root.Values.secrets.connectors.metricaToken | quote }}
+DEMO_METRICA_COUNTER: {{ toString ($c.metricaCounter | default "100500") | quote }}
+{{- end -}}
+{{- end -}}
+
 {{/* Secret с секретом OIDC-клиента внешнего IdP */}}
 {{- define "cr.ssoSecretName" -}}
 {{- default (printf "%s-sso" (include "cr.fullname" .)) .Values.sso.existingSecret -}}

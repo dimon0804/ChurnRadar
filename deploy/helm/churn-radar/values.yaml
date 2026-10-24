@@ -40,6 +40,25 @@ secrets:
     webhookUrl: ""
     webhookSecret: ""
     telegramChatId: ""
+  # Токены коннекторов-источников: Secret <релиз>-connectors с ключами CONNECTOR_TOKEN_BILLING и
+  # CONNECTOR_TOKEN_METRICA (OAuth-токен Метрики с правом metrika:read). В базе — только имя переменной.
+  # Значения по умолчанию подходят к демо-источникам симулятора.
+  connectors:
+    existingSecret: ""
+    billingToken: demo-billing-token
+    metricaToken: demo-metrica-token
+
+# Коннекторы (pull): ingest сам забирает данные из источников по расписанию (вкл/выкл — в «Данные»).
+connectors:
+  # демо-источники симулятора (биллинг и фейковая Метрика), если свои адреса не заданы
+  demo: true
+  # свой биллинг по contracts/billing-source.openapi.yaml, например https://billing.example.com/churnradar/v1
+  billingUrl: ""
+  # боевая Метрика: https://api-metrika.yandex.net и номер счётчика
+  metricaUrl: ""
+  metricaCounter: ""
+  # куда коннекторам можно ходить (через запятую); пусто — без ограничений
+  allowedHosts: ""
 
 # Общие переменные окружения всех приложений (попадают в ConfigMap каждого сервиса)
 commonEnv:
@@ -238,6 +257,8 @@ ingest:
     # загрузка тестового набора кейса при пустой базе
     SEED_ON_START: "true"
     SEED_REFERENCE_TIME: "2026-10-19T15:00:00Z"
+  # токены коннекторов (CONNECTOR_TOKEN_*) — Secret целиком, optional
+  envFromSecret: '{{ include "cr.connectorsSecretName" . }}'
   resources:
     requests:
       cpu: 50m
@@ -559,6 +580,17 @@ networkPolicy:
         - port: 587
           protocol: TCP
         - port: 465
+          protocol: TCP
+  # исходящие ingest к источникам коннекторов: Logs API Яндекс Метрики (api-metrika.yandex.net:443)
+  # и внешний HTTP API биллинга. Биллинг внутри кластера или на другом порту — добавьте правило.
+  # Пустой список — ingest наружу не ходит (демо-источники симулятора живут внутри релиза).
+  connectorsEgress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16]
+      ports:
+        - port: 443
           protocol: TCP
   #  - to:
   #      - ipBlock:

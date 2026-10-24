@@ -1,0 +1,12 @@
+*
+!contracts/openapi.yaml
+!web/
+web/node_modules
+web/dist
+web/coverage
+web/.env
+web/.env.*
+web/src/api/schema.d.ts
+web/**/*.tsbuildinfo
+web/Dockerfile
+web/Dockerfile.dockerignore

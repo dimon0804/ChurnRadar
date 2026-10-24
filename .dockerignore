@@ -9,7 +9,15 @@
 **/node_modules
 **/dist
 **/coverage
+**/playwright-report
+**/test-results
 .env
 .env.*
+deploy/helm
+deploy/kind
+monitoring
 docs
-deploy
+tests/e2e
+tests/load
+*.md
+!contracts/**

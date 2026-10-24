@@ -1,0 +1,99 @@
+{{- if .Values.redis.enabled }}
+{{- $r := .Values.redis }}
+{{- $name := include "cr.componentName" (dict "root" . "component" "redis") }}
+{{- $selector := include "cr.selectorLabels" (dict "root" . "component" "redis") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cr.labels" . | nindent 4 }}
+    {{- $selector | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- $selector | nindent 4 }}
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cr.labels" . | nindent 4 }}
+    {{- $selector | nindent 4 }}
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- $selector | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cr.labels" . | nindent 8 }}
+        {{- $selector | nindent 8 }}
+        churn-radar/tier: data
+    spec:
+      serviceAccountName: {{ include "cr.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        {{- include "cr.podSecurityContext" (dict "uid" 10001) | nindent 8 }}
+      containers:
+        - name: redis
+          image: "{{ $r.image.repository }}:{{ $r.image.tag }}"
+          imagePullPolicy: {{ $r.image.pullPolicy }}
+          args: ["redis-server", "--dir", "/data", "--appendonly", "yes", "--protected-mode", "no"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          startupProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 10
+            timeoutSeconds: 3
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml $r.resources | nindent 12 }}
+          securityContext:
+            {{- include "cr.containerSecurityContext" (dict "uid" 10001) | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+        {{- if not $r.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+  {{- if $r.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- $selector | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- include "cr.storageClass" $r.persistence.storageClass | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ $r.persistence.size }}
+  {{- end }}
+{{- end }}

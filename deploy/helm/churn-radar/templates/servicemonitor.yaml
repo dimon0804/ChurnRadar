@@ -1,0 +1,35 @@
+{{- if .Values.serviceMonitor.enabled }}
+{{- range $key := splitList " " (include "cr.appKeys" .) }}
+{{- if include "cr.appEnabled" (dict "root" $ "key" $key) }}
+{{- $app := include "cr.appConfig" (dict "root" $ "key" $key) | fromYaml }}
+{{- $component := kebabcase $key }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "cr.componentName" (dict "root" $ "component" $component) }}
+  labels:
+    {{- include "cr.labels" $ | nindent 4 }}
+    {{- include "cr.selectorLabels" (dict "root" $ "component" $component) | nindent 4 }}
+    {{- with $.Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "cr.selectorLabels" (dict "root" $ "component" $component) | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ $.Values.serviceMonitor.interval }}
+      scrapeTimeout: {{ $.Values.serviceMonitor.scrapeTimeout }}
+      {{- if $app.serviceMonitor.bearerToken }}
+      authorization:
+        type: Bearer
+        credentials:
+          name: {{ include "cr.secretName" $ }}
+          key: METRICS_TOKEN
+      {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

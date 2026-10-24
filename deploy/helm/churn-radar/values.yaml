@@ -1,0 +1,453 @@
+# Значения по умолчанию рассчитаны на production-кластер с образами из GHCR.
+# Для локального kind-кластера см. values-kind.yaml.
+
+nameOverride: ""
+fullnameOverride: ""
+
+global:
+  image:
+    registry: ghcr.io/dimon0804
+    # пусто = .Chart.AppVersion
+    tag: ""
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+  logLevel: info
+  # домен кластера для FQDN адресов ForwardAuth и KEDA
+  clusterDomain: cluster.local
+
+# Секреты с демо-значениями. В проде передавайте свои значения через
+# --set / внешний values-файл или укажите existingSecret.
+secrets:
+  # Имя готового Secret. Обязательные ключи: DATABASE_URL, REDIS_URL, METRICS_TOKEN,
+  # ADMIN_PASSWORD, ANALYST_PASSWORD, POSTGRES_PASSWORD (если postgres в чарте).
+  existingSecret: ""
+  metricsToken: churn-metrics-demo-token
+  adminPassword: admin
+  analystPassword: analyst
+
+# Общие переменные окружения всех приложений (попадают в ConfigMap каждого сервиса)
+commonEnv:
+  ADMIN_USERNAME: admin
+  ANALYST_USERNAME: analyst
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Базовые настройки, которые сливаются с настройками каждого сервиса ниже
+appDefaults:
+  replicas: 2
+  port: 8000
+  image:
+    registry: ""
+    repository: ""
+    tag: ""
+    pullPolicy: ""
+  # ключи общего Secret, которые сервис получает как переменные окружения
+  secretKeys: []
+  env: {}
+  extraEnv: []
+  probes:
+    livenessPath: /healthz
+    readinessPath: /readyz
+    startupPath: /healthz
+    startup:
+      periodSeconds: 2
+      failureThreshold: 60
+      timeoutSeconds: 2
+    liveness:
+      periodSeconds: 10
+      failureThreshold: 3
+      timeoutSeconds: 2
+    readiness:
+      periodSeconds: 5
+      failureThreshold: 3
+      timeoutSeconds: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    privileged: false
+    capabilities:
+      drop: ["ALL"]
+  tmpSizeLimit: 64Mi
+  extraVolumes: []
+  extraVolumeMounts: []
+  # пауза перед SIGTERM, чтобы Endpoints успели убрать под из балансировки
+  preStopSleepSeconds: 5
+  terminationGracePeriodSeconds: 30
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # мягкая анти-аффинность и распределение реплик по узлам
+  spread:
+    enabled: true
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+  pdb:
+    enabled: true
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 15
+      scaleDown:
+        stabilizationWindowSeconds: 120
+        policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 30
+  serviceMonitor:
+    # передавать METRICS_TOKEN как Bearer при скрейпе
+    bearerToken: false
+  # сервис доступен снаружи через шлюз (влияет на NetworkPolicy)
+  exposedViaGateway: true
+
+auth:
+  enabled: true
+  image:
+    repository: churn-radar-auth
+  secretKeys: [DATABASE_URL, REDIS_URL, METRICS_TOKEN, ADMIN_PASSWORD, ANALYST_PASSWORD]
+  env:
+    SERVICE_NAME: auth
+    # внешний адрес панели (redirect после входа, OIDC callback)
+    PUBLIC_URL: http://localhost:8080
+    COOKIE_SECURE: "false"
+    OIDC_ENABLED: "false"
+
+notifier:
+  enabled: true
+  image:
+    repository: churn-radar-notifier
+  secretKeys: []
+  env:
+    SERVICE_NAME: notifier
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 300m
+      memory: 128Mi
+
+web:
+  enabled: true
+  port: 8080
+  image:
+    repository: churn-radar-web
+  env: {}
+  probes:
+    livenessPath: /healthz
+    readinessPath: /healthz
+    startupPath: /healthz
+  resources:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      cpu: 200m
+      memory: 64Mi
+  extraVolumes:
+    - name: nginx-cache
+      emptyDir:
+        sizeLimit: 64Mi
+  extraVolumeMounts:
+    - name: nginx-cache
+      mountPath: /var/cache/nginx
+
+api:
+  enabled: true
+  image:
+    repository: churn-radar-api
+  secretKeys: [DATABASE_URL, REDIS_URL, METRICS_TOKEN]
+  env:
+    SERVICE_NAME: api
+  autoscaling:
+    enabled: true
+  serviceMonitor:
+    bearerToken: true
+
+ingest:
+  enabled: true
+  replicas: 1
+  image:
+    repository: churn-radar-ingest
+  secretKeys: [DATABASE_URL, REDIS_URL, METRICS_TOKEN]
+  env:
+    SERVICE_NAME: ingest
+    # загрузка тестового набора кейса при пустой базе
+    SEED_ON_START: "true"
+    SEED_REFERENCE_TIME: "2026-10-19T15:00:00Z"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  serviceMonitor:
+    bearerToken: true
+
+scoring:
+  enabled: true
+  image:
+    repository: churn-radar-scoring
+  secretKeys: [DATABASE_URL, REDIS_URL, METRICS_TOKEN]
+  env:
+    SERVICE_NAME: scoring
+    SCORING_WORKERS: "2"
+  exposedViaGateway: false
+  autoscaling:
+    enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 2000m
+      memory: 1536Mi
+  serviceMonitor:
+    bearerToken: true
+
+simulator:
+  enabled: true
+  # генератор потока изменений должен быть в одном экземпляре
+  replicas: 1
+  image:
+    repository: churn-radar-simulator
+  secretKeys: [DATABASE_URL, REDIS_URL, METRICS_TOKEN]
+  env:
+    SERVICE_NAME: simulator
+    SNAPSHOT_REFERENCE: "null"
+  serviceMonitor:
+    bearerToken: true
+
+# Тестовая заглушка (tests/mock-core): реализует маршруты api+ingest+simulator
+# одним процессом. При включении заменяет эти три сервиса.
+mockCore:
+  enabled: false
+  image:
+    repository: churn-radar-mock-core
+  secretKeys: [DATABASE_URL, REDIS_URL, METRICS_TOKEN]
+  env:
+    SERVICE_NAME: mock-core
+  autoscaling:
+    enabled: true
+  extraVolumes:
+    - name: data
+      emptyDir:
+        sizeLimit: 16Mi
+  extraVolumeMounts:
+    - name: data
+      mountPath: /data
+  serviceMonitor:
+    bearerToken: true
+
+# Миграции схемы БД. Каждая запись — отдельный Job, запускается как хук
+# pre-install/pre-upgrade образом указанного сервиса (app) или своим image.
+# Порядок выполнения = порядок в списке.
+migrations:
+  - name: core
+    image:
+      repository: churn-radar-migrate
+    command: ["python", "/app/migrate.py"]
+    env: {}
+  - name: auth
+    app: auth
+    command: ["alembic", "upgrade", "head"]
+    env: {}
+# пример для сервисов ядра:
+#  - name: api
+#    app: api
+#    command: ["alembic", "upgrade", "head"]
+
+migrationJob:
+  backoffLimit: 6
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 3600
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+postgresql:
+  # false + external.url — использовать управляемую БД
+  enabled: true
+  external:
+    url: ""
+  image:
+    repository: postgres
+    tag: 16-alpine
+    pullPolicy: IfNotPresent
+  database: churn
+  username: churn
+  password: churn
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+  # uid пользователя postgres в alpine-образе
+  runAsUser: 70
+
+redis:
+  enabled: true
+  external:
+    url: ""
+  image:
+    repository: redis
+    tag: 7-alpine
+    pullPolicy: IfNotPresent
+  database: 0
+  persistence:
+    enabled: true
+    size: 512Mi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      cpu: 300m
+      memory: 128Mi
+
+nats:
+  enabled: true
+  external:
+    url: ""
+  image:
+    repository: nats
+    tag: 2.10-alpine
+    pullPolicy: IfNotPresent
+  jetstream:
+    maxMemory: 64M
+    maxFile: 1G
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  # Job, идемпотентно создающий поток CHURN (как nats-init в compose)
+  streams:
+    enabled: true
+    image:
+      repository: natsio/nats-box
+      tag: 0.17.0
+    items:
+      - name: CHURN
+        subjects: ["churn.>"]
+        maxAge: 24h
+
+gateway:
+  # IngressRoute + Middleware для Traefik (CRD traefik.io/v1alpha1 должны быть установлены)
+  enabled: true
+  entryPoints: ["web"]
+  # пусто = любой Host
+  host: ""
+  tls:
+    enabled: false
+    secretName: ""
+  # namespace, где работает Traefik (для NetworkPolicy)
+  traefikNamespace: traefik
+  traefikPodLabels:
+    app.kubernetes.io/name: traefik
+  # web (nginx) сам выставляет заголовки безопасности
+  securityHeaders: false
+
+networkPolicy:
+  enabled: true
+  # namespace Prometheus, которому разрешён скрейп /metrics
+  prometheus:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: monitoring
+    podSelector: {}
+  # DNS
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+  # дополнительные egress-правила для приложений (OIDC-провайдер, внешние БД и т.п.)
+  extraAppEgress: []
+  #  - to:
+  #      - ipBlock:
+  #          cidr: 0.0.0.0/0
+  #    ports:
+  #      - port: 443
+  #        protocol: TCP
+
+serviceMonitor:
+  enabled: false
+  interval: 15s
+  scrapeTimeout: 10s
+  labels: {}
+
+keda:
+  # ScaledObject для scoring по лагу консьюмера JetStream (заменяет HPA scoring)
+  enabled: false
+  # namespace оператора KEDA (ему нужен доступ к мониторингу NATS :8222)
+  namespace: keda
+  pollingInterval: 10
+  cooldownPeriod: 120
+  minReplicaCount: 1
+  maxReplicaCount: 8
+  nats:
+    # для внешнего NATS: host:8222
+    monitoringEndpoint: ""
+    account: "$G"
+    stream: CHURN
+    consumer: scoring
+    lagThreshold: "20"
+    activationLagThreshold: "0"
+  cpu:
+    enabled: true
+    value: "70"
+
+tests:
+  image:
+    repository: curlimages/curl
+    tag: 8.11.1

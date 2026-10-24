@@ -1,0 +1,99 @@
+# Архитектура ChurnRadar
+
+## Схема
+
+```
+                 ┌────────────────────── Traefik :8080 ──────────────────────┐
+  браузер ─────► │ /api/v1/auth/*        → auth           (без ForwardAuth)   │
+                 │ /api/v1/stream        → notifier (SSE) ┐                   │
+                 │ /api/v1/source/*      → ingest         │ ForwardAuth       │
+                 │ /api/v1/simulator     → simulator      ├─► auth            │
+                 │ /api/v1/*, /docs      → api            │   /internal/verify│
+                 │ /                     → web            ┘                   │
+                 │ /metrics              → api  (ForwardAuth: METRICS_TOKEN)   │
+                 └────────────────────────────────────────────────────────────┘
+
+  ingest ──► NATS JetStream  churn.source.changed  ──► scoring (N реплик)
+  api    ──► NATS JetStream  churn.settings.changed ──► scoring
+  scoring ─► NATS JetStream  churn.scores.updated  ──► notifier (M реплик) ──SSE──► браузеры
+                                                   └─► api (сброс кэша)
+
+  PostgreSQL 16: схемы source, scoring, auth · Redis: сессии, лимиты, кэш
+  Prometheus ◄── /metrics всех сервисов и экспортёров · Grafana · Keycloak (OIDC, профиль oidc)
+```
+
+Сервисы общаются событиями. Конверт события и схемы полезной нагрузки лежат в
+`contracts/events/`, REST-контракт в `contracts/openapi.yaml`.
+
+## Сервисы платформы
+
+### auth
+
+FastAPI. Пользователи в схеме `auth` PostgreSQL (миграции Alembic, отдельный одноразовый
+контейнер `migrate`, в Kubernetes это pre-install/pre-upgrade hook). Пароли хешируются
+argon2id. Сессия — случайный токен 256 бит в httpOnly cookie `cr_session`; в Redis лежит
+только SHA-256 токена, TTL 12 часов, продлевается при каждом запросе.
+
+Для Traefik сервис отдаёт `GET /internal/verify`: по cookie или `Authorization: Bearer`
+отвечает `200` с заголовками `X-User-Id`, `X-User-Name`, `X-User-Roles` либо `401`. Для
+навигации браузера (`?redirect=1`) вместо `401` отдаётся `302` на `/login?next=…`, поэтому
+незалогиненный пользователь видит форму входа, а не JSON.
+
+OIDC: Authorization Code + PKCE (S256) против Keycloak, `state` одноразовый и хранится в
+Redis 10 минут, `nonce` сверяется с id_token, подпись проверяется по JWKS. После
+callback создаётся та же сессия, что и при входе по паролю, роли берутся из realm-ролей.
+Если Keycloak не запущен, `GET /api/v1/auth/providers` отвечает `oidc.enabled=false` и
+кнопка SSO скрыта, вход по паролю работает всегда.
+
+### notifier
+
+Go, стандартная библиотека и nats.go. Каждая реплика держит обычную core-подписку на три
+subject'а, поэтому получает все события и раздаёт их своим SSE-клиентам — реплики не
+координируются и масштабируются горизонтально. Кольцевой буфер последних 200 событий
+обслуживает `Last-Event-ID`. Медленный клиент с переполненным буфером отключается и
+переподключается сам, не тормозя остальных. При остановке реплика закрывает все потоки,
+браузеры переподключаются к соседней через 3 секунды (`retry: 3000`).
+
+### web
+
+React 19 + Vite, статика отдаётся nginx-unprivileged. Состояние сервера в TanStack
+Query; события SSE инвалидируют нужные запросы, поэтому страница обновляется без
+перезагрузки. Типы API генерируются из `contracts/openapi.yaml`.
+
+## Модель угроз
+
+| Угроза | Защита |
+|---|---|
+| Доступ без входа | Все маршруты, кроме входа, статики логина и OIDC-редиректов, проходят ForwardAuth. `/metrics` закрыт отдельным токеном. |
+| Подмена личности заголовками `X-User-*` | Gateway вычищает эти заголовки из входящего запроса и выставляет их только из ответа auth. Сервисы ядра доверяют им, потому что доступны только из внутренней сети (в Kubernetes это закреплено NetworkPolicy). |
+| Перебор паролей | Не больше 5 неудачных попыток в минуту на пару IP + логин (Redis), затем `429` с `Retry-After`; плюс общий rate limit на маршрут входа в Traefik. Время ответа для несуществующего логина то же, что для неверного пароля. |
+| CSRF | Cookie `SameSite=Lax`; для POST/PUT/PATCH/DELETE с cookie-сессией gateway требует `Origin`/`Referer` того же сайта. Запросы с Bearer-токеном проверку не проходят, им CSRF не грозит. |
+| Кража сессии из Redis | В Redis хранится хеш токена, не сам токен. Cookie httpOnly, `Secure` включается переменной `COOKIE_SECURE` за HTTPS. |
+| Повышение прав | Изменение модели, загрузка данных и симулятор требуют роли `admin`: проверяется и на gateway, и в сервисе. |
+| Open redirect после входа | `next` принимается только как относительный путь. |
+| XSS / clickjacking | CSP `default-src 'self'`, `frame-ancestors 'none'`, `X-Content-Type-Options`. |
+| Секреты в репозитории | Только демо-значения по умолчанию и `.env.example`; в Kubernetes — Secret или `existingSecret`. |
+
+## Масштабирование
+
+- Все прикладные сервисы stateless: состояние в PostgreSQL, Redis и NATS.
+- `scoring` — конкурирующие потребители одного durable consumer JetStream: добавление
+  реплик делит поток пересчётов. В Kubernetes его масштабирует HPA по CPU, опционально
+  KEDA по лагу консьюмера.
+- `api` масштабируется HPA по CPU, ответы кэшируются и сбрасываются по `scores.updated`.
+- `notifier` — каждая реплика независима, нагрузка распределяется балансировщиком по
+  соединениям.
+
+## Отказоустойчивость
+
+| Что упало | Что происходит |
+|---|---|
+| Реплика scoring | JetStream передоставит неподтверждённое сообщение другой реплике; обработка идемпотентна по `event_id`. |
+| Реплика notifier | Браузер переподключается к другой реплике, при переподключении панель перезапрашивает данные. |
+| NATS | Издатели и подписчики переподключаются сами, readiness notifier становится `503` и трафик уходит на живые реплики. |
+| auth | Защищённые маршруты отвечают ошибкой, а не пропускают без проверки (fail closed). |
+| Redis | Новые входы невозможны, readiness auth `503`; данные панели не теряются. |
+| Перезапуск api/scoring | Коэффициенты модели в PostgreSQL, после рестарта действуют те же. |
+
+В Kubernetes у каждого сервиса liveness/readiness/startup probes, PodDisruptionBudget и
+разнесение реплик по узлам.

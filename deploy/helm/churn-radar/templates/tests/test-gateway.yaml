@@ -1,0 +1,38 @@
+{{- if .Values.gateway.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "cr.fullname" . }}-test-auth
+  labels:
+    {{- include "cr.labels" . | nindent 4 }}
+    {{- include "cr.selectorLabels" (dict "root" . "component" "test") | nindent 4 }}
+    {{- include "cr.appTierLabel" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    {{- include "cr.podSecurityContext" (dict "uid" 10001) | nindent 4 }}
+  containers:
+    - name: verify
+      image: "{{ .Values.tests.image.repository }}:{{ .Values.tests.image.tag }}"
+      command: ["sh", "-ec"]
+      args:
+        - |
+          base=http://{{ include "cr.componentName" (dict "root" . "component" "auth") }}:8000
+          curl -fsS "$base/healthz"
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$base/internal/verify")
+          echo "verify without session: $code"
+          test "$code" = 401
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          cpu: 100m
+          memory: 32Mi
+      securityContext:
+        {{- include "cr.containerSecurityContext" (dict "uid" 10001) | nindent 8 }}
+{{- end }}

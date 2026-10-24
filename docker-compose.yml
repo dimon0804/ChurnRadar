@@ -1,0 +1,373 @@
+name: churn-radar
+
+# Everything has a default, so `docker compose up -d` works on a clean clone without .env.
+# Overrides go to .env (see .env.example). Panel: http://localhost:8080
+
+x-restart: &restart
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+
+x-app-env: &app-env
+  DATABASE_URL: postgresql://${POSTGRES_USER:-churn}:${POSTGRES_PASSWORD:-churn}@postgres:5432/${POSTGRES_DB:-churn}
+  REDIS_URL: redis://redis:6379/0
+  NATS_URL: nats://nats:4222
+  METRICS_TOKEN: ${METRICS_TOKEN:-churn-metrics-demo-token}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+x-app-hardening: &app-hardening
+  read_only: true
+  tmpfs: ["/tmp:size=64m"]
+  cap_drop: [ALL]
+
+services:
+  # ---------------------------------------------------------------- gateway
+  traefik:
+    <<: *restart
+    image: traefik:v3.3.6
+    command: ["--configFile=/etc/traefik/traefik.yml"]
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+    volumes:
+      - ./deploy/traefik:/etc/traefik:ro
+    read_only: true
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--configFile=/etc/traefik/traefik.yml"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
+      auth: {condition: service_healthy}
+      web: {condition: service_healthy}
+      notifier: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "1", memory: 256M}
+
+  # ---------------------------------------------------------------- data
+  postgres:
+    <<: *restart
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-churn}
+      POSTGRES_USER: ${POSTGRES_USER:-churn}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-churn}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    shm_size: 128m
+    deploy:
+      resources:
+        limits: {cpus: "1", memory: 512M}
+
+  redis:
+    <<: *restart
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "volatile-lru"]
+    volumes:
+      - redisdata:/data
+    read_only: true
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 192M}
+
+  nats:
+    <<: *restart
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222", "--name", "churn-nats"]
+    volumes:
+      - natsdata:/data
+    read_only: true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8222/healthz?js-enabled-only=true"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits: {cpus: "1", memory: 256M}
+
+  nats-init:
+    image: natsio/nats-box:0.17.0
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - >-
+        nats --server nats://nats:4222 stream info CHURN >/dev/null 2>&1 ||
+        nats --server nats://nats:4222 stream add CHURN --subjects 'churn.>' --storage file
+        --retention limits --max-age 24h --discard old --replicas 1 --defaults
+    depends_on:
+      nats: {condition: service_healthy}
+
+  migrate:
+    image: churn-radar-auth:dev
+    build: {context: services/auth}
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *app-env
+    <<: *app-hardening
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  # ---------------------------------------------------------------- platform
+  auth:
+    <<: [*restart, *app-hardening]
+    image: churn-radar-auth:dev
+    build: {context: services/auth}
+    environment:
+      <<: *app-env
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      ANALYST_USERNAME: ${ANALYST_USERNAME:-analyst}
+      ANALYST_PASSWORD: ${ANALYST_PASSWORD:-analyst}
+      OIDC_ENABLED: ${OIDC_ENABLED:-true}
+      OIDC_PUBLIC_ISSUER: ${OIDC_PUBLIC_ISSUER:-http://localhost:8081/realms/churn-radar}
+      OIDC_INTERNAL_ISSUER: ${OIDC_INTERNAL_ISSUER:-http://keycloak:8080/realms/churn-radar}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-churn-radar}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-churn-radar-demo-secret}
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "1", memory: 256M}
+
+  notifier:
+    <<: [*restart, *app-hardening]
+    image: churn-radar-notifier:dev
+    build: {context: services/notifier}
+    environment:
+      NATS_URL: nats://nats:4222
+    depends_on:
+      nats: {condition: service_healthy}
+    deploy:
+      replicas: ${NOTIFIER_REPLICAS:-2}
+      resources:
+        limits: {cpus: "0.5", memory: 64M}
+
+  web:
+    <<: [*restart, *app-hardening]
+    image: churn-radar-web:dev
+    build: {context: ., dockerfile: web/Dockerfile}
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 64M}
+
+  # ---------------------------------------------------------------- core (services/api, ingest, scoring, simulator)
+  core-migrate:
+    image: churn-radar-migrate:dev
+    build: {context: ., dockerfile: services/migrate/Dockerfile}
+    restart: "no"
+    environment:
+      <<: *app-env
+    <<: *app-hardening
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  api:
+    <<: [*restart, *app-hardening]
+    image: churn-radar-api:dev
+    build: {context: ., dockerfile: services/api/Dockerfile}
+    environment:
+      <<: *app-env
+      SIMULATOR_URL: http://simulator:8000
+    depends_on:
+      core-migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      nats-init: {condition: service_completed_successfully}
+    deploy:
+      replicas: ${API_REPLICAS:-2}
+      resources:
+        limits: {cpus: "1", memory: 384M}
+
+  ingest:
+    <<: [*restart, *app-hardening]
+    image: churn-radar-ingest:dev
+    build: {context: ., dockerfile: services/ingest/Dockerfile}
+    environment:
+      <<: *app-env
+      SEED_ON_START: "true"
+      SEED_REFERENCE_TIME: ${SEED_REFERENCE_TIME:-2026-10-19T15:00:00Z}
+    depends_on:
+      core-migrate: {condition: service_completed_successfully}
+      nats-init: {condition: service_completed_successfully}
+    deploy:
+      resources:
+        limits: {cpus: "1", memory: 1G}
+
+  scoring:
+    <<: [*restart, *app-hardening]
+    image: churn-radar-scoring:dev
+    build: {context: ., dockerfile: services/scoring/Dockerfile}
+    environment:
+      <<: *app-env
+      SCORING_WORKERS: ${SCORING_WORKERS:-2}
+    depends_on:
+      core-migrate: {condition: service_completed_successfully}
+      nats-init: {condition: service_completed_successfully}
+    deploy:
+      replicas: ${SCORING_REPLICAS:-2}
+      resources:
+        limits: {cpus: "2", memory: 1536M}
+
+  simulator:
+    <<: [*restart, *app-hardening]
+    image: churn-radar-simulator:dev
+    build: {context: ., dockerfile: services/simulator/Dockerfile}
+    environment:
+      <<: *app-env
+      INGEST_URL: http://ingest:8000
+      SNAPSHOT_REFERENCE: ${SNAPSHOT_REFERENCE:-null}
+    depends_on:
+      ingest: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "1", memory: 512M}
+
+  # ---------------------------------------------------------------- observability
+  prometheus:
+    <<: *restart
+    image: prom/prometheus:v3.3.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - promdata:/prometheus
+    configs:
+      - source: metrics_token
+        target: /run/secrets/metrics_token
+    read_only: true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits: {cpus: "1", memory: 512M}
+
+  grafana:
+    <<: *restart
+    image: grafana/grafana:11.6.1
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_DEFAULT_LANGUAGE: ru-RU
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/churn.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    depends_on:
+      prometheus: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits: {cpus: "1", memory: 256M}
+
+  nats-exporter:
+    <<: *restart
+    image: natsio/prometheus-nats-exporter:0.16.0
+    command: ["-varz", "-connz", "-jsz=all", "-port", "7777", "http://nats:8222"]
+    read_only: true
+    depends_on:
+      nats: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 64M}
+
+  postgres-exporter:
+    <<: *restart
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER:-churn}:${POSTGRES_PASSWORD:-churn}@postgres:5432/${POSTGRES_DB:-churn}?sslmode=disable
+    read_only: true
+    depends_on:
+      postgres: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 64M}
+
+  redis-exporter:
+    <<: *restart
+    image: oliver006/redis_exporter:v1.70.0
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    read_only: true
+    depends_on:
+      redis: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 64M}
+
+  # ---------------------------------------------------------------- OIDC (docker compose --profile oidc up -d)
+  keycloak:
+    <<: *restart
+    profiles: [oidc]
+    image: quay.io/keycloak/keycloak:26.2.4
+    command: ["start-dev", "--import-realm", "--http-port=8080"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_HOSTNAME: ${OIDC_PUBLIC_BASE:-http://localhost:8081}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "${KEYCLOAK_PORT:-8081}:8080"
+    volumes:
+      - ./deploy/keycloak/realm.json:/opt/keycloak/data/import/churn-radar-realm.json:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '"UP"' <&3
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    deploy:
+      resources:
+        limits: {cpus: "2", memory: 1G}
+
+configs:
+  metrics_token:
+    content: ${METRICS_TOKEN:-churn-metrics-demo-token}
+
+volumes:
+  pgdata:
+  redisdata:
+  natsdata:
+  promdata:
+  grafanadata:

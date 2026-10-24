@@ -1,0 +1,209 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $fullname := include "cr.fullname" . }}
+{{- $np := .Values.networkPolicy }}
+{{- $instance := dict "app.kubernetes.io/instance" .Release.Name }}
+{{- $appPods := dict "app.kubernetes.io/instance" .Release.Name "churn-radar/tier" "app" }}
+{{- $dataPods := dict "app.kubernetes.io/instance" .Release.Name "churn-radar/tier" "data" }}
+# Всё, что не разрешено явно, запрещено
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-default-deny
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $instance | nindent 6 }}
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-allow-dns
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $instance | nindent 6 }}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            {{- toYaml $np.dns.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml $np.dns.podSelector | nindent 12 }}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# Приложения: вход от шлюза, Prometheus и соседних приложений релиза
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-apps
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $appPods | nindent 6 }}
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- toYaml $appPods | nindent 14 }}
+    - from:
+        - namespaceSelector:
+            {{- toYaml $np.prometheus.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml $np.prometheus.podSelector | nindent 12 }}
+      ports:
+        - port: http
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- toYaml $appPods | nindent 14 }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- toYaml $dataPods | nindent 14 }}
+      ports:
+        - port: 5432
+          protocol: TCP
+        - port: 6379
+          protocol: TCP
+        - port: 4222
+          protocol: TCP
+        - port: 8222
+          protocol: TCP
+    {{- with $np.extraAppEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- if .Values.gateway.enabled }}
+---
+# Шлюз Traefik -> сервисы, опубликованные наружу (включая ForwardAuth в auth)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-gateway
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/instance
+        operator: In
+        values: [{{ .Release.Name | quote }}]
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          {{- range $key := splitList " " (include "cr.appKeys" .) }}
+          {{- if include "cr.appEnabled" (dict "root" $ "key" $key) }}
+          {{- $app := include "cr.appConfig" (dict "root" $ "key" $key) | fromYaml }}
+          {{- if $app.exposedViaGateway }}
+          - {{ kebabcase $key }}
+          {{- end }}
+          {{- end }}
+          {{- end }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.gateway.traefikNamespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.gateway.traefikPodLabels | nindent 14 }}
+      ports:
+        - port: http
+          protocol: TCP
+{{- end }}
+{{- if .Values.postgresql.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-postgresql
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cr.selectorLabels" (dict "root" . "component" "postgresql") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- toYaml $appPods | nindent 14 }}
+      ports:
+        - port: 5432
+          protocol: TCP
+{{- end }}
+{{- if .Values.redis.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-redis
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cr.selectorLabels" (dict "root" . "component" "redis") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- toYaml $appPods | nindent 14 }}
+      ports:
+        - port: 6379
+          protocol: TCP
+{{- end }}
+{{- if .Values.nats.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-nats
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cr.selectorLabels" (dict "root" . "component" "nats") | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- toYaml $appPods | nindent 14 }}
+      ports:
+        - port: 4222
+          protocol: TCP
+        - port: 8222
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            {{- toYaml $np.prometheus.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml $np.prometheus.podSelector | nindent 12 }}
+        {{- if .Values.keda.enabled }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.keda.namespace }}
+        {{- end }}
+      ports:
+        - port: 8222
+          protocol: TCP
+{{- end }}
+{{- end }}

@@ -1,0 +1,183 @@
+{{- range $key := splitList " " (include "cr.appKeys" .) }}
+{{- if include "cr.appEnabled" (dict "root" $ "key" $key) }}
+{{- $app := include "cr.appConfig" (dict "root" $ "key" $key) | fromYaml }}
+{{- $component := kebabcase $key }}
+{{- $name := include "cr.componentName" (dict "root" $ "component" $component) }}
+{{- $selector := include "cr.selectorLabels" (dict "root" $ "component" $component) }}
+{{- $hpaManaged := or $app.autoscaling.enabled (and (eq $key "scoring") $.Values.keda.enabled) }}
+{{- $minReplicas := int (ternary $app.autoscaling.minReplicas $app.replicas $app.autoscaling.enabled) }}
+{{- if and (eq $key "scoring") $.Values.keda.enabled }}{{ $minReplicas = int $.Values.keda.minReplicaCount }}{{ end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cr.labels" $ | nindent 4 }}
+    {{- $selector | nindent 4 }}
+spec:
+  {{- if not $hpaManaged }}
+  replicas: {{ $app.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- $selector | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cr.labels" $ | nindent 8 }}
+        {{- $selector | nindent 8 }}
+        {{- include "cr.appTierLabel" $ | nindent 8 }}
+        {{- with $app.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $ | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") $ | sha256sum }}
+        {{- with $app.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "cr.serviceAccountName" $ }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ $app.terminationGracePeriodSeconds }}
+      {{- with $.Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $app.podSecurityContext | nindent 8 }}
+      {{- if $app.spread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: {{ $app.spread.topologyKey }}
+          whenUnsatisfiable: {{ $app.spread.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- $selector | nindent 14 }}
+          matchLabelKeys:
+            - pod-template-hash
+      {{- end }}
+      affinity:
+        {{- if $app.affinity }}
+        {{- toYaml $app.affinity | nindent 8 }}
+        {{- else if $app.spread.enabled }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: {{ $app.spread.topologyKey }}
+                labelSelector:
+                  matchLabels:
+                    {{- $selector | nindent 20 }}
+        {{- end }}
+      {{- with $app.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $app.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ $component }}
+          image: {{ include "cr.image" (dict "root" $ "image" $app.image) }}
+          imagePullPolicy: {{ default $.Values.global.image.pullPolicy $app.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $app.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ $name }}
+          {{- if or $app.secretKeys $app.extraEnv }}
+          env:
+            {{- include "cr.secretEnv" (dict "root" $ "keys" $app.secretKeys) | trim | nindent 12 }}
+            {{- with $app.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          startupProbe:
+            httpGet:
+              path: {{ $app.probes.startupPath }}
+              port: http
+            {{- toYaml $app.probes.startup | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: {{ $app.probes.livenessPath }}
+              port: http
+            {{- toYaml $app.probes.liveness | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: {{ $app.probes.readinessPath }}
+              port: http
+            {{- toYaml $app.probes.readiness | nindent 12 }}
+          {{- if $app.preStopSleepSeconds }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ $app.preStopSleepSeconds }}
+          {{- end }}
+          resources:
+            {{- toYaml $app.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml $app.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- with $app.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ $app.tmpSizeLimit }}
+        {{- with $app.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cr.labels" $ | nindent 4 }}
+    {{- $selector | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- $selector | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $app.port }}
+      targetPort: http
+      protocol: TCP
+{{- if $app.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cr.labels" $ | nindent 4 }}
+    {{- $selector | nindent 4 }}
+spec:
+  {{- if gt $minReplicas 1 }}
+  minAvailable: 1
+  {{- else }}
+  maxUnavailable: 1
+  {{- end }}
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      {{- $selector | nindent 6 }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,50 @@
+entryPoints:
+  web:
+    address: ":8080"
+    transport:
+      respondingTimeouts:
+        # SSE connections stay open for hours; the 60s default read timeout of v3 cuts them
+        readTimeout: 0s
+        writeTimeout: 0s
+        idleTimeout: 180s
+  traefik:
+    address: ":8082"
+
+ping:
+  entryPoint: traefik
+
+api:
+  dashboard: true
+  insecure: false
+
+metrics:
+  prometheus:
+    entryPoint: traefik
+    addEntryPointsLabels: true
+    addRoutersLabels: true
+    addServicesLabels: true
+    buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5]
+
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+
+log:
+  level: INFO
+  format: json
+
+accessLog:
+  format: json
+  filters:
+    statusCodes: ["400-599"]
+  fields:
+    headers:
+      defaultMode: drop
+      names:
+        X-Request-Id: keep
+        User-Agent: keep
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false

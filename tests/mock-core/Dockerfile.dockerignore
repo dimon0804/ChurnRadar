@@ -1,0 +1,7 @@
+*
+!tests/mock-core/requirements.txt
+!tests/mock-core/app/
+!data/sample/data.json
+!contracts/openapi.yaml
+**/__pycache__
+**/*.pyc

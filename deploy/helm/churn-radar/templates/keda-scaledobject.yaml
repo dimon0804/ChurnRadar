@@ -1,0 +1,43 @@
+{{- if and .Values.keda.enabled (include "cr.appEnabled" (dict "root" . "key" "scoring")) }}
+{{- $name := include "cr.componentName" (dict "root" . "component" "scoring") }}
+{{- $app := include "cr.appConfig" (dict "root" . "key" "scoring") | fromYaml }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "cr.labels" . | nindent 4 }}
+    {{- include "cr.selectorLabels" (dict "root" . "component" "scoring") | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ $name }}
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  minReplicaCount: {{ .Values.keda.minReplicaCount }}
+  maxReplicaCount: {{ .Values.keda.maxReplicaCount }}
+  {{- with $app.autoscaling.behavior }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        {{- toYaml . | nindent 8 }}
+  {{- end }}
+  triggers:
+    - type: nats-jetstream
+      metadata:
+        {{- if .Values.nats.enabled }}
+        natsServerMonitoringEndpoint: {{ printf "%s:8222" (include "cr.svcFqdn" (dict "root" . "name" (include "cr.componentName" (dict "root" . "component" "nats")))) | quote }}
+        {{- else }}
+        natsServerMonitoringEndpoint: {{ required "keda.nats.monitoringEndpoint is required with external NATS" .Values.keda.nats.monitoringEndpoint | quote }}
+        {{- end }}
+        account: {{ .Values.keda.nats.account | quote }}
+        stream: {{ .Values.keda.nats.stream | quote }}
+        consumer: {{ .Values.keda.nats.consumer | quote }}
+        lagThreshold: {{ .Values.keda.nats.lagThreshold | quote }}
+        activationLagThreshold: {{ .Values.keda.nats.activationLagThreshold | quote }}
+    {{- if .Values.keda.cpu.enabled }}
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: {{ .Values.keda.cpu.value | quote }}
+    {{- end }}
+{{- end }}

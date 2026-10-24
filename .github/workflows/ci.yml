@@ -1,0 +1,345 @@
+name: CI
+
+on:
+  push:
+    branches: [main, platform, core]
+  pull_request:
+    branches: [main, platform, core]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+
+jobs:
+  discover:
+    name: Discover components
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.scan.outputs.python }}
+      python_paths: ${{ steps.scan.outputs.python_paths }}
+      images: ${{ steps.scan.outputs.images }}
+      has_python: ${{ steps.scan.outputs.has_python }}
+      has_images: ${{ steps.scan.outputs.has_images }}
+      has_web: ${{ steps.scan.outputs.has_web }}
+      has_go: ${{ steps.scan.outputs.has_go }}
+      has_helm: ${{ steps.scan.outputs.has_helm }}
+      has_e2e: ${{ steps.scan.outputs.has_e2e }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: scan
+        name: Scan repository
+        run: |
+          set -euo pipefail
+          py_dirs=()
+          for d in libs/*/ services/*/ tests/mock-core/; do
+            d="${d%/}"
+            [ -d "$d" ] || continue
+            if [ -f "$d/requirements.txt" ] || [ -f "$d/pyproject.toml" ]; then
+              py_dirs+=("$d")
+            fi
+          done
+          if [ ${#py_dirs[@]} -gt 0 ]; then
+            python=$(printf '%s\n' "${py_dirs[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0)) | map({path: ., name: (split("/") | last)})')
+          else
+            python='[]'
+          fi
+
+          images='[]'
+          while IFS= read -r df; do
+            dir=$(dirname "$df")
+            name=$(basename "$dir")
+            # Dockerfile, который копирует libs/ или services/, собирается из корня репозитория
+            if grep -Eq '^\s*COPY\s+(--[^ ]+\s+)*(libs|services|contracts|data|web|tests|deploy)/' "$df"; then
+              context=.
+            else
+              context="$dir"
+            fi
+            images=$(jq -c --arg n "$name" --arg f "$df" --arg c "$context" '. + [{name: $n, dockerfile: $f, context: $c}]' <<<"$images")
+          done < <(find services web tests/mock-core -maxdepth 2 -name Dockerfile -type f 2>/dev/null | sort)
+
+          {
+            echo "python=$python"
+            echo "python_paths=${py_dirs[*]:-}"
+            echo "images=$images"
+            echo "has_python=$([ "$python" != '[]' ] && echo true || echo false)"
+            echo "has_images=$([ "$images" != '[]' ] && echo true || echo false)"
+            echo "has_web=$([ -f web/package.json ] && echo true || echo false)"
+            echo "has_go=$([ -f services/notifier/go.mod ] && echo true || echo false)"
+            echo "has_helm=$([ -d deploy/helm ] && echo true || echo false)"
+            echo "has_e2e=$([ -f tests/e2e/package.json ] && [ -f docker-compose.yml ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+  lint-python:
+    name: Lint Python (ruff)
+    needs: discover
+    if: needs.discover.outputs.has_python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.11.8"
+          src: ${{ needs.discover.outputs.python_paths }}
+          args: check
+      - uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.11.8"
+          src: ${{ needs.discover.outputs.python_paths }}
+          args: format --check --diff
+        continue-on-error: true
+
+  lint-web:
+    name: Lint web (eslint, tsc)
+    needs: discover
+    if: needs.discover.outputs.has_web == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npx eslint .
+      - name: Type check
+        run: |
+          if jq -e '.scripts.typecheck' package.json >/dev/null; then
+            npm run typecheck
+          else
+            npx tsc -b
+          fi
+
+  lint-docker:
+    name: Lint Dockerfiles (hadolint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          recursive: true
+          failure-threshold: error
+
+  lint-config:
+    name: Lint workflows and monitoring
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color
+      - name: promtool
+        run: |
+          printf 'ci-token' > "$RUNNER_TEMP/metrics_token"
+          chmod 644 "$RUNNER_TEMP/metrics_token"
+          docker run --rm --entrypoint sh \
+            -v "$PWD/monitoring/prometheus:/etc/prometheus:ro" \
+            -v "$RUNNER_TEMP/metrics_token:/run/secrets/metrics_token:ro" \
+            -w /etc/prometheus prom/prometheus:v3.3.1 \
+            -c 'promtool check config prometheus.yml && promtool test rules alerts_test.yml'
+
+  test-python:
+    name: Test ${{ matrix.svc.name }}
+    needs: discover
+    if: needs.discover.outputs.has_python == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        svc: ${{ fromJSON(needs.discover.outputs.python) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.svc.path }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            ${{ matrix.svc.path }}/requirements*.txt
+            ${{ matrix.svc.path }}/pyproject.toml
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # общие библиотеки ядра (riskcore, svckit) ставятся до зависимостей сервиса
+          for lib in "$GITHUB_WORKSPACE"/libs/*/; do
+            if [ -f "$lib/pyproject.toml" ]; then pip install "$lib"; fi
+          done
+          for f in requirements.txt requirements-dev.txt; do
+            if [ -f "$f" ]; then pip install -r "$f"; fi
+          done
+          pip install pytest pytest-asyncio
+      - name: Run tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/${{ matrix.svc.path }}
+        run: |
+          if [ -d tests ] || ls test_*.py >/dev/null 2>&1; then
+            pytest -q
+          else
+            echo "no tests in ${{ matrix.svc.path }}"
+            python -m compileall -q .
+          fi
+
+  test-go:
+    name: Test notifier (Go)
+    needs: discover
+    if: needs.discover.outputs.has_go == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/notifier
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/notifier/go.mod
+          cache-dependency-path: services/notifier/go.sum
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
+  test-web:
+    name: Test web (vitest)
+    needs: discover
+    if: needs.discover.outputs.has_web == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npx vitest run --passWithNoTests
+
+  build:
+    name: Build and scan ${{ matrix.img.name }}
+    needs: discover
+    if: needs.discover.outputs.has_images == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        img: ${{ fromJSON(needs.discover.outputs.images) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.img.context }}
+          file: ${{ matrix.img.dockerfile }}
+          tags: churn-radar-${{ matrix.img.name }}:ci
+          load: true
+          push: false
+          cache-from: type=gha,scope=${{ matrix.img.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.img.name }}
+      - name: Trivy scan
+        run: |
+          set -o pipefail
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock             aquasec/trivy:0.62.1 image --severity CRITICAL --ignore-unfixed --no-progress             --format json --output /dev/stdout churn-radar-${{ matrix.img.name }}:ci > trivy.json
+          jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]? |
+            "::error title=\(.VulnerabilityID)::\($t) \(.PkgName) \(.InstalledVersion) -> \(.FixedVersion // "-")"' trivy.json
+          count=$(jq '[.Results[]?.Vulnerabilities[]?] | length' trivy.json)
+          echo "CRITICAL: $count" >> "$GITHUB_STEP_SUMMARY"
+          test "$count" -eq 0
+
+  helm:
+    name: Helm lint and kubeconform
+    needs: discover
+    if: needs.discover.outputs.has_helm == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+          kubeconform -v
+      - name: Lint and validate
+        run: |
+          if [ -x deploy/helm/lint.sh ] || [ -f deploy/helm/lint.sh ]; then
+            bash deploy/helm/lint.sh
+            exit 0
+          fi
+          for chart in deploy/helm/*/; do
+            [ -f "$chart/Chart.yaml" ] || continue
+            if grep -q '^dependencies:' "$chart/Chart.yaml"; then
+              helm dependency build "$chart"
+            fi
+            helm lint "$chart"
+            helm template churn-radar "$chart" \
+              | kubeconform -strict -summary -ignore-missing-schemas \
+                  -schema-location default \
+                  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+          done
+
+  e2e:
+    name: E2E (compose + Playwright)
+    needs: discover
+    if: needs.discover.outputs.has_e2e == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Choose compose files
+        id: compose
+        run: |
+          if [ -f services/api/Dockerfile ] || [ ! -f deploy/compose/docker-compose.mock.yml ]; then
+            echo "args=-f docker-compose.yml" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=-f docker-compose.yml -f deploy/compose/docker-compose.mock.yml" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Start stack
+        run: |
+          if [ ! -f .env ] && [ -f .env.example ]; then cp .env.example .env; fi
+          docker compose ${{ steps.compose.outputs.args }} up -d --build --wait --wait-timeout 300
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: tests/e2e/package-lock.json
+      - name: Install Playwright
+        working-directory: tests/e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run Playwright
+        working-directory: tests/e2e
+        env:
+          BASE_URL: http://localhost:8080
+          CI: "true"
+        run: npx playwright test
+      - name: Compose logs
+        if: failure()
+        run: docker compose ${{ steps.compose.outputs.args }} logs --no-color --timestamps > compose-logs.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: |
+            tests/e2e/playwright-report
+            tests/e2e/test-results
+            compose-logs.txt
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: Stop stack
+        if: always()
+        run: docker compose ${{ steps.compose.outputs.args }} down -v --remove-orphans

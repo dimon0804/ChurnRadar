@@ -1,0 +1,151 @@
+http:
+  middlewares:
+    # clients must never be able to pass their own identity headers through the gateway
+    strip-identity:
+      headers:
+        customRequestHeaders:
+          X-User-Id: ""
+          X-User-Name: ""
+          X-User-Roles: ""
+          X-Auth-Method: ""
+
+    auth:
+      forwardAuth:
+        address: http://auth:8000/internal/verify
+        authResponseHeaders: [X-User-Id, X-User-Name, X-User-Roles, X-Auth-Method]
+
+    auth-page:
+      forwardAuth:
+        address: http://auth:8000/internal/verify?redirect=1
+        authResponseHeaders: [X-User-Id, X-User-Name, X-User-Roles, X-Auth-Method]
+
+    metrics-auth:
+      forwardAuth:
+        address: http://auth:8000/internal/verify-metrics
+
+    login-ratelimit:
+      rateLimit:
+        average: 5
+        period: 1s
+        burst: 20
+
+    snapshot-limit:
+      buffering:
+        maxRequestBodyBytes: 52428800
+        memRequestBodyBytes: 4194304
+
+    compress:
+      compress:
+        excludedContentTypes: [text/event-stream]
+
+    security-headers:
+      headers:
+        frameDeny: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: strict-origin-when-cross-origin
+        permissionsPolicy: "camera=(), microphone=(), geolocation=()"
+        contentSecurityPolicy: >-
+          default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline';
+          script-src 'self'; font-src 'self' data:; connect-src 'self';
+          frame-ancestors 'none'; base-uri 'self'; form-action 'self' http://localhost:8081
+
+    docs-headers:
+      headers:
+        frameDeny: true
+        contentTypeNosniff: true
+        referrerPolicy: strict-origin-when-cross-origin
+
+  routers:
+    auth-login:
+      rule: "Path(`/api/v1/auth/login`)"
+      entryPoints: [web]
+      priority: 200
+      service: auth
+      middlewares: [strip-identity, login-ratelimit]
+
+    auth:
+      rule: "PathPrefix(`/api/v1/auth`)"
+      entryPoints: [web]
+      priority: 150
+      service: auth
+      middlewares: [strip-identity]
+
+    stream:
+      rule: "PathPrefix(`/api/v1/stream`)"
+      entryPoints: [web]
+      priority: 150
+      service: notifier
+      middlewares: [strip-identity, auth]
+
+    source:
+      rule: "PathPrefix(`/api/v1/source`)"
+      entryPoints: [web]
+      priority: 150
+      service: ingest
+      middlewares: [strip-identity, auth, snapshot-limit]
+
+    simulator:
+      rule: "PathPrefix(`/api/v1/simulator`)"
+      entryPoints: [web]
+      priority: 150
+      service: simulator
+      middlewares: [strip-identity, auth]
+
+    docs:
+      rule: "PathPrefix(`/api/v1/docs`) || PathPrefix(`/api/v1/openapi`) || PathPrefix(`/api/v1/redoc`)"
+      entryPoints: [web]
+      priority: 120
+      service: api
+      middlewares: [strip-identity, auth-page, docs-headers]
+
+    api:
+      rule: "PathPrefix(`/api/v1`)"
+      entryPoints: [web]
+      priority: 100
+      service: api
+      middlewares: [strip-identity, auth, compress]
+
+    metrics:
+      rule: "Path(`/metrics`)"
+      entryPoints: [web]
+      priority: 100
+      service: api
+      middlewares: [strip-identity, metrics-auth]
+
+    web-public:
+      rule: "Path(`/login`) || PathPrefix(`/assets/`) || PathPrefix(`/fonts/`) || Path(`/favicon.svg`) || Path(`/robots.txt`)"
+      entryPoints: [web]
+      priority: 50
+      service: web
+      middlewares: [compress, security-headers]
+
+    web:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [web]
+      priority: 1
+      service: web
+      middlewares: [strip-identity, auth-page, compress, security-headers]
+
+  services:
+    auth:
+      loadBalancer:
+        servers: [{url: "http://auth:8000"}]
+        healthCheck: {path: /healthz, interval: 10s, timeout: 3s}
+    notifier:
+      loadBalancer:
+        servers: [{url: "http://notifier:8000"}]
+        responseForwarding:
+          flushInterval: 1ms
+    api:
+      loadBalancer:
+        servers: [{url: "http://api:8000"}]
+    ingest:
+      loadBalancer:
+        servers: [{url: "http://ingest:8000"}]
+    simulator:
+      loadBalancer:
+        servers: [{url: "http://simulator:8000"}]
+    web:
+      loadBalancer:
+        servers: [{url: "http://web:8080"}]

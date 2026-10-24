@@ -232,12 +232,14 @@ How data gets from the source to the screen:
 
 1. A snapshot (`PUT /api/v1/source/snapshot`, the `data.json` format from the case) or a batch
    of changes (`POST /api/v1/source/events`) arrives at `ingest`. It writes the data to
-   PostgreSQL (a snapshot is replaced atomically), keeps the status history and publishes
-   `churn.source.changed`.
+   PostgreSQL (a snapshot is replaced atomically), keeps the status history and, in the same
+   transaction, puts `churn.source.changed` into an outbox table. A background relay picks it
+   up right away and sends it to JetStream.
 2. `scoring` reads the event from JetStream through a shared durable consumer, so replicas split
    the stream between them. Processing is idempotent by `event_id`, and a full recalculation
    runs under `pg_advisory_lock` so two replicas never do the same work at once. After a weight
-   change `api` publishes `churn.settings.changed`, and everything is recalculated the same way.
+   change `api` publishes `churn.settings.changed` the same way, through its outbox, and
+   everything is recalculated.
 3. The result (score, reasons, money, recommendations) goes to the `scoring` schema, and
    `churn.scores.updated` goes to the bus.
 4. `notifier` pushes the event to browsers over SSE (`/api/v1/stream`), and `api` uses the same
@@ -248,6 +250,13 @@ How data gets from the source to the screen:
 ring buffer of 200 for `Last-Event-ID`. If a replica dies, the browser reconnects to another one
 after 3 seconds. Besides events, `scoring` rescores everyone once a minute when data is live:
 the time left until services expire keeps shrinking even if nothing in the data changed.
+
+An event is not lost even if NATS is down at the moment of writing. Before, `ingest` saved the
+data first and published the event afterwards, so with the bus unavailable the recalculation
+simply never happened. Now the event goes to `source.outbox` (`scoring.outbox` for `api`) in
+the same transaction as the data: either both are saved or neither is. The relay sends it as
+soon as the bus is back, with `Nats-Msg-Id` = `event_id`, so a resend after a crash does not
+create a duplicate in JetStream. Details (in Russian) are in [docs/architecture.md](docs/architecture.md).
 
 Each service, the threat model and failure handling are described in
 [docs/architecture.md](docs/architecture.md). Event schemas: [contracts/events/](contracts/events/).

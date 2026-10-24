@@ -325,7 +325,7 @@ class Scorer:
                 )
                 summary = _stamp_summary(summary, version, scored_at)
                 timings["summary_s"] = time.perf_counter() - started
-                await repo.save_summary(writer, summary, version, scored_at)
+                await repo.save_summary(writer, summary, version, scored_at, full=True)
                 await repo.mark_processed(writer, event_ids)
                 await repo.prune_processed(writer)
         duration_ms = (time.perf_counter() - t0) * 1000

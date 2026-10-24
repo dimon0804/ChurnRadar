@@ -25,15 +25,17 @@ function KpiCard({
   sub,
   info,
   emphasis,
+  testId,
 }: {
   label: string
   value: ReactNode
   sub?: ReactNode
   info?: ReactNode
   emphasis?: boolean
+  testId?: string
 }) {
   return (
-    <Card className="flex flex-col px-5 py-4">
+    <Card className="flex flex-col px-5 py-4" data-testid={testId}>
       <div className="flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground">
         {emphasis && <RiskGlyph level="high" className="text-risk-high" />}
         <span>{label}</span>
@@ -49,7 +51,9 @@ function KpiCard({
           </Tooltip>
         )}
       </div>
-      <div className="mt-2 text-[28px] leading-none font-semibold tracking-[-0.025em] num">{value}</div>
+      <div className="mt-2 text-[28px] leading-none font-semibold tracking-[-0.025em] num" data-role="value">
+        {value}
+      </div>
       {sub && <div className="mt-2.5 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{sub}</div>}
     </Card>
   )
@@ -76,6 +80,7 @@ function KpiRow({ s }: { s: Summary }) {
     <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
       <KpiCard
         label="Клиенты под высоким риском"
+        testId="kpi-high"
         emphasis
         value={<AnimatedNumber value={high} format={formatInt} />}
         sub={total > 0 ? `${formatShare(high / total, 0)} от ${countLabel(total, ['клиента', 'клиентов', 'клиентов'])}` : 'Клиентов пока нет'}
@@ -83,6 +88,7 @@ function KpiRow({ s }: { s: Summary }) {
       />
       <KpiCard
         label={`Ожидаемая потеря за ${horizonText}`}
+        testId="kpi-expected-loss"
         value={<AnimatedNumber value={s.expected_loss} format={money} />}
         sub={<span title={s.money_explanation}>{s.money_explanation || 'Сумма с учётом вероятности ухода и покрытия балансом.'}</span>}
         info={

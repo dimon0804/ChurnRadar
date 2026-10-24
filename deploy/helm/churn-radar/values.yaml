@@ -242,6 +242,8 @@ scoring:
     SERVICE_NAME: scoring
     SCORING_WORKERS: "2"
   exposedViaGateway: false
+  # на SIGTERM воркер дорабатывает текущую пачку до SHUTDOWN_GRACE_S (45 с)
+  terminationGracePeriodSeconds: 60
   autoscaling:
     enabled: true
   resources:
@@ -267,6 +269,7 @@ simulator:
   env:
     SERVICE_NAME: simulator
     SNAPSHOT_REFERENCE: "null"
+  terminationGracePeriodSeconds: 60
   serviceMonitor:
     bearerToken: true
 

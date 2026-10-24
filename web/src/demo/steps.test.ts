@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ModelSettings, SimulatorCommand } from '@/api/types'
 import { FEATURES } from './features'
+import type { Target } from './spotlight'
 import {
+  applyWeightAction,
   DEMO_STEPS,
   demoWeight,
   isLocked,
   restoreCaseAction,
   stepIndex,
+  WHAT_IF_CANCEL,
+  WHAT_IF_OFF,
   type DemoApi,
   type DemoContext,
   type TopCustomer,
@@ -52,6 +56,10 @@ function makeCtx(overrides: Partial<DemoApi> = {}, isAdmin = true) {
     navigate: vi.fn(),
     spotlight: vi.fn(),
     waitFor: vi.fn(async () => null),
+    click: vi.fn(async (target: Target) => {
+      calls.push(`click:${target.text ?? target.selector}`)
+      return true
+    }),
     wait: vi.fn(async () => undefined),
     redirect: vi.fn(),
   }
@@ -65,9 +73,9 @@ const step = (id: string) => {
 }
 
 describe('scenario', () => {
-  it('has 6 to 9 steps with unique ids and short speaker notes', () => {
+  it('has 6 to 11 steps with unique ids and short speaker notes', () => {
     expect(DEMO_STEPS.length).toBeGreaterThanOrEqual(6)
-    expect(DEMO_STEPS.length).toBeLessThanOrEqual(9)
+    expect(DEMO_STEPS.length).toBeLessThanOrEqual(11)
     expect(new Set(DEMO_STEPS.map((s) => s.id)).size).toBe(DEMO_STEPS.length)
     for (const s of DEMO_STEPS) {
       const sentences = s.say.split(/[.!?…](?=\s|$)/).filter((x) => x.trim()).length
@@ -83,7 +91,7 @@ describe('scenario', () => {
     expect(DEMO_STEPS.filter((s) => isLocked(s, true))).toEqual([])
     for (const s of DEMO_STEPS) {
       for (const a of s.actions ?? []) {
-        const mutating = ['reset-settings', 'stop-stream', 'restore-case'].includes(a.id)
+        const mutating = ['apply-weight', 'reset-settings', 'stop-stream', 'restore-case'].includes(a.id)
         expect(Boolean(a.adminOnly), a.id).toBe(mutating)
       }
     }
@@ -120,10 +128,67 @@ describe('scenario', () => {
     expect(message).toMatch(/нет клиентов высокого риска/)
   })
 
-  it('changes the prolong_wait weight on the model page', async () => {
-    const { ctx, api } = makeCtx()
+  it('follows the jury order', () => {
+    expect(DEMO_STEPS.map((s) => s.id)).toEqual([
+      'overview',
+      'call-today',
+      'chart',
+      'customers',
+      'customer',
+      'model',
+      'quality',
+      'live',
+      'ops',
+      'roles',
+    ])
+  })
+
+  it('shows the call list with the CSV button on the overview', async () => {
+    const { ctx } = makeCtx()
+    await step('call-today').run?.(ctx)
+    expect(ctx.navigate).toHaveBeenCalledWith('/')
+    const targets = vi.mocked(ctx.spotlight).mock.calls[0]?.[0] ?? []
+    expect(targets.map((t) => t.selector)).toEqual(['[data-testid="call-today"]', '[data-testid="call-today-csv"]'])
+  })
+
+  it('turns on what-if on the model page without saving anything', async () => {
+    const { ctx, api, calls } = makeCtx()
     const message = await step('model').run?.(ctx)
     expect(ctx.navigate).toHaveBeenCalledWith('/model')
+    expect(ctx.click).toHaveBeenCalledWith(WHAT_IF_OFF)
+    expect(calls).toEqual(['click:Что если'])
+    expect(api.patchWeight).not.toHaveBeenCalled()
+    expect(api.resetSettings).not.toHaveBeenCalled()
+    expect(message).toContain('Ждёт оплаты')
+  })
+
+  it('looks for the what-if switch only while it is off', () => {
+    expect(WHAT_IF_OFF.selector).toContain('[aria-checked="false"]')
+    expect(WHAT_IF_OFF.text).toBe('Что если')
+  })
+
+  it('opens the model quality page on lift and ROC AUC', async () => {
+    const { ctx } = makeCtx()
+    await step('quality').run?.(ctx)
+    expect(ctx.navigate).toHaveBeenCalledWith('/quality')
+    const targets = vi.mocked(ctx.spotlight).mock.calls[0]?.[0] ?? []
+    expect(targets.map((t) => t.selector)).toEqual(['[data-testid="quality-lift"]', '[data-testid="quality-auc"]'])
+    expect(isLocked(step('quality'), false)).toBe(false)
+  })
+
+  it('points at the alerts bell while the stream runs', async () => {
+    const { ctx } = makeCtx()
+    await step('live').run?.(ctx)
+    const targets = vi.mocked(ctx.spotlight).mock.calls[0]?.[0] ?? []
+    expect(targets.some((t) => t.selector.includes('Оповещения'))).toBe(true)
+  })
+
+  it('applies the prolong_wait weight after closing the what-if draft', async () => {
+    const { ctx, api, calls } = makeCtx()
+    const message = await applyWeightAction.run(ctx)
+    expect(ctx.navigate).toHaveBeenCalledWith('/model')
+    expect(ctx.click).toHaveBeenCalledWith(WHAT_IF_CANCEL)
+    expect(calls).toEqual(['click:Отменить'])
     expect(api.patchWeight).toHaveBeenCalledTimes(1)
     const [code, weight] = vi.mocked(api.patchWeight).mock.calls[0] ?? []
     expect(code).toBe('prolong_wait')

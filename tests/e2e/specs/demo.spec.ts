@@ -37,7 +37,7 @@ test('шаг сценария ведёт на нужную страницу и �
   await panel.getByRole('button', { name: /^Показать: Таблица клиентов/ }).click()
   await expect(page).toHaveURL(/\/customers\?level=high$/)
   const cue = page.getByTestId('demo-cue')
-  await expect(cue).toContainText('Шаг 3 из')
+  await expect(cue).toContainText('Шаг 4 из')
   await expect(cue).toContainText('Что сказать')
   await expect(page.locator('[data-demo-spotlight] > div').first()).toBeVisible()
 
@@ -47,7 +47,47 @@ test('шаг сценария ведёт на нужную страницу и �
   await cue.getByRole('button', { name: /^Дальше/ }).click()
   await expect(page).toHaveURL(/\/customers\/\d+\?level=high$/)
   await expect(page.getByRole('dialog').getByRole('heading', { name: 'Почему' })).toBeVisible()
-  await expect(cue).toContainText('Шаг 4 из')
+  await expect(cue).toContainText('Шаг 5 из')
+})
+
+test('шаги «Кому позвонить» и «Качество модели» подсвечивают нужные блоки', async ({ page }) => {
+  await loginUi(page)
+  await page.goto('/customers?demo=1')
+  const panel = page.getByTestId('demo-panel')
+  const spotlight = page.locator('[data-demo-spotlight] > div').first()
+
+  await panel.getByRole('button', { name: /^Показать: Кому позвонить сегодня/ }).click()
+  await expect(page).toHaveURL(/\/$/)
+  await expect(page.getByTestId('call-today')).toBeVisible()
+  await expect(page.getByTestId('call-today-csv')).toBeVisible()
+  const cue = page.getByTestId('demo-cue')
+  await expect(cue).toContainText('Шаг 2 из 10')
+  await expect(spotlight).toBeVisible()
+
+  // после шага открыта подсказка, а не пульт: открываем пульт заново
+  await page.goto('/?demo=1')
+  await page.getByTestId('demo-panel').getByRole('button', { name: /^Показать: Качество модели/ }).click()
+  await expect(page).toHaveURL(/\/quality$/)
+  await expect(page.getByTestId('quality-lift')).toBeVisible()
+  await expect(page.getByTestId('quality-auc')).toBeVisible()
+  await expect(page.getByTestId('demo-cue')).toContainText('Шаг 7 из 10')
+  await expect(spotlight).toBeVisible()
+})
+
+test('шаг модели включает «Что если» и ничего не сохраняет', async ({ page }) => {
+  await loginUi(page)
+  await page.goto('/?demo=1')
+  await page.getByTestId('demo-panel').getByRole('button', { name: /^Показать: Модель/ }).click()
+  await expect(page).toHaveURL(/\/model$/)
+  const whatIfSwitch = page.locator('label', { hasText: 'Что если' }).getByRole('switch')
+  await expect(whatIfSwitch).toHaveAttribute('aria-checked', 'true')
+  const whatIf = page.getByTestId('what-if')
+  await expect(whatIf).toBeVisible()
+  await expect(page.getByTestId('demo-cue')).toContainText('«Что если» включён')
+
+  // предпросмотр живёт только в браузере: «Отменить» возвращает страницу как была
+  await whatIf.getByRole('button', { name: 'Отменить' }).click()
+  await expect(whatIfSwitch).toHaveAttribute('aria-checked', 'false')
 })
 
 test('пульт помнит открытую вкладку', async ({ page }) => {

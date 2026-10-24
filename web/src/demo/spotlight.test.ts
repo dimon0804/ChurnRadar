@@ -1,13 +1,25 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest'
 import { findTarget, findTargets, waitForTarget } from './spotlight'
-import { sheetSection, sortHeader, weightRow } from './steps'
+import { sheetSection, sortHeader, weightRow, WHAT_IF_OFF, WHAT_IF_SWITCH } from './steps'
 
 afterEach(() => {
   document.body.innerHTML = ''
 })
 
 describe('findTarget', () => {
+  it('finds the what-if switch only while it is off', () => {
+    const page = (checked: boolean) => `
+      <label id="enabled"><button role="switch" aria-checked="true"></button></label>
+      <label id="whatif"><button role="switch" aria-checked="${checked}"></button>Что если</label>`
+    document.body.innerHTML = page(false)
+    expect(findTarget(WHAT_IF_OFF)?.id).toBe('whatif')
+    expect(findTarget(WHAT_IF_SWITCH)?.id).toBe('whatif')
+    document.body.innerHTML = page(true)
+    expect(findTarget(WHAT_IF_OFF)).toBeNull()
+    expect(findTarget(WHAT_IF_SWITCH)?.id).toBe('whatif')
+  })
+
   it('finds a section of the customer sheet by its heading', () => {
     document.body.innerHTML = `
       <div role="dialog">

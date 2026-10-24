@@ -68,7 +68,9 @@ export function SpotlightLayer({ targets, nonce }: { targets: Target[]; nonce: n
       if (found.length > 0 && !scrolled) {
         scrolled = true
         shownAt = now
-        found[0]?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
+        // на телефоне подсказка занимает низ экрана — поднимаем цель к шапке, а не в центр
+        const block = window.innerWidth < 640 ? 'start' : 'center'
+        found[0]?.scrollIntoView({ behavior: 'smooth', block, inline: 'nearest' })
       }
       if (shownAt && now - shownAt > SHOW_MS) {
         setBoxes([])

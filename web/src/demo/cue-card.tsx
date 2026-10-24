@@ -43,7 +43,7 @@ export function CueCard({
     <section
       aria-label="Подсказка к шагу демонстрации"
       data-testid="demo-cue"
-      className="fixed bottom-4 left-4 z-[70] flex max-h-[calc(100vh-88px)] w-[min(400px,calc(100vw-32px))] animate-pop-in flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-pop"
+      className="fixed bottom-2 left-2 z-[70] flex max-h-[55dvh] w-[calc(100vw-16px)] animate-pop-in flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-pop sm:bottom-4 sm:left-4 sm:max-h-[calc(100dvh-88px)] sm:w-[min(400px,calc(100vw-32px))]"
     >
       <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
         <p className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground num">

@@ -206,6 +206,17 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         rules=[
             rule("PUT", r"/api/v1/source/snapshot", "source.snapshot.upload", "source", body=False),
             rule("POST", r"/api/v1/source/events", "source.events.push", "source", body=False),
+            # коннекторы к внешним системам: в теле могут быть ключи — svckit.audit их маскирует
+            rule("POST", r"/api/v1/source/connectors", "connector.create", "connector"),
+            rule("PATCH", r"/api/v1/source/connectors/(?P<id>[^/]+)", "connector.update", "connector",
+                 object_group="id"),
+            rule("DELETE", r"/api/v1/source/connectors/(?P<id>[^/]+)", "connector.delete", "connector",
+                 object_group="id"),
+            rule("POST", r"/api/v1/source/connectors/(?P<id>[^/]+)/run", "connector.run", "connector",
+                 object_group="id"),
+            rule("POST", r"/api/v1/source/connectors/(?P<id>[^/]+)/reset-cursor", "connector.reset_cursor",
+                 "connector", object_group="id"),
+            rule("POST", r"/api/v1/source/metrica/client-ids", "source.metrica.client_ids", "source", body=False),
         ],
         errors=metrics.audit_errors,
     )

@@ -24,7 +24,16 @@ from prometheus_client import REGISTRY, CollectorRegistry, Counter
 log = structlog.get_logger()
 
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-SECRET_KEYS = ("password", "secret", "token", "authorization", "api_key", "apikey")
+SECRET_KEYS = (
+    "password",
+    "secret",
+    "token",
+    "authorization",
+    "api_key",
+    "apikey",
+    "credential",
+    "private_key",
+)
 MAX_STRING = 300
 MAX_DETAILS = 4000
 

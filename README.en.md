@@ -735,7 +735,7 @@ check, they carry no cookie. Revoked, expired or unknown — `401`, foreign IP �
 limit — `429` with `Retry-After` (a per-token counter in Redis, `API_TOKEN_RATE_LIMIT_PER_MIN=600`
 by default). Tokens cannot manage tokens or users: only an administrator's panel session can.
 
-Behind nginx (production) Traefik trusts its `X-Real-IP` ([deploy/prod/traefik.yml](deploy/prod/traefik.yml)),
+Behind nginx (production) Traefik trusts its `X-Real-IP` ([deploy/traefik/traefik.yml](deploy/traefik/traefik.yml)),
 otherwise every request would look as if it came from the docker gateway.
 
 ### Data: push and pull

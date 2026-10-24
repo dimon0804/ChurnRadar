@@ -724,7 +724,7 @@ curl -H "Authorization: Bearer $TOKEN" -o weekly.pdf http://localhost:8080/api/v
 Redis, по умолчанию `API_TOKEN_RATE_LIMIT_PER_MIN=600`). Управлять токенами и пользователями
 токеном нельзя — только из панели, сессией администратора.
 
-За nginx (прод) Traefik доверяет его `X-Real-IP` ([deploy/prod/traefik.yml](deploy/prod/traefik.yml)),
+За nginx (прод) Traefik доверяет его `X-Real-IP` ([deploy/traefik/traefik.yml](deploy/traefik/traefik.yml)),
 иначе все запросы выглядели бы пришедшими с адреса docker-шлюза.
 
 ### Данные: push и pull

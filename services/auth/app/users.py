@@ -8,6 +8,8 @@ from uuid import uuid4
 
 import asyncpg
 
+from . import audit
+
 # порядок — от старшей роли к младшей
 VALID_ROLES = ("admin", "marketer", "analyst")
 SSO_PROVIDERS = ("oidc", "saml")
@@ -109,7 +111,9 @@ class UserRepo(Protocol):
 
     async def record_login(self, username: str, provider: str, success: bool, ip: str | None) -> None: ...
 
-    async def add_audit(self, actor: str, action: str, target: str | None, details: dict) -> None: ...
+    async def add_audit(
+        self, actor: str, action: str, target: str | None, details: dict, **context: Any
+    ) -> None: ...
 
     async def list_audit(self, limit: int = 100) -> list[AuditEntry]: ...
 
@@ -260,36 +264,33 @@ class PostgresUserRepo:
         await self.pool.execute("UPDATE auth.users SET last_login_at = now() WHERE id = $1::uuid", user_id)
 
     async def record_login(self, username: str, provider: str, success: bool, ip: str | None) -> None:
-        async with self.pool.acquire() as conn, conn.transaction():
-            await conn.execute(
-                "INSERT INTO auth.login_events (username, provider, success, ip) VALUES ($1, $2, $3, $4)",
-                username[:128],
-                provider,
-                success,
-                ip,
-            )
-            if success and provider == "password":
-                await conn.execute(
-                    "UPDATE auth.users SET last_login_at = now() WHERE provider = $1 AND lower(username) = lower($2)",
-                    provider,
-                    username,
-                )
-
-    async def add_audit(self, actor: str, action: str, target: str | None, details: dict) -> None:
-        await self.pool.execute(
-            "INSERT INTO auth.audit_log (actor, action, target, details) VALUES ($1, $2, $3, $4::jsonb)",
-            actor,
-            action,
-            target,
-            json.dumps(details, ensure_ascii=False),
+        # входы и неудачные попытки — в общий журнал действий (audit.events)
+        await audit.write(
+            self.pool,
+            actor=username[:128],
+            actor_type="user" if success else "anonymous",
+            action="auth.login" if success else "auth.login_failed",
+            object_type="user",
+            object_id=username[:128],
+            details={"method": provider},
+            success=success,
+            ip=ip,
         )
+        if success and provider == "password":
+            await self.pool.execute(
+                "UPDATE auth.users SET last_login_at = now() WHERE provider = $1 AND lower(username) = lower($2)",
+                provider,
+                username,
+            )
+
+    async def add_audit(self, actor: str, action: str, target: str | None, details: dict, **context: Any) -> None:
+        context.setdefault("object_type", "user")
+        await audit.write(self.pool, actor=actor, action=action, object_id=target, details=details, **context)
 
     async def list_audit(self, limit: int = 100) -> list[AuditEntry]:
-        rows = await self.pool.fetch(
-            "SELECT * FROM auth.audit_log ORDER BY created_at DESC, id DESC LIMIT $1", max(1, min(limit, 500))
-        )
+        rows = await self.pool.fetch(audit.SELECT_USER_ACTIONS, max(1, min(limit, 500)))
         return [
-            AuditEntry(r["id"], r["actor"], r["action"], r["target"], json.loads(r["details"]), r["created_at"])
+            AuditEntry(r["id"], r["actor"], r["action"], r["object_id"], json.loads(r["details"]), r["at"])
             for r in rows
         ]
 
@@ -393,7 +394,7 @@ class MemoryUserRepo:
             if user:
                 user.last_login_at = _now()
 
-    async def add_audit(self, actor: str, action: str, target: str | None, details: dict) -> None:
+    async def add_audit(self, actor: str, action: str, target: str | None, details: dict, **context: Any) -> None:
         self.audit.append(AuditEntry(len(self.audit) + 1, actor, action, target, dict(details), _now()))
 
     async def list_audit(self, limit: int = 100) -> list[AuditEntry]:

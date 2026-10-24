@@ -22,6 +22,9 @@ UNSAFE_RULES: tuple[tuple[str, str], ...] = (
     ("/api/v1/analytics/marketing/settings", "admin"),
     ("/api/v1/alerts/preferences/users", "admin"),
     ("/api/v1/auth/users", "admin"),
+    # API-токены интеграций, расписание и рассылка отчёта
+    ("/api/v1/auth/tokens", "admin"),
+    ("/api/v1/reports", "admin"),
     # работа с клиентами: письма, рассылки, отметки «связались/решено/отложить»
     ("/api/v1/mail", "marketer"),
     ("/api/v1/customers", "marketer"),

@@ -238,6 +238,47 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/v1/model/settings/preview:
+    post:
+      tags: [model]
+      summary: «Что если» — что изменится после PATCH, без сохранения
+      description: |
+        Принимает то же тело, что PATCH, и с теми же проверками. Ничего не сохраняет:
+        версия настроек и оценки клиентов не меняются. «Было» и «станет» считаются на одном
+        снимке данных, «станет» совпадает с тем, что получится после PATCH и пересчёта.
+        На базе больше PREVIEW_SAMPLE_SIZE клиентов (по умолчанию 2000) считается выборка,
+        тогда `exact: false`. Требуется роль `admin`.
+      operationId: previewModelSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModelSettingsPatch' }
+      responses:
+        '200':
+          description: Сравнение «было → станет»
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelSettingsPreview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Пришёл более новый запрос предпросмотра, этот не считался
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '503':
+          description: Сервис оценки недоступен
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '504':
+          description: Расчёт не уложился в PREVIEW_TIMEOUT_S
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /api/v1/model/settings/reset:
     post:
       tags: [model]
@@ -835,6 +876,67 @@ components:
               code: { type: string }
               weight: { type: number }
               enabled: { type: boolean }
+
+    PreviewTotals:
+      type: object
+      required: [horizon_days, thresholds, expected_loss, exposure, services_at_risk, revenue_at_risk_share, by_level]
+      properties:
+        horizon_days: { type: integer }
+        thresholds:
+          type: object
+          required: [medium, high]
+          properties:
+            medium: { type: number }
+            high: { type: number }
+        expected_loss: { type: integer, description: 'Ожидаемая потеря за горизонт, евроценты' }
+        exposure: { type: integer, description: 'Выручка услуг среднего и высокого риска, евроценты' }
+        services_at_risk: { type: integer }
+        revenue_at_risk_share: { type: number, minimum: 0, maximum: 1 }
+        by_level:
+          type: object
+          required: [high, medium, low, unknown]
+          properties:
+            high: { type: integer }
+            medium: { type: integer }
+            low: { type: integer }
+            unknown: { type: integer }
+
+    PreviewCustomerChange:
+      type: object
+      required: [id, email, level_before, level_after, score_before, score_after, expected_loss_before, expected_loss_after]
+      properties:
+        id: { type: integer, format: int64 }
+        email: { type: string }
+        level_before: { $ref: '#/components/schemas/RiskLevel' }
+        level_after: { $ref: '#/components/schemas/RiskLevel' }
+        score_before: { type: [number, 'null'] }
+        score_after: { type: [number, 'null'] }
+        expected_loss_before: { type: integer }
+        expected_loss_after: { type: integer }
+
+    ModelSettingsPreview:
+      type: object
+      required: [model_version, exact, customers_total, sample_size, before, after, changes_total, into_high, out_of_high, changes, duration_ms]
+      properties:
+        model_version: { type: integer, description: 'Версия настроек, от которой считается «было»' }
+        exact:
+          type: boolean
+          description: |
+            `false` — база больше PREVIEW_SAMPLE_SIZE клиентов: посчитана выборка, счётчики
+            и деньги масштабированы на всю базу, список клиентов — только из выборки.
+        customers_total: { type: integer }
+        sample_size: { type: integer, description: 'Сколько клиентов посчитано на самом деле' }
+        before: { $ref: '#/components/schemas/PreviewTotals' }
+        after: { $ref: '#/components/schemas/PreviewTotals' }
+        changes_total: { type: integer, description: 'Сколько посчитанных клиентов сменят уровень' }
+        into_high: { type: integer }
+        out_of_high: { type: integer }
+        changes:
+          type: array
+          maxItems: 50
+          description: 'Сначала попадающие в высокий риск, потом выходящие из него, внутри — по изменению потери'
+          items: { $ref: '#/components/schemas/PreviewCustomerChange' }
+        duration_ms: { type: number }
 
     SettingsChange:
       type: object

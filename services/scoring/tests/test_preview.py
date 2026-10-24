@@ -94,6 +94,22 @@ def test_sample_is_scaled_to_whole_base(sample_data) -> None:  # type: ignore[no
     assert sampled["after"]["revenue_at_risk_share"] == exact["after"]["revenue_at_risk_share"]
 
 
+def test_matches_openapi_schema(sample_data) -> None:  # type: ignore[no-untyped-def]
+    jsonschema = pytest.importorskip("jsonschema")
+    yaml = pytest.importorskip("yaml")
+    from conftest import REPO_ROOT
+
+    openapi = yaml.safe_load((REPO_ROOT / "contracts" / "openapi.yaml").read_text(encoding="utf-8"))
+    schema = {"$ref": "#/components/schemas/ModelSettingsPreview", "components": openapi["components"]}
+    validator = jsonschema.Draft202012Validator(schema)
+    for proposed in (_storage(short_commitment=100, suspended=100), _storage(short_commitment=0)):
+        for total in (None, 1000):
+            body = {**pv.compute(_input(sample_data, proposed, total=total)), "duration_ms": 1.5}
+            errors = [f"{list(e.path)}: {e.message}" for e in validator.iter_errors(body)]
+            assert not errors, errors
+            assert set(body) == set(openapi["components"]["schemas"]["ModelSettingsPreview"]["properties"])
+
+
 def test_scale_levels_keeps_total() -> None:
     assert pv._scale_levels({"high": 1, "medium": 1, "low": 1, "unknown": 0}, 1000 / 3, 1000) == {
         "high": 334, "medium": 333, "low": 333, "unknown": 0,

@@ -1,7 +1,8 @@
 import { lazy, Suspense, type ReactNode } from 'react'
-import { createBrowserRouter } from 'react-router'
+import { createBrowserRouter, type RouteObject } from 'react-router'
 import { isApiError } from '@/api/client'
 import { AppShell, Logo } from '@/components/app-shell'
+import { RouteError } from '@/components/route-error'
 import { ErrorState, ForbiddenState, NotFoundState } from '@/components/states'
 import { Skeleton } from '@/components/ui/skeleton'
 import { DemoMode } from '@/demo/demo-mode'
@@ -77,12 +78,18 @@ function AdminOnly({ children }: { children: ReactNode }) {
   return isAdmin ? <Lazy>{children}</Lazy> : <ForbiddenState />
 }
 
+/** Ошибка страницы показывается внутри панели: шапка и меню остаются на месте. */
+function withRouteError(routes: RouteObject[]): RouteObject[] {
+  return routes.map((route) => ({ errorElement: <RouteError />, ...route }))
+}
+
 export const router = createBrowserRouter([
-  { path: '/login', element: <LoginPage /> },
+  { path: '/login', element: <LoginPage />, errorElement: <RouteError fullScreen /> },
   {
     path: '/',
     element: <RequireAuth />,
-    children: [
+    errorElement: <RouteError fullScreen />,
+    children: withRouteError([
       {
         index: true,
         element: (
@@ -146,6 +153,6 @@ export const router = createBrowserRouter([
         ),
       },
       { path: '*', element: <NotFoundState /> },
-    ],
+    ]),
   },
 ])

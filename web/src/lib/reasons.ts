@@ -21,6 +21,9 @@ export const FEATURE_TITLE: Record<string, string> = {
   all_services_gone: 'Уже ушёл',
   no_live_services: 'Нет действующих услуг',
   no_paid_services: 'Нет платных услуг',
+  panel_absence: 'Давно не заходил в панель',
+  web_activity_drop: 'Реже заходит на сайт',
+  cancel_page_views: 'Смотрел страницу удаления',
 }
 
 /** Что делать с клиентами без оценки — сервер отдаёт это только в карточке, в списке действия нет. */

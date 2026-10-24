@@ -170,6 +170,13 @@ export const FEATURES: Feature[] = [
     target: { kind: 'step', step: 'live' },
   },
   {
+    id: 'connectors',
+    title: 'Коннекторы: биллинг по API и Яндекс Метрика',
+    extra: true,
+    detail: 'Система сама забирает изменения по расписанию, один исполнитель на все реплики. Визиты из Метрики дают модели признаки «давно не заходил» и «смотрел страницу удаления».',
+    target: { kind: 'step', step: 'sources' },
+  },
+  {
     id: 'recommendations',
     title: 'Рекомендации маркетологу',
     extra: true,

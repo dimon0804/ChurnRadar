@@ -61,7 +61,7 @@ test('шаги «С кем связаться» и «Качество модел
   await expect(page.getByTestId('contact-today')).toBeVisible()
   await expect(page.getByTestId('contact-today-mass')).toBeVisible()
   const cue = page.getByTestId('demo-cue')
-  await expect(cue).toContainText('Шаг 2 из 11')
+  await expect(cue).toContainText('Шаг 2 из 12')
   await expect(spotlight).toBeVisible()
 
   // после шага открыта подсказка, а не пульт: открываем пульт заново
@@ -70,7 +70,7 @@ test('шаги «С кем связаться» и «Качество модел
   await expect(page).toHaveURL(/\/quality$/)
   await expect(page.getByTestId('quality-lift')).toBeVisible()
   await expect(page.getByTestId('quality-auc')).toBeVisible()
-  await expect(page.getByTestId('demo-cue')).toContainText('Шаг 8 из 11')
+  await expect(page.getByTestId('demo-cue')).toContainText('Шаг 8 из 12')
   await expect(spotlight).toBeVisible()
 })
 

@@ -92,6 +92,7 @@ const CONTACT_TODAY_TARGET: Target = { selector: '[data-testid="contact-today"]'
 const CONTACT_TODAY_MASS_TARGET: Target = { selector: '[data-testid="contact-today-mass"]' }
 const QUALITY_LIFT_TARGET: Target = { selector: '[data-testid="quality-lift"]' }
 const QUALITY_AUC_TARGET: Target = { selector: '[data-testid="quality-auc"]' }
+export const SOURCES_TARGET: Target = { selector: '[data-testid="sources"]' }
 export const WHAT_IF_SWITCH: Target = { selector: 'label:has(button[role="switch"])', text: 'Что если' }
 /** Тот же переключатель, но только выключенный: повторный запуск шага не выключит режим обратно. */
 export const WHAT_IF_OFF: Target = { selector: 'label:has(button[role="switch"][aria-checked="false"])', text: 'Что если' }
@@ -309,6 +310,19 @@ export const DEMO_STEPS: DemoStep[] = [
       return 'Набор на 5 000 клиентов загружен, поток включён. Цифры обновятся, когда закончится первый пересчёт.'
     },
     actions: [stopStreamAction, restoreCaseAction],
+  },
+  {
+    id: 'sources',
+    title: 'Источники: система сама ходит за данными',
+    say:
+      'Данные не только приходят к нам, система сама ходит за ними: забирает изменения из биллинга по API и визиты из Яндекс Метрики, по расписанию или по кнопке «Запустить сейчас». Из Метрики модель узнаёт, кто давно не заходил в панель и кто смотрел страницу удаления услуги, а токены лежат только в окружении сервиса, в интерфейсе их не видно.',
+    show: 'Раздел «Источники» внизу страницы «Данные»: статус каждого коннектора, расписание, «Запустить сейчас» и история запусков.',
+    adminOnly: true,
+    run: async (ctx) => {
+      ctx.navigate('/data')
+      await ctx.waitFor(SOURCES_TARGET)
+      ctx.spotlight([SOURCES_TARGET])
+    },
   },
   {
     id: 'ops',

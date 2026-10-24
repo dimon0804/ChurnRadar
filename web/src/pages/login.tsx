@@ -41,7 +41,8 @@ function withNext(url: string, next: string): string {
 const SSO_ERRORS: Record<string, string> = {
   oidc_failed: 'Не удалось войти через SSO. Попробуйте ещё раз или войдите по логину и паролю.',
   oidc_denied: 'Вход через SSO отменён.',
-  forbidden: 'У этой учётной записи нет доступа к панели: её нет ни в одной группе ChurnRadar у провайдера входа.',
+  blocked: 'Учётная запись заблокирована в панели. Обратитесь к администратору.',
+  forbidden:'У этой учётной записи нет доступа к панели: её нет ни в одной группе ChurnRadar у провайдера входа.',
 }
 
 export function LoginPage() {

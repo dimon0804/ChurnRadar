@@ -130,7 +130,10 @@ def create_app(
         state.saml_replay = ReplayGuard(state.redis)
         state.saml = SamlClient(settings, state.http)
         await seed_users(state)
+        # IdP опрашиваем сразу, чтобы первый же посетитель /login увидел кнопки SSO без ожидания
+        warmup = asyncio.gather(state.oidc.available(), state.saml.available())
         yield
+        warmup.cancel()
         if http is None:
             await state.http.aclose()
         if redis is None:

@@ -11,6 +11,7 @@ Audience, Recipient, окна NotBefore/NotOnOrAfter, InResponseTo; повтор
 from __future__ import annotations
 
 import base64
+import logging
 import secrets
 import time
 import zlib
@@ -27,6 +28,8 @@ from signxml import SignatureConfiguration, XMLVerifier
 from signxml.exceptions import SignXMLException
 
 from .config import Settings
+
+log = logging.getLogger("auth.saml")
 
 NS = {
     "samlp": "urn:oasis:names:tc:SAML:2.0:protocol",
@@ -395,7 +398,7 @@ class SamlClient:
             # Authentik собирает адрес SSO из Host запроса: просим сразу публичный
             headers["Host"] = urlsplit(self.s.saml_idp_public_url).netloc
         # Authentik отдаёт метаданные приложения через редирект на /api/v3/providers/saml/<id>/metadata/
-        resp = await self.http.get(self.s.saml_idp_metadata_url, headers=headers, timeout=2, follow_redirects=True)
+        resp = await self.http.get(self.s.saml_idp_metadata_url, headers=headers, timeout=4, follow_redirects=True)
         if resp.status_code != 200:
             raise SamlError(f"IdP metadata: HTTP {resp.status_code}")
         return parse_idp_metadata(resp.content, internal_origin, public_origin)
@@ -409,7 +412,8 @@ class SamlClient:
             return idp
         try:
             idp = await self._load()
-        except (SamlError, httpx.HTTPError, OSError, ValueError):
+        except (SamlError, httpx.HTTPError, OSError, ValueError) as exc:
+            log.warning("saml idp metadata unavailable", extra={"fields": {"error": str(exc) or type(exc).__name__}})
             idp = None
         self._idp = (time.monotonic(), idp)
         return idp

@@ -29,6 +29,7 @@ evaluate the project.
 - [What to look at in the panel](#what-to-look-at-in-the-panel)
 - [Charts and reasons](#charts-and-reasons)
 - [How it works](#how-it-works)
+- [Data sources (connectors)](#data-sources-connectors)
 - [Notifications](#notifications)
 - [Users and SSO](#users-and-sso)
 - [Risk model](#risk-model)
@@ -361,6 +362,96 @@ create a duplicate in JetStream. Details (in Russian) are in [docs/architecture.
 Each service, the threat model and failure handling are described in
 [docs/architecture.md](docs/architecture.md). Event schemas: [contracts/events/](contracts/events/).
 
+## Data sources (connectors)
+
+Data does not only arrive in ChurnRadar on its own (snapshot and change stream): the system also
+fetches it on a schedule. Connectors in `ingest` do this. Their list, status, run history and the
+"Run now" button live on the "Data" → "Sources" page (admins only).
+
+- **Billing HTTP API.** ingest calls `GET {base}/accounts|services|transactions?updated_since=…&cursor=…`
+  and takes only what changed since the last run. The contract your billing implements is
+  [`contracts/billing-source.openapi.yaml`](contracts/billing-source.openapi.yaml).
+- **Yandex Metrica.** Visits are exported through the Logs API and turned into per-customer
+  aggregates: last visit, visits over 7 and 30 days, visits to payment, deletion and pricing pages.
+  Raw visits are not stored; daily aggregates are kept for 90 days. The model takes three
+  features from them: "Viewed the deletion page", "Has not visited the panel for a while",
+  "Visits the site less often".
+
+Whatever a connector fetches goes the same way as push data: rows in `source.*` and an outbox
+event in one transaction, then the usual rescore. The scheduler runs in every ingest replica, but
+only one executes: the leader holds `pg_try_advisory_lock`, and each run also holds its own lock
+per connector, so a connector never runs twice at once, even during leader handover. The cursor
+(last `updatedAt` per entity, or the last Metrica day) is stored in the database. Network errors,
+timeouts, 429 and 5xx are retried with a growing pause; after a failed run the pause before the
+next one doubles, capped by the interval. Metrics: `connector_runs_total{source,result}`,
+`connector_records_total`, `connector_last_success_timestamp`, alert `ConnectorStale`.
+
+**Tokens are not stored in the database.** A connector keeps only the name of an ingest
+environment variable (`CONNECTOR_TOKEN_*`); the token itself lives in `.env` or a Kubernetes
+Secret. We chose a reference over encryption with a key from env: with encryption the key still
+lives in the environment next to the database, plus key rotation and migrations. With a reference
+a database dump reveals nothing and rotating a token means replacing a secret. The name must start
+with `CONNECTOR_TOKEN_`, so a connector cannot be used to send, say, `DATABASE_URL` elsewhere.
+`CONNECTOR_ALLOWED_HOSTS` limits where connectors may go.
+
+### Demo
+
+In compose both connectors are created and switched off. Their source is the simulator:
+`http://simulator:8000/demo/billing/v1` (its world with `updatedAt` stamps) and
+`http://simulator:8000/demo/metrica` (a fake Logs API with realistic visits: customer 6 visited
+the deletion page, customer 4 has not logged in for a month, customer 1 almost stopped visiting).
+
+1. "Data" → "Live change stream": switch to "Only serves the API" (pull) and start the stream.
+   The simulator stops sending changes on its own.
+2. "Sources" → "Billing": enable it or press "Run now". The run history shows how many records
+   were fetched, and scores are recalculated as usual.
+3. "Yandex Metrica" → "Run now". Customer 6 gets the "Viewed the deletion page" reason, customer 4
+   gets "Has not visited the panel for a while".
+
+### Your own billing
+
+Implement the three methods from [`contracts/billing-source.openapi.yaml`](contracts/billing-source.openapi.yaml)
+and set in `.env`:
+
+```bash
+CONNECTOR_BILLING_URL=https://billing.example.com/churnradar/v1
+CONNECTOR_TOKEN_BILLING=<token your billing expects in Authorization: Bearer>
+```
+
+After `docker compose up -d` the `billing` connector points to your address. Turn it on and pick a
+schedule in "Sources".
+
+### Production Yandex Metrica
+
+1. After the user signs in to the control panel, pass the account id:
+
+   ```js
+   ym(12345678, 'setUserID', String(accountId));
+   ym(12345678, 'params', {account_id: String(accountId)});
+   ```
+
+   `setUserID` links the UserID to the ClientID inside Metrica (reports, visitor parameters). The
+   Logs API list of visit fields has no separate UserID field, so the account id is also sent as a
+   visit parameter: it arrives in `ym:s:parsedParamsKey1`/`ym:s:parsedParamsKey2`. The parameter
+   key is configurable (`account_param`, `account_id` by default).
+2. If the site cannot pass the account id, upload a clientID → account table in "Sources"
+   (CSV `client_id,account_id`) or via `POST /api/v1/source/metrica/client-ids`. The site gets the
+   ClientID with `ym(12345678, 'getClientID', cb)`.
+3. Get an OAuth token with the `metrika:read` scope and set in `.env`:
+
+   ```bash
+   CONNECTOR_METRICA_URL=https://api-metrika.yandex.net
+   CONNECTOR_METRICA_COUNTER=12345678
+   CONNECTOR_TOKEN_METRICA=<OAuth token>
+   ```
+
+No code changes: the same connector talks to the production Logs API (evaluate the period, create
+a log request, wait for `processed`, download the parts, `clean`). Metrica does not serve the
+current day, so the export runs up to yesterday, and the last three days are re-read because
+visits keep being completed for up to three days. Payment, deletion and pricing page patterns and
+goal ids are connector options (`pages`, `goals`). In Kubernetes tokens go to `secrets.connectors`,
+addresses to `connectors.*`, and `networkPolicy.connectorsEgress` opens `api-metrika.yandex.net:443`.
+
 ## Notifications
 
 Nobody watches a dashboard all day, so ChurnRadar speaks up on its own. But only about what
@@ -627,6 +718,12 @@ a signal strength from 0 to 1 and a sentence with concrete numbers, and each has
 | `short_commitment` | 15 | service | short billing period: hour, week, month |
 | `bonus_dependency` | 15 | customer | more bonus money than own money |
 | `withdraw_pressure` | 10 | customer | part of the balance can be withdrawn |
+| `cancel_page_views` | 45 | customer | per Yandex Metrica, opened the service deletion or cancellation page within 30 days |
+| `panel_absence` | 25 | customer | per Yandex Metrica, has not visited the control panel for over 14 days |
+| `web_activity_drop` | 20 | customer | per Yandex Metrica, visits this week are under half of a usual week |
+
+The last three features come from Yandex Metrica (see [Data sources](#data-sources-connectors)).
+If a customer has no visits, they stay silent and add nothing to the score.
 
 Reasons for a service are combined with noisy-OR:
 

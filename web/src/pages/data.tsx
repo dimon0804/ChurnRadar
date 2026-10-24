@@ -7,6 +7,8 @@ import { api, queryKeys } from '@/api/endpoints'
 import type { SnapshotAccepted, SourceSnapshot } from '@/api/types'
 import { MetricsHistory } from '@/components/charts/overview-charts'
 import { PageHeader } from '@/components/page-header'
+import { SimulatorMode } from '@/components/sources/simulator-mode'
+import { SourcesSection } from '@/components/sources/sources-section'
 import { ErrorState } from '@/components/states'
 import { ConfirmDialog } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
@@ -315,6 +317,7 @@ function SimulatorCard() {
                 className="w-28"
               />
             </label>
+            <SimulatorMode mode={s.mode} disabled={command.isPending} onChange={(mode) => command.mutate({ mode })} />
             {command.isError && <p className="text-[13px] text-risk-high">{errorMessage(command.error)}</p>}
             {s.running && status !== 'online' && (
               <p className="text-[13px] text-risk-medium">Нет живого соединения: изменения появятся после переподключения.</p>
@@ -359,12 +362,13 @@ function SimulatorCard() {
 export default function DataPage() {
   return (
     <>
-      <PageHeader title="Данные" description="Откуда панель берёт клиентов: загрузка снимка и демонстрационный поток изменений." />
+      <PageHeader title="Данные" description="Откуда панель берёт клиентов: снимок из файла, демонстрационный поток и источники, за которыми система ходит сама." />
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_400px]">
         <SnapshotCard />
         <SimulatorCard />
       </div>
       <MetricsHistory className="mt-4" />
+      <SourcesSection className="mt-6" />
     </>
   )
 }

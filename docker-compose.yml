@@ -227,6 +227,14 @@ services:
       <<: *app-env
       SEED_ON_START: "true"
       SEED_REFERENCE_TIME: ${SEED_REFERENCE_TIME:-2026-10-19T15:00:00Z}
+      # коннекторы (pull): по умолчанию демо-источники симулятора; свой биллинг и боевая Метрика —
+      # в .env (адрес, токен, номер счётчика), код менять не нужно
+      CONNECTOR_BILLING_URL: ${CONNECTOR_BILLING_URL:-http://simulator:8000/demo/billing/v1}
+      CONNECTOR_TOKEN_BILLING: ${CONNECTOR_TOKEN_BILLING:-demo-billing-token}
+      CONNECTOR_METRICA_URL: ${CONNECTOR_METRICA_URL:-http://simulator:8000/demo/metrica}
+      CONNECTOR_METRICA_COUNTER: ${CONNECTOR_METRICA_COUNTER:-100500}
+      CONNECTOR_TOKEN_METRICA: ${CONNECTOR_TOKEN_METRICA:-demo-metrica-token}
+      CONNECTOR_ALLOWED_HOSTS: ${CONNECTOR_ALLOWED_HOSTS:-}
     depends_on:
       core-migrate: {condition: service_completed_successfully}
       nats-init: {condition: service_completed_successfully}
@@ -259,6 +267,12 @@ services:
       <<: *app-env
       INGEST_URL: http://ingest:8000
       SNAPSHOT_REFERENCE: ${SNAPSHOT_REFERENCE:-null}
+      # push — сам шлёт изменения в ingest; pull — только отдаёт их демо-API биллинга
+      SIMULATOR_MODE: ${SIMULATOR_MODE:-push}
+      # демо-токены: настоящие токены сюда не попадают, они нужны только ingest
+      DEMO_BILLING_TOKEN: demo-billing-token
+      DEMO_METRICA_TOKEN: demo-metrica-token
+      DEMO_METRICA_COUNTER: "100500"
     depends_on:
       ingest: {condition: service_healthy}
     deploy:

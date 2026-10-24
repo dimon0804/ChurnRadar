@@ -11,6 +11,16 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+MODES = ("push", "pull")
+
+
+def _mode(raw: str) -> str:
+    mode = raw.strip().lower()
+    if mode not in MODES:
+        raise ValueError(f"SIMULATOR_MODE: ожидается push или pull, получено {raw!r}")
+    return mode
+
+
 @dataclass(frozen=True, slots=True)
 class Config:
     database_url: str
@@ -32,6 +42,12 @@ class Config:
     events_timeout_s: float
     events_retries: int
     events_retry_backoff_s: float
+    mode: str
+    demo_billing_token: str
+    demo_metrica_token: str
+    demo_metrica_counter: int
+    demo_metrica_processing_s: float
+    demo_metrica_max_accounts: int
 
     @classmethod
     def from_env(cls) -> Config:
@@ -58,4 +74,14 @@ class Config:
             events_timeout_s=float(os.getenv("INGEST_EVENTS_TIMEOUT_S", "30")),
             events_retries=max(0, int(os.getenv("INGEST_EVENTS_RETRIES", "2"))),
             events_retry_backoff_s=float(os.getenv("INGEST_EVENTS_RETRY_BACKOFF_S", "0.5")),
+            # push — сам шлёт изменения в ingest; pull — только отдаёт их демо-API биллинга,
+            # а забирает коннектор ingest
+            mode=_mode(os.getenv("SIMULATOR_MODE", "push")),
+            # токены демо-источников; пусто — без проверки (в compose заданы)
+            demo_billing_token=os.getenv("DEMO_BILLING_TOKEN", ""),
+            demo_metrica_token=os.getenv("DEMO_METRICA_TOKEN", ""),
+            demo_metrica_counter=int(os.getenv("DEMO_METRICA_COUNTER", "100500")),
+            demo_metrica_processing_s=float(os.getenv("DEMO_METRICA_PROCESSING_S", "1")),
+            # визиты генерируем первым N клиентам по id: на 200k клиентов выгрузка была бы гигабайтной
+            demo_metrica_max_accounts=int(os.getenv("DEMO_METRICA_MAX_ACCOUNTS", "20000")),
         )

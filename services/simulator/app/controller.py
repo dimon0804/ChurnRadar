@@ -15,6 +15,7 @@ import orjson
 from svckit.logs import get_logger
 
 from .config import Config
+from .billing_feed import BillingFeed
 from .generator import generate
 from .metrics import BATCHES, CHANGES, GENERATE_SECONDS, RUNNING, WORLD_RESETS
 from .stream import Batch, World
@@ -50,6 +51,8 @@ class Controller:
         self.state_loader = state_loader
         self.world = world or World(random.Random(), clock=utcnow_ms, demo_day_seconds=config.demo_day_seconds)
         self.running = False
+        self.mode = config.mode
+        self.feed = BillingFeed(self.world, utcnow_ms)
         self.interval_ms = config.interval_ms
         self.events_emitted = 0
         self.last_error: str | None = None
@@ -61,6 +64,7 @@ class Controller:
     def state(self) -> dict[str, Any]:
         return {
             "running": self.running,
+            "mode": self.mode,
             "interval_ms": self.interval_ms,
             "events_emitted": self.events_emitted,
             "last_error": self.last_error,
@@ -75,6 +79,18 @@ class Controller:
         if running and (self._task is None or self._task.done()):
             self._task = asyncio.create_task(self._loop())
         self._wake.set()
+
+    def set_mode(self, mode: str) -> None:
+        self.mode = mode
+
+    async def ensure_loaded(self) -> None:
+        """Мир для демо-API биллинга: если поток ещё не шёл, читаем текущие данные из БД."""
+        if self.world.loaded or self.state_loader is None:
+            return
+        async with self._lock:
+            if not self.world.loaded:
+                await self.state_loader(self.world)
+                self.feed.reset()
 
     def set_interval(self, interval_ms: int) -> None:
         self.interval_ms = interval_ms
@@ -109,10 +125,15 @@ class Controller:
         async with self._lock:
             if not self.world.loaded and self.state_loader is not None:
                 await self.state_loader(self.world)
+                self.feed.reset()
             batch = self.world.tick(self.config.max_changes)
             if batch.empty:
                 return 0
             payload = batch.to_payload()
+            if self.mode == "pull":
+                # сами никуда не шлём: изменения ждут коннектор ingest в демо-API биллинга
+                self.feed.record(batch)
+                return self._account(batch, payload)
             try:
                 await self._post_events(payload)
             except BaseException as exc:
@@ -122,6 +143,7 @@ class Controller:
                 log.warning("stream_batch_lost", error=repr(exc), changes=batch.kinds,
                             reload=self.state_loader is not None)
                 raise
+            self.feed.record(batch)
         return self._account(batch, payload)
 
     async def _post_events(self, payload: dict[str, Any]) -> None:
@@ -191,6 +213,7 @@ class Controller:
                 raise IngestError(response.status_code, f"ingest ответил {response.status_code}: {response.text[:300]}")
             max_tx = max((t["id"] for t in data["transactions"]), default=0)
             self.world.load(data["accounts"], data["services"], max_tx)
+            self.feed.reset()
             GENERATE_SECONDS.observe(time.perf_counter() - started)
             self.last_generate = {
                 "accounts": len(data["accounts"]),

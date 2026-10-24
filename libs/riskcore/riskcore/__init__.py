@@ -16,6 +16,7 @@ from .types import (
     StatusChange,
     Thresholds,
     Transaction,
+    WebActivity,
     WeightSetting,
 )
 
@@ -40,6 +41,7 @@ __all__ = [
     "StatusChange",
     "Thresholds",
     "Transaction",
+    "WebActivity",
     "WeightSetting",
     "apply_economics",
     "build_marketing",

@@ -94,3 +94,36 @@ tests:
             exp_annotations:
               summary: "Telegram-бот не получает сообщения"
               description: "Реплика alerts, которая ведёт опрос getUpdates, за 10 минут получила 10 ошибок. Бот не отвечает на команды и не привязывает новые чаты; уведомления в Telegram при этом продолжают уходить. Проверьте TELEGRAM_BOT_TOKEN и доступ к api.telegram.org."
+
+  # коннекторы: billing включён и молчит с нулевой секунды, metrica выключен, crm свежий
+  - interval: 1m
+    input_series:
+      - series: 'connector_last_success_timestamp{job="ingest",source="billing"}'
+        values: '0x30'
+      - series: 'connector_interval_seconds{job="ingest",source="billing"}'
+        values: '60x30'
+      - series: 'connector_enabled{job="ingest",source="billing"}'
+        values: '1x30'
+      - series: 'connector_last_success_timestamp{job="ingest",source="metrica"}'
+        values: '0x30'
+      - series: 'connector_interval_seconds{job="ingest",source="metrica"}'
+        values: '60x30'
+      - series: 'connector_enabled{job="ingest",source="metrica"}'
+        values: '0x30'
+      - series: 'connector_last_success_timestamp{job="ingest",source="crm"}'
+        values: '0+60x30'
+      - series: 'connector_interval_seconds{job="ingest",source="crm"}'
+        values: '60x30'
+      - series: 'connector_enabled{job="ingest",source="crm"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ConnectorStale
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: ConnectorStale
+        exp_alerts:
+          - exp_labels: {severity: warning, source: billing}
+            exp_annotations:
+              summary: "Коннектор billing не обновлял данные 20m 0s"
+              description: "Источник billing включён, но успешного запуска не было дольше трёх интервалов расписания (плюс 5 минут запаса). Данные из него в панели устаревают. Откройте «Данные» → «Источники»: там последняя ошибка и история запусков. Частые причины — источник недоступен, истёк токен (CONNECTOR_TOKEN_*), ни одна реплика ingest не стала исполнителем (connector_leader)."

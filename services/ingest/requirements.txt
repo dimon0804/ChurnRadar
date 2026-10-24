@@ -6,3 +6,4 @@ asyncpg==0.30.0
 nats-py==2.16.0
 prometheus-client==0.21.1
 structlog==24.4.0
+httpx==0.28.1

@@ -73,9 +73,9 @@ const step = (id: string) => {
 }
 
 describe('scenario', () => {
-  it('has 6 to 12 steps with unique ids and short speaker notes', () => {
+  it('has 6 to 14 steps with unique ids and short speaker notes', () => {
     expect(DEMO_STEPS.length).toBeGreaterThanOrEqual(6)
-    expect(DEMO_STEPS.length).toBeLessThanOrEqual(12)
+    expect(DEMO_STEPS.length).toBeLessThanOrEqual(14)
     expect(new Set(DEMO_STEPS.map((s) => s.id)).size).toBe(DEMO_STEPS.length)
     for (const s of DEMO_STEPS) {
       const sentences = s.say.split(/[.!?…](?=\s|$)/).filter((x) => x.trim()).length
@@ -87,7 +87,7 @@ describe('scenario', () => {
 
   it('locks changing steps for analysts only', () => {
     const locked = DEMO_STEPS.filter((s) => isLocked(s, false)).map((s) => s.id)
-    expect(locked).toEqual(['model', 'live'])
+    expect(locked).toEqual(['model', 'live', 'sources'])
     expect(DEMO_STEPS.filter((s) => isLocked(s, true))).toEqual([])
     for (const s of DEMO_STEPS) {
       for (const a of s.actions ?? []) {
@@ -140,6 +140,7 @@ describe('scenario', () => {
       'model',
       'quality',
       'live',
+      'sources',
       'ops',
       'roles',
     ])
@@ -204,6 +205,15 @@ describe('scenario', () => {
     await step('live').run?.(ctx)
     const targets = vi.mocked(ctx.spotlight).mock.calls[0]?.[0] ?? []
     expect(targets.some((t) => t.selector.includes('Уведомления'))).toBe(true)
+  })
+
+  it('opens the sources section on the data page without changing anything', async () => {
+    const { ctx, api } = makeCtx()
+    await step('sources').run?.(ctx)
+    expect(ctx.navigate).toHaveBeenCalledWith('/data')
+    const targets = vi.mocked(ctx.spotlight).mock.calls[0]?.[0] ?? []
+    expect(targets.map((t) => t.selector)).toEqual(['[data-testid="sources"]'])
+    expect(api.simulator).not.toHaveBeenCalled()
   })
 
   it('applies the prolong_wait weight after closing the what-if draft', async () => {

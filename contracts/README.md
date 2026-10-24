@@ -2,6 +2,12 @@
 
 - `openapi.yaml` — REST API всех сервисов (единая спецификация, её же отдаёт `/api/v1/docs`).
 - `events/` — JSON Schema событий шины NATS JetStream.
+- `billing-source.openapi.yaml` — контракт источника: HTTP API, которое реализует биллинг, чтобы
+  коннектор ingest сам забирал из него изменения (`updated_since` + `cursor`).
+
+Событие `churn.source.changed` публикует и коннектор Метрики, когда у клиентов поменялись агрегаты
+визитов: `kind = changes`, `counts` нулевые, `snapshot_id` начинается с `web_`, в `account_ids` —
+клиенты, которых надо пересчитать.
 
 | Subject | Кто публикует | Кто слушает | SSE-событие |
 |---|---|---|---|

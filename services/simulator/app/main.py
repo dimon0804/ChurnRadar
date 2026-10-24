@@ -1,17 +1,24 @@
-"""HTTP API симулятора: GET/PUT /api/v1/simulator, /healthz, /readyz, /metrics. Порт HTTP_PORT (8000)."""
+"""HTTP API симулятора: GET/PUT /api/v1/simulator, /healthz, /readyz, /metrics. Порт HTTP_PORT (8000).
+
+Демо-источники для коннекторов ingest (только внутри сети стенда, через шлюз не открыты):
+  /demo/billing/v1/{accounts|services|transactions} — HTTP API биллинга (contracts/billing-source.openapi.yaml);
+  /demo/metrica/management/v1/counter/{id}/...     — фейковый Logs API Яндекс Метрики.
+"""
 
 from __future__ import annotations
 
+import hmac
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from datetime import UTC, datetime
+from typing import Annotated, Any, Literal
 
 import asyncpg
 import httpx
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from svckit.auth import User, make_current_user
 from svckit.errors import ApiError
@@ -19,9 +26,11 @@ from svckit.health import install_probes
 from svckit.logs import configure_logging, get_logger
 from svckit.metrics import METRICS_TOKEN_MESSAGE, bearer_token_valid, render
 
+from .billing_feed import ENTITIES, BadCursor
 from .config import Config
 from .controller import Controller, IngestError
-from .source_db import make_loader
+from .metrica_fake import FakeMetrica, MetricaError
+from .source_db import make_anchor_loader, make_ids_loader, make_loader
 
 log = get_logger("simulator")
 
@@ -36,6 +45,7 @@ class SimulatorCommand(BaseModel):
     model_config = ConfigDict(extra="ignore")
     running: bool | None = None
     interval_ms: int | None = Field(default=None, ge=200, le=60_000)
+    mode: Literal["push", "pull"] | None = None
     generate: GenerateCommand | None = None
 
 
@@ -60,8 +70,25 @@ async def database_ready(dsn: str) -> bool:
         await conn.close()
 
 
-def create_app(config: Config | None = None, controller: Controller | None = None) -> FastAPI:
+def _token_ok(header: str | None, scheme: str, expected: str) -> bool:
+    if not expected:
+        return True
+    prefix = f"{scheme} "
+    if not header or not header.startswith(prefix):
+        return False
+    return hmac.compare_digest(header[len(prefix) :].strip().encode(), expected.encode())
+
+
+def create_app(
+    config: Config | None = None, controller: Controller | None = None, metrica: FakeMetrica | None = None
+) -> FastAPI:
     config = config or Config.from_env()
+    fake_metrica = metrica or FakeMetrica(
+        accounts=make_ids_loader(config.database_url, config.demo_metrica_max_accounts),
+        anchor=make_anchor_loader(config.database_url),
+        counter_id=config.demo_metrica_counter,
+        processing_s=config.demo_metrica_processing_s,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -121,6 +148,9 @@ def create_app(config: Config | None = None, controller: Controller | None = Non
         ctrl: Controller = request.app.state.controller
         if command.interval_ms is not None:
             ctrl.set_interval(command.interval_ms)
+        if command.mode is not None:
+            ctrl.set_mode(command.mode)
+            log.info("simulator_mode", user=user.name, mode=command.mode)
         if command.generate is not None:
             try:
                 await ctrl.generate_and_load(command.generate.accounts, command.generate.seed)
@@ -136,6 +166,102 @@ def create_app(config: Config | None = None, controller: Controller | None = Non
             await ctrl.set_running(command.running)
             log.info("simulator_toggled", user=user.name, running=command.running)
         return ctrl.state()
+
+    @app.get("/api/v1/simulator/metrica/client-ids.csv")
+    async def metrica_client_ids(user: User = Depends(current_user)) -> Response:
+        if "admin" not in user.roles:
+            raise ApiError(403, "forbidden", "Скачать соответствия может только администратор")
+        return PlainTextResponse(
+            await fake_metrica.client_ids_csv(), media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="metrica-client-ids.csv"'},
+        )
+
+    # --- демо-API биллинга (pull) ----------------------------------------------------------
+
+    @app.get("/demo/billing/v1/{entity}")
+    async def billing_page(
+        entity: str,
+        request: Request,
+        updated_since: datetime | None = None,
+        cursor: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=1000)] = 500,
+    ) -> Any:
+        if not _token_ok(request.headers.get("authorization"), "Bearer", config.demo_billing_token):
+            return _error(request, 401, "unauthorized", "Нужен заголовок Authorization: Bearer <токен>")
+        if entity not in ENTITIES:
+            return _error(request, 404, "not_found", f"Нет сущности {entity}: есть {', '.join(ENTITIES)}")
+        if updated_since is not None and updated_since.tzinfo is None:
+            return _error(request, 400, "bad_request", "updated_since — время с часовым поясом (RFC 3339)")
+        ctrl: Controller = request.app.state.controller
+        await ctrl.ensure_loaded()
+        try:
+            return ctrl.feed.page(
+                entity, updated_since=updated_since.astimezone(UTC) if updated_since else None,
+                cursor=cursor, limit=limit,
+            )
+        except BadCursor as exc:
+            return _error(request, 400, "bad_request", str(exc))
+
+    # --- фейковый Logs API Яндекс Метрики --------------------------------------------------
+
+    def metrica_denied(request: Request) -> JSONResponse | None:
+        if _token_ok(request.headers.get("authorization"), "OAuth", config.demo_metrica_token):
+            return None
+        return JSONResponse(MetricaError(403, "invalid_token", "Неверный OAuth-токен").to_api(), status_code=403)
+
+    def metrica_error(exc: MetricaError) -> JSONResponse:
+        return JSONResponse(exc.to_api(), status_code=exc.status)
+
+    base = "/demo/metrica/management/v1/counter/{counter_id}"
+
+    @app.get(base + "/logrequests/evaluate")
+    async def metrica_evaluate(
+        counter_id: int, request: Request, date1: str = "", date2: str = "", fields: str = "", source: str = ""
+    ) -> Any:
+        if (denied := metrica_denied(request)) is not None:
+            return denied
+        try:
+            return fake_metrica.evaluate(counter_id, date1, date2, fields, source)
+        except MetricaError as exc:
+            return metrica_error(exc)
+
+    @app.post(base + "/logrequests")
+    async def metrica_create(
+        counter_id: int, request: Request, date1: str = "", date2: str = "", fields: str = "", source: str = ""
+    ) -> Any:
+        if (denied := metrica_denied(request)) is not None:
+            return denied
+        try:
+            return fake_metrica.create(counter_id, date1, date2, fields, source)
+        except MetricaError as exc:
+            return metrica_error(exc)
+
+    @app.get(base + "/logrequest/{request_id}")
+    async def metrica_status(counter_id: int, request_id: int, request: Request) -> Any:
+        if (denied := metrica_denied(request)) is not None:
+            return denied
+        try:
+            return await fake_metrica.status(counter_id, request_id)
+        except MetricaError as exc:
+            return metrica_error(exc)
+
+    @app.get(base + "/logrequest/{request_id}/part/{part}/download")
+    async def metrica_download(counter_id: int, request_id: int, part: int, request: Request) -> Any:
+        if (denied := metrica_denied(request)) is not None:
+            return denied
+        try:
+            return PlainTextResponse(fake_metrica.download(counter_id, request_id, part))
+        except MetricaError as exc:
+            return metrica_error(exc)
+
+    @app.post(base + "/logrequest/{request_id}/clean")
+    async def metrica_clean(counter_id: int, request_id: int, request: Request) -> Any:
+        if (denied := metrica_denied(request)) is not None:
+            return denied
+        try:
+            return fake_metrica.clean(counter_id, request_id)
+        except MetricaError as exc:
+            return metrica_error(exc)
 
     return app
 

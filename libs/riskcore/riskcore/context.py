@@ -17,7 +17,7 @@ from .money import (
     replenishment_rate,
     shortfall_moment,
 )
-from .types import Account, Service, Transaction
+from .types import Account, Service, Transaction, WebActivity
 
 SECONDS_PER_DAY = 86_400
 
@@ -54,6 +54,8 @@ class AccountContext:
     funds: Funds
     replenishment_rate: float = 0.0
     payment_capacity: float = float("inf")
+    # визиты на сайт из Яндекс Метрики; None — данных по клиенту нет, признаки сайта молчат
+    web: WebActivity | None = None
 
     @property
     def horizon(self) -> int:
@@ -117,6 +119,7 @@ def build_account_context(
     transactions: Iterable[Transaction],
     as_of: datetime,
     horizon_days: int,
+    web: WebActivity | None = None,
 ) -> AccountContext:
     all_services = tuple(sorted(services, key=lambda s: s.id))
     transactions = tuple(transactions)
@@ -143,6 +146,7 @@ def build_account_context(
         funds=funds,
         replenishment_rate=rate,
         payment_capacity=payment_capacity(spendable, rate, horizon_days),
+        web=web,
     )
 
 

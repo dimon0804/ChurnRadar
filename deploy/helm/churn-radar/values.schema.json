@@ -146,7 +146,25 @@
             "smtpPassword": { "type": "string" },
             "telegramChatId": { "type": ["string", "integer"] }
           }
+        },
+        "connectors": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "billingToken": { "type": "string" },
+            "metricaToken": { "type": "string" }
+          }
         }
+      }
+    },
+    "connectors": {
+      "type": "object",
+      "properties": {
+        "demo": { "type": "boolean" },
+        "billingUrl": { "type": "string" },
+        "metricaUrl": { "type": "string" },
+        "metricaCounter": { "type": ["string", "integer"] },
+        "allowedHosts": { "type": "string" }
       }
     },
     "commonEnv": {
@@ -301,7 +319,8 @@
         "prometheus": { "type": "object" },
         "dns": { "type": "object" },
         "extraAppEgress": { "type": "array" },
-        "alertsEgress": { "type": "array" }
+        "alertsEgress": { "type": "array" },
+        "connectorsEgress": { "type": "array" }
       }
     },
     "serviceMonitor": {

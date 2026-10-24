@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 from bisect import bisect_right
 from collections.abc import AsyncIterator, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import asyncpg
-from riskcore.types import Account, Service, StatusChange, Transaction
+from riskcore.types import Account, Service, StatusChange, Transaction, WebActivity
 from svckit import db
 from svckit.outbox import add_event
 
@@ -52,6 +52,8 @@ class SourceData:
     accounts: list[Account]
     services: list[Service]
     transactions: list[Transaction]
+    # агрегаты визитов из Яндекс Метрики по id клиента; у кого строки нет, признаки сайта молчат
+    web: dict[int, WebActivity] = field(default_factory=dict)
 
 
 async def create_pool(
@@ -125,6 +127,10 @@ _TX_SQL = (
     "SELECT t.id, t.service_id, t.amount, t.status, t.type, t.created_at, t.performed_at "
     "FROM source.transactions t"
 )
+_WEB_SQL = (
+    "SELECT account_id, last_visit_at, first_visit_at, visits_7d, visits_30d, payment_visits_30d, "
+    "cancel_visits_30d, pricing_visits_30d, last_cancel_visit_at FROM source.web_activity"
+)
 
 
 def _accounts(rows: Iterable[Sequence[Any]]) -> list[Account]:
@@ -139,11 +145,16 @@ def _transactions(rows: Iterable[Sequence[Any]]) -> list[Transaction]:
     return [Transaction(r[0], r[1], r[2], r[3], r[4], r[5], r[6]) for r in rows]
 
 
+def _web(rows: Iterable[Sequence[Any]]) -> dict[int, WebActivity]:
+    return {r[0]: WebActivity(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8]) for r in rows}
+
+
 async def load_source(conn: asyncpg.Connection, account_ids: Sequence[int] | None = None) -> SourceData:
     if account_ids is None:
         accounts = _accounts(await conn.fetch(_ACCOUNTS_SQL))
         services = _services(await conn.fetch(_SERVICES_SQL))
         transactions = _transactions(await conn.fetch(_TX_SQL))
+        web = _web(await conn.fetch(_WEB_SQL))
     else:
         ids = list(account_ids)
         accounts = _accounts(await conn.fetch(_ACCOUNTS_SQL + " WHERE id = ANY($1::bigint[])", ids))
@@ -154,7 +165,8 @@ async def load_source(conn: asyncpg.Connection, account_ids: Sequence[int] | Non
                 ids,
             )
         )
-    return SourceData(accounts, services, transactions)
+        web = _web(await conn.fetch(_WEB_SQL + " WHERE account_id = ANY($1::bigint[])", ids))
+    return SourceData(accounts, services, transactions, web)
 
 
 class _OrderedStream:
@@ -197,9 +209,12 @@ class SourceRows:
     accounts: list[tuple[Any, ...]]
     services: list[tuple[Any, ...]]
     transactions: list[tuple[Any, ...]]
+    web: list[tuple[Any, ...]] = field(default_factory=list)
 
     def to_data(self) -> SourceData:
-        return SourceData(_accounts(self.accounts), _services(self.services), _transactions(self.transactions))
+        return SourceData(
+            _accounts(self.accounts), _services(self.services), _transactions(self.transactions), _web(self.web)
+        )
 
     def service_objects(self) -> list[Service]:
         return _services(self.services)
@@ -221,6 +236,7 @@ async def iter_source_chunks(conn: asyncpg.Connection, chunk_size: int) -> Async
         7,
         16 * chunk_size,
     )
+    web = _OrderedStream(await conn.cursor(_WEB_SQL + " ORDER BY account_id"), 0, chunk_size)
     while rows := await accounts.fetch(chunk_size):
         last = rows[-1][0]
         # в транзакциях последним идёт owner_id для разбиения на части; в Transaction он не нужен
@@ -228,6 +244,7 @@ async def iter_source_chunks(conn: asyncpg.Connection, chunk_size: int) -> Async
             [tuple(r) for r in rows],
             [tuple(r) for r in await services.take_until(last)],
             [tuple(r)[:7] for r in await transactions.take_until(last)],
+            [tuple(r) for r in await web.take_until(last)],
         )
 
 

@@ -56,6 +56,9 @@ class AccountContext:
     payment_capacity: float = float("inf")
     # визиты на сайт из Яндекс Метрики; None — данных по клиенту нет, признаки сайта молчат
     web: WebActivity | None = None
+    # Собираемая выручка всех живых услуг за 30 дней (MRR клиента), евроценты: от неё
+    # ограничиваем размер промокодов и бонусов в рекомендациях.
+    monthly_revenue: float = 0.0
 
     @property
     def horizon(self) -> int:
@@ -72,6 +75,17 @@ class AccountContext:
     @property
     def upcoming_renewals_cost(self) -> int:
         return self.funds.upcoming_renewals_cost
+
+    @property
+    def unlocked_bonus(self) -> int:
+        return self.account.bonus_balance if self.account.bonus_state == "unlocked" else 0
+
+    @property
+    def funds_text(self) -> str:
+        """«€49,47 (вкл. бонусы €6,15)»: те же деньги, что видит маркетолог в карточке."""
+        from .text import format_funds
+
+        return format_funds(self.account.balance, self.unlocked_bonus)
 
     def plan_for(self, service_id: int) -> RenewalPlan | None:
         return next((plan for plan in self.renewal_plans if plan.service_id == service_id), None)
@@ -135,6 +149,13 @@ def build_account_context(
         runs_out_at=funds_run_out(live, as_of, spendable, horizon_days, shortfall_at),
         has_renewals=any(s.auto_prolong and s.price > 0 for s in live),
     )
+    capacity = payment_capacity(spendable, rate, horizon_days)
+    collectible = sum(
+        collectible_revenue(
+            horizon_revenue(monthly_price(s.price, s.payment_term), horizon_days), capacity, s.price
+        )
+        for s in live
+    )
     return AccountContext(
         account=account,
         live_services=live,
@@ -145,8 +166,9 @@ def build_account_context(
         renewal_plans=plans,
         funds=funds,
         replenishment_rate=rate,
-        payment_capacity=payment_capacity(spendable, rate, horizon_days),
+        payment_capacity=capacity,
         web=web,
+        monthly_revenue=collectible * 30 / horizon_days,
     )
 
 

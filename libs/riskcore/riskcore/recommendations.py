@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from .base import Feature, Recommendation, Signal
+from .money import format_eur, offer_size
 
 if TYPE_CHECKING:
     from .scoring import FeatureTotal
@@ -37,6 +38,27 @@ def action_for(feature: Feature[Any], signal: Signal) -> Recommendation:
     )
 
 
+def sized_signal(signal: Signal, saving: float) -> Signal:
+    """Сигнал с размером промокода под денежный эффект действия.
+
+    Признак кладёт в факты, сколько хотел бы предложить (offer_wanted) и MRR клиента (mrr).
+    Здесь размер ограничивается месячной выручкой и пятой частью сбережения, а в факты
+    дописываются offer и offer_saving для текста «промокод €X сохранит ожидаемо €Y».
+    """
+    facts = signal.facts
+    if "offer_wanted" not in facts:
+        return signal
+    size = offer_size(float(facts["offer_wanted"]), float(facts.get("mrr") or 0), saving)
+    return replace(
+        signal,
+        facts={
+            **facts,
+            "offer": format_eur(size) if size > 0 else "",
+            "offer_saving": format_eur(saving) if saving > 0 else "",
+        },
+    )
+
+
 def build_recommendations(
     totals: Sequence[FeatureTotal], unknown_code: str | None = None
 ) -> list[Recommendation]:
@@ -60,7 +82,7 @@ def build_recommendations(
         if len(result) >= RECOMMENDATIONS_LIMIT:
             break
         action = replace(
-            action_for(total.feature, total.top_hit.signal),
+            action_for(total.feature, sized_signal(total.top_hit.signal, total.saving)),
             service_id=total.service_id,
             expected_saving=round(total.saving),
         )

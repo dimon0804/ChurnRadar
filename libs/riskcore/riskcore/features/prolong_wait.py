@@ -3,7 +3,7 @@ from __future__ import annotations
 from ..base import Recommendation, ServiceFeature, Signal
 from ..context import SECONDS_PER_DAY, ServiceContext
 from ..registry import register
-from ..text import format_days, format_eur
+from ..text import format_days, format_eur, offer_amount
 from ..types import PROLONG_WAIT_GRACE
 
 BASE_STRENGTH = 0.6
@@ -38,7 +38,7 @@ class ProlongWait(ServiceFeature):
             else "срок ожидания вышел, удалить могут в любой момент"
         )
         if shortfall:
-            money = f"на балансе не хватает {format_eur(shortfall)}"
+            money = f"на балансе {ctx.account_ctx.funds_text}, не хватает {format_eur(shortfall)}"
         elif service.auto_prolong:
             money = "деньги на балансе есть, но автосписание не прошло"
         else:
@@ -51,7 +51,9 @@ class ProlongWait(ServiceFeature):
                 "service": service.name,
                 "days_left": format_days(days_left) if days_left > 0 else "",
                 "shortfall": format_eur(shortfall) if shortfall else "",
-                "spendable": format_eur(ctx.funds.spendable),
+                "spendable": ctx.account_ctx.funds_text,
+                "offer_wanted": str(shortfall),
+                "mrr": str(round(ctx.account_ctx.monthly_revenue)),
             },
         )
 
@@ -60,7 +62,19 @@ class ProlongWait(ServiceFeature):
         when = f"удалят через {days_left}" if days_left else "могут удалить в любой момент"
         shortfall = signal.facts.get("shortfall")
         if shortfall:
-            detail = f"Не хватает {shortfall}: предложить промокод на эту сумму или оплату частями."
+            offer, saving = offer_amount(signal.facts)
+            if not offer:
+                detail = (
+                    f"Не хватает {shortfall}: предложить оплату частями. "
+                    "Промокод здесь дороже, чем он сбережёт."
+                )
+            elif saving:
+                detail = (
+                    f"Не хватает {shortfall}: предложить промокод {offer} или оплату частями. "
+                    f"Промокод {offer} сохранит ожидаемо {saving}."
+                )
+            else:
+                detail = f"Не хватает {shortfall}: предложить промокод {offer} или оплату частями."
         else:
             detail = (
                 f"На балансе {signal.facts.get('spendable', '')}, но оплата не прошла: "
@@ -68,6 +82,6 @@ class ProlongWait(ServiceFeature):
             )
         return Recommendation(
             code=self.code,
-            title=f"Срочно написать: {signal.facts['service']} {when}",
+            title=f"Написать: {signal.facts['service']} {when}",
             detail=detail,
         )

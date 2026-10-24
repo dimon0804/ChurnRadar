@@ -3,7 +3,7 @@ from __future__ import annotations
 from ..base import Recommendation, ServiceFeature, Signal
 from ..context import ServiceContext
 from ..registry import register
-from ..text import format_date, format_in
+from ..text import OVERDUE, format_date, format_in
 
 
 @register
@@ -39,11 +39,14 @@ class AutoprolongOffExpiring(ServiceFeature):
         return Signal(value, explanation, {"service": service.name, "date": date, "ended": ended})
 
     def recommend(self, signal: Signal) -> Recommendation:
+        service, date = signal.facts["service"], signal.facts["date"]
+        if signal.facts.get("ended") == "закончилась":
+            # дату в прошлом в совет «сделать до» не ставим: срок уже наступил
+            title = f"Включить автопродление: {OVERDUE}, {service} не оплачена с {date}"
+        else:
+            title = f"Включить автопродление: напомнить письмом, что {service} заканчивается {date}"
         return Recommendation(
             code=self.code,
-            title=(
-                f"Включить автопродление: напомнить письмом, что {signal.facts['service']} "
-                f"{signal.facts.get('ended', 'заканчивается')} {signal.facts['date']}"
-            ),
+            title=title,
             detail="Предложить включить автопродление и дать за это небольшой бонус на баланс.",
         )

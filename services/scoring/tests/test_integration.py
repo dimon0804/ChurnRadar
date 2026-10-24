@@ -105,6 +105,47 @@ async def test_incremental_updates_and_removes(db_pool, sample_data) -> None:  #
     assert summary["marketing"]["mrr"] == summary["monthly_revenue_total"]
 
 
+async def test_summary_history_points(db_pool, sample_data) -> None:  # type: ignore[no-untyped-def]
+    """Полный пересчёт пишет точку истории всегда, частичный сразу после него — нет (пауза)."""
+    async with db_pool.acquire() as conn:
+        await load_snapshot(conn, sample_data, REFERENCE)
+    scorer = Scorer(db_pool, lock_key=LOCK_KEY)
+    await scorer.run(full=True)
+    async with db_pool.acquire() as conn:
+        await conn.execute("UPDATE source.accounts SET balance = balance + 1 WHERE id = 1")
+    await scorer.run(full=False, account_ids=[1])
+    await scorer.run(full=True)
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM scoring.summary_history ORDER BY id")
+        summary = json.loads(await conn.fetchval("SELECT data FROM scoring.summary"))
+        # колонки фильтра по причине Postgres считает сам из reasons и detail
+        codes = await conn.fetchrow(
+            "SELECT main_reason, reason_codes FROM scoring.customer_scores WHERE main_reason IS NOT NULL LIMIT 1"
+        )
+    assert [r["full_run"] for r in rows] == [True, True]
+    last = rows[-1]
+    assert last["customers_total"] == summary["customers_total"] == 10
+    assert last["expected_loss"] == summary["expected_loss"]
+    assert last["high"] == summary["by_level"]["high"]
+    assert codes is not None and codes["main_reason"] in json.loads(codes["reason_codes"])
+
+
+async def test_summary_history_is_thinned(db_pool) -> None:  # type: ignore[no-untyped-def]
+    from app import repository as repo
+
+    summary = {"customers_total": 1, "by_level": {"high": 1}, "expected_loss": 5}
+    async with db_pool.acquire() as conn:
+        for i in range(12):
+            await repo.record_history(conn, summary, 1, REFERENCE.replace(minute=i), full=True, limit=10)
+        rows = await conn.fetch("SELECT scored_at FROM scoring.summary_history ORDER BY scored_at")
+        # частичный пересчёт в пределах паузы точку не пишет
+        assert not await repo.record_history(conn, summary, 1, REFERENCE.replace(minute=11, second=5), full=False)
+    minutes = [r["scored_at"].minute for r in rows]
+    assert len(minutes) <= 10
+    assert minutes[0] == 0 and minutes[-1] == 11  # первая и свежая точки на месте
+    assert minutes == sorted(minutes)
+
+
 async def test_stale_cache_falls_back_to_full(db_pool, sample_data) -> None:  # type: ignore[no-untyped-def]
     async with db_pool.acquire() as conn:
         await load_snapshot(conn, sample_data, REFERENCE)

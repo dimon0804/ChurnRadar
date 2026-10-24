@@ -330,7 +330,12 @@ async def copy_scores(conn: asyncpg.Connection, records: Sequence[tuple[Any, ...
 
 
 async def save_summary(
-    conn: asyncpg.Connection, summary: dict[str, Any], model_version: int, scored_at: datetime
+    conn: asyncpg.Connection,
+    summary: dict[str, Any],
+    model_version: int,
+    scored_at: datetime,
+    *,
+    full: bool = False,
 ) -> None:
     await conn.execute(
         "INSERT INTO scoring.summary (id, data, model_version, scored_at) VALUES (1, $1::jsonb, $2, $3) "
@@ -340,6 +345,70 @@ async def save_summary(
         model_version,
         scored_at,
     )
+    await record_history(conn, summary, model_version, scored_at, full=full)
+
+
+# История сводки для графика «как менялись цифры». Полный пересчёт пишет точку всегда,
+# частичные (поток изменений идёт каждые пару секунд) — не чаще раза в HISTORY_MIN_GAP.
+HISTORY_LIMIT = 500
+HISTORY_MIN_GAP = timedelta(seconds=10)
+
+_HISTORY_INSERT = (
+    "INSERT INTO scoring.summary_history (scored_at, model_version, full_run, customers_total, high, medium, "
+    "low, unknown, services_at_risk, expected_loss, exposure, monthly_revenue_total, revenue_at_risk_share) "
+    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"
+)
+# Старая половина истории прореживается через одну точку; самая первая остаётся.
+_HISTORY_THIN = """
+WITH ranked AS (
+    SELECT id, row_number() OVER (ORDER BY scored_at, id) AS n FROM scoring.summary_history
+)
+DELETE FROM scoring.summary_history h USING ranked r
+WHERE h.id = r.id AND r.n <= $1 AND r.n % 2 = 0
+"""
+
+
+def history_row(summary: dict[str, Any], model_version: int, scored_at: datetime, full: bool) -> tuple[Any, ...]:
+    by_level = summary.get("by_level") or {}
+    return (
+        scored_at,
+        model_version,
+        full,
+        int(summary.get("customers_total") or 0),
+        int(by_level.get("high") or 0),
+        int(by_level.get("medium") or 0),
+        int(by_level.get("low") or 0),
+        int(by_level.get("unknown") or 0),
+        int(summary.get("services_at_risk") or 0),
+        int(summary.get("expected_loss") or 0),
+        int(summary.get("exposure") or 0),
+        int(summary.get("monthly_revenue_total") or 0),
+        float(summary.get("revenue_at_risk_share") or 0.0),
+    )
+
+
+async def record_history(
+    conn: asyncpg.Connection,
+    summary: dict[str, Any],
+    model_version: int,
+    scored_at: datetime,
+    *,
+    full: bool,
+    limit: int = HISTORY_LIMIT,
+    min_gap: timedelta = HISTORY_MIN_GAP,
+) -> bool:
+    """Точка истории сводки. Возвращает, записана ли она (частичный пересчёт мог попасть в паузу)."""
+    if not full:
+        last = await conn.fetchrow(
+            "SELECT scored_at, model_version FROM scoring.summary_history ORDER BY scored_at DESC, id DESC LIMIT 1"
+        )
+        if last is not None and last["model_version"] == model_version and scored_at - last["scored_at"] < min_gap:
+            return False
+    await conn.execute(_HISTORY_INSERT, *history_row(summary, model_version, scored_at, full))
+    total = await conn.fetchval("SELECT count(*) FROM scoring.summary_history")
+    if total > limit:
+        await conn.execute(_HISTORY_THIN, total // 2)
+    return True
 
 
 async def write_results(
@@ -370,7 +439,7 @@ async def write_results(
                 await conn.execute(
                     "DELETE FROM scoring.customer_scores WHERE customer_id = ANY($1::bigint[])", list(removed_ids)
                 )
-        await save_summary(conn, summary, model_version, scored_at)
+        await save_summary(conn, summary, model_version, scored_at, full=full)
         await mark_processed(conn, event_ids)
         if scores_event is not None:
             await enqueue_scores_updated(conn, scores_event)

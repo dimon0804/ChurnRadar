@@ -488,8 +488,14 @@ async def export_rows(
     levels: list[str],
     search: str | None,
     worklist: bool,
+    reason: str | None = None,
+    reason_scope: str = "any",
+    score_min: float | None = None,
+    score_max: float | None = None,
 ) -> list[list[str]]:
-    where, args = where_clause(levels, search)
+    where, args = where_clause(
+        levels, search, reason=reason, reason_scope=reason_scope, score_min=score_min, score_max=score_max
+    )
     outer = ""
     if worklist:
         outer = f" WHERE {CANDIDATE_SQL} AND NOT COALESCE(({HIDDEN_SQL}), false)"

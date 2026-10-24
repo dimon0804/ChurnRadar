@@ -12,7 +12,7 @@ import asyncio
 import contextlib
 import time
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 import asyncpg
 import structlog
@@ -21,7 +21,7 @@ from svckit.errors import ApiError
 from svckit.mail import Mail, MailConfig, send_mail
 
 from app import actions, mail_templates
-from app.queries import BIGINT_MAX, iso_z
+from app.queries import BIGINT_MAX, iso_z, where_clause
 
 log = structlog.get_logger()
 
@@ -48,20 +48,23 @@ class EmailSend(BaseModel):
 
 
 class CampaignRequest(BaseModel):
-    """Кому писать: выбранным (customer_ids) или всей очереди (worklist). Ровно что-то одно."""
+    """Кому писать: выбранным (customer_ids), всей очереди (worklist) или всем с причиной риска
+    (reason, reason_scope как у фильтра списка клиентов). Ровно что-то одно."""
 
     model_config = ConfigDict(extra="forbid")
     customer_ids: list[int] | None = Field(
         default=None, min_length=1, max_length=MAX_CAMPAIGN
     )
     worklist: bool = False
+    reason: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    reason_scope: Literal["main", "any"] = "any"
     template_code: str | None = Field(default=None, max_length=64)
     skip_days: int = Field(default=7, ge=0, le=90)
 
     @model_validator(mode="after")
     def _who(self) -> CampaignRequest:
-        if bool(self.customer_ids) == self.worklist:
-            raise ValueError("Укажите customer_ids или worklist=true (что-то одно)")
+        if sum((bool(self.customer_ids), self.worklist, bool(self.reason))) != 1:
+            raise ValueError("Укажите customer_ids, worklist=true или reason (что-то одно)")
         return self
 
 
@@ -341,6 +344,15 @@ async def _recipients(
     """(id получателей по порядку, сколько id не нашлось)."""
     if req.worklist:
         return await actions.queue_ids(conn, MAX_CAMPAIGN), 0
+    if req.reason:
+        # самые дорогие первыми: если клиентов больше MAX_CAMPAIGN, напишем тем, кто важнее
+        where, args = where_clause([], None, reason=req.reason, reason_scope=req.reason_scope)
+        rows = await conn.fetch(
+            f"SELECT customer_id FROM scoring.customer_scores{where} "
+            f"ORDER BY expected_loss DESC, customer_id LIMIT {MAX_CAMPAIGN}",
+            *args,
+        )
+        return [r["customer_id"] for r in rows], 0
     ids = list(dict.fromkeys(i for i in req.customer_ids or [] if 0 < i <= BIGINT_MAX))
     found = await conn.fetch(
         "SELECT customer_id FROM scoring.customer_scores WHERE customer_id = ANY($1::bigint[])",

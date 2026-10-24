@@ -12,7 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { campaignSummary, TEMPLATE_TITLE } from '@/lib/contact-today'
 import { countLabel } from '@/lib/format'
 
-export type CampaignTarget = { worklist: true } | { customer_ids: number[] }
+export type CampaignTarget = { worklist: true } | { customer_ids: number[] } | { reason: string; reason_scope: 'main' | 'any' }
 
 const AUTO = 'auto'
 const SKIP_OPTIONS = [
@@ -69,13 +69,20 @@ export function CampaignDialog({
   onStarted?: () => void
 }) {
   const queryClient = useQueryClient()
-  const [template, setTemplate] = useState(AUTO)
+  // письмо всем с причиной: по умолчанию шаблон этой причины, если он есть (иначе — по главной причине)
+  const reasonTemplate = 'reason' in target && target.reason in TEMPLATE_TITLE ? target.reason : AUTO
+  const [template, setTemplate] = useState(reasonTemplate)
   const [skipDays, setSkipDays] = useState('7')
   const [campaignId, setCampaignId] = useState<number | null>(null)
   const templates = useQuery({ queryKey: queryKeys.mailTemplates, queryFn: ({ signal }) => api.mailTemplates(signal) })
 
   const request: CampaignRequest = {
-    ...('worklist' in target ? { worklist: true } : { worklist: false, customer_ids: target.customer_ids }),
+    ...('worklist' in target
+      ? { worklist: true }
+      : 'reason' in target
+        ? { worklist: false, reason: target.reason }
+        : { worklist: false, customer_ids: target.customer_ids }),
+    reason_scope: 'reason' in target ? target.reason_scope : 'any',
     template_code: template === AUTO ? null : template,
     skip_days: Number(skipDays),
   }

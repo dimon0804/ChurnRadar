@@ -12,13 +12,13 @@ from nats.js.errors import NotFoundError
 
 from app.config import settings
 from app.main import create_app
-from tests.conftest import ADMIN, ANALYST
+from tests.conftest import ADMIN, ANALYST, MARKETER
 from tests.fake_smtp import FakeSMTP
 from tests.test_integration import DB_URL, NATS_URL, insert_scores, reset_database
 
 pytestmark = pytest.mark.integration
 
-MANAGER = {**ANALYST, "X-User-Email": "anna@corp.test"}
+MANAGER = {**MARKETER, "X-User-Email": "anna@corp.test"}
 
 
 @pytest.fixture
@@ -142,7 +142,7 @@ async def test_send_one_email_marks_customer(env):
     )
     entry = body["state"]["history"][0]
     assert entry["status"] == "emailed" and entry["note"] == "service-1 ждёт оплаты"
-    assert entry["changed_by"] == "analyst" and entry["email_id"] == body["email"]["id"]
+    assert entry["changed_by"] == "marketer" and entry["email_id"] == body["email"]["id"]
 
     [msg] = smtp.messages
     assert msg["To"] == "anna@example.test" and msg["Reply-To"] == "anna@corp.test"
@@ -166,7 +166,7 @@ async def test_send_one_email_marks_customer(env):
     first = queue["items"][0]
     assert first["id"] == 1 and first["action"]["return_reason"] == "no_reply"
     assert (
-        await client.post("/api/v1/customers/1/email/draft", json={}, headers=ANALYST)
+        await client.post("/api/v1/customers/1/email/draft", json={}, headers=MARKETER)
     ).json()["last_sent_at"]
 
     # SMTP не отвечает — 502, письмо помечено как неотправленное, статус клиента не меняется
@@ -174,7 +174,7 @@ async def test_send_one_email_marks_customer(env):
         host="127.0.0.1", port=1, timeout_s=2
     )
     failed = await client.post(
-        "/api/v1/customers/3/email", json={"subject": "s", "text": "t"}, headers=ANALYST
+        "/api/v1/customers/3/email", json={"subject": "s", "text": "t"}, headers=MARKETER
     )
     assert failed.status_code == 502 and failed.json()["error"]["code"] == "mail_failed"
     rows = await _sql(
@@ -201,7 +201,7 @@ async def test_campaign_in_background_with_dedup_and_stats(env):
     client, _, smtp = env
     # клиенту 7 недавно писали — его рассылка пропустит
     one = await client.post(
-        "/api/v1/customers/7/email", json={"subject": "s", "text": "t"}, headers=ANALYST
+        "/api/v1/customers/7/email", json={"subject": "s", "text": "t"}, headers=MARKETER
     )
     assert one.status_code == 200
 
@@ -209,7 +209,7 @@ async def test_campaign_in_background_with_dedup_and_stats(env):
         await client.post(
             "/api/v1/mail/campaigns/preview",
             json={"customer_ids": [7, 3, 999]},
-            headers=ANALYST,
+            headers=MARKETER,
         )
     ).json()
     assert (
@@ -224,7 +224,7 @@ async def test_campaign_in_background_with_dedup_and_stats(env):
 
     queue = (
         await client.post(
-            "/api/v1/mail/campaigns/preview", json={"worklist": True}, headers=ANALYST
+            "/api/v1/mail/campaigns/preview", json={"worklist": True}, headers=MARKETER
         )
     ).json()
     assert queue["to_send"] == 4 and queue["templates"] == [
@@ -232,7 +232,7 @@ async def test_campaign_in_background_with_dedup_and_stats(env):
     ]  # 1, 4, 3, 5
 
     created = await client.post(
-        "/api/v1/mail/campaigns", json={"worklist": True}, headers=ANALYST
+        "/api/v1/mail/campaigns", json={"worklist": True}, headers=MARKETER
     )
     assert created.status_code == 202, created.text
     done = await _wait_done(client, created.json()["id"])
@@ -240,7 +240,7 @@ async def test_campaign_in_background_with_dedup_and_stats(env):
         done["sent"] == 4
         and done["failed"] == 0
         and done["queued"] == 0
-        and done["created_by"] == "analyst"
+        and done["created_by"] == "marketer"
     )
     assert sorted(m["To"] for m in smtp.messages) == sorted(
         [
@@ -255,7 +255,7 @@ async def test_campaign_in_background_with_dedup_and_stats(env):
     assert queue["items"] == [] and queue["marked_total"] == 5
 
     again = await client.post(
-        "/api/v1/mail/campaigns", json={"customer_ids": [1, 3]}, headers=ANALYST
+        "/api/v1/mail/campaigns", json={"customer_ids": [1, 3]}, headers=MARKETER
     )
     assert (
         again.status_code == 422 and again.json()["error"]["code"] == "nothing_to_send"
@@ -263,7 +263,7 @@ async def test_campaign_in_background_with_dedup_and_stats(env):
     forced = await client.post(
         "/api/v1/mail/campaigns",
         json={"customer_ids": [1], "skip_days": 0},
-        headers=ANALYST,
+        headers=MARKETER,
     )
     assert forced.status_code == 202
     await _wait_done(client, forced.json()["id"])

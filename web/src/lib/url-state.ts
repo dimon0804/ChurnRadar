@@ -5,6 +5,9 @@ export const SORT_FIELDS = ['id', 'email', 'balance', 'total_replenished', 'risk
 export const RISK_LEVELS = ['high', 'medium', 'low', 'unknown'] as const satisfies readonly RiskLevel[]
 export const PAGE_SIZES = [10, 25, 50, 100] as const
 
+export type ReasonScope = 'main' | 'any'
+export type CustomersView = 'table' | 'chart'
+
 export interface CustomersState {
   sort: CustomerSort
   order: SortOrder
@@ -12,6 +15,23 @@ export interface CustomersState {
   search: string
   page: number
   pageSize: number
+  /** Код причины риска: только клиенты с ней. */
+  reason?: string
+  /** main — причина главная, по умолчанию (undefined) — любая из причин. */
+  reasonScope?: ReasonScope
+  /** Диапазон score из гистограммы: от scoreMin включительно до scoreMax (100 — включительно). */
+  scoreMin?: number
+  scoreMax?: number
+  /** Вид списка: таблица (по умолчанию) или график «риск × потеря». */
+  view?: CustomersView
+}
+
+const REASON_RE = /^[a-z][a-z0-9_]{0,63}$/
+
+function scoreParam(raw: string | null): number | undefined {
+  if (raw === null || raw.trim() === '') return undefined
+  const value = Number(raw)
+  return Number.isFinite(value) && value >= 0 && value <= 100 ? value : undefined
 }
 
 export const DEFAULT_CUSTOMERS_STATE: CustomersState = {
@@ -43,7 +63,7 @@ export function parseCustomersState(params: URLSearchParams): CustomersState {
   }
   levels.sort((a, b) => RISK_LEVELS.indexOf(a) - RISK_LEVELS.indexOf(b))
 
-  return {
+  const state: CustomersState = {
     sort: sort.success ? sort.data : d.sort,
     order: order.success ? order.data : sort.success ? defaultOrderFor(sort.data) : d.order,
     levels,
@@ -51,6 +71,20 @@ export function parseCustomersState(params: URLSearchParams): CustomersState {
     page: page.success ? page.data : d.page,
     pageSize: size.success && size.data <= 200 ? size.data : d.pageSize,
   }
+  const reason = params.get('reason')?.trim()
+  if (reason && REASON_RE.test(reason)) {
+    state.reason = reason
+    if (params.get('reason_scope') === 'main') state.reasonScope = 'main'
+  }
+  const scoreMin = scoreParam(params.get('score_min'))
+  const scoreMax = scoreParam(params.get('score_max'))
+  // перевёрнутый диапазон молча отбрасываем: сервер ответил бы 422
+  if (!(scoreMin !== undefined && scoreMax !== undefined && scoreMin >= scoreMax)) {
+    if (scoreMin !== undefined) state.scoreMin = scoreMin
+    if (scoreMax !== undefined) state.scoreMax = scoreMax
+  }
+  if (params.get('view') === 'chart') state.view = 'chart'
+  return state
 }
 
 /** Обратное преобразование: в URL попадают только отличия от значений по умолчанию. */
@@ -64,9 +98,44 @@ export function serializeCustomersState(state: CustomersState): URLSearchParams 
   if (state.levels.length > 0) params.set('level', state.levels.join(','))
   const search = state.search.trim()
   if (search) params.set('search', search)
+  if (state.reason) {
+    params.set('reason', state.reason)
+    if (state.reasonScope === 'main') params.set('reason_scope', 'main')
+  }
+  if (state.scoreMin !== undefined) params.set('score_min', String(state.scoreMin))
+  if (state.scoreMax !== undefined) params.set('score_max', String(state.scoreMax))
   if (state.page > 1) params.set('page', String(state.page))
   if (state.pageSize !== d.pageSize) params.set('page_size', String(state.pageSize))
+  if (state.view === 'chart') params.set('view', 'chart')
   return params
+}
+
+/** Без фильтра по причине (кнопка сброса на чипе «Причина: …»). */
+export function clearReason(state: CustomersState): CustomersState {
+  const next = { ...state, page: 1 }
+  delete next.reason
+  delete next.reasonScope
+  return next
+}
+
+/** Без диапазона score (чип «Риск: 30–40»). */
+export function clearScoreRange(state: CustomersState): CustomersState {
+  const next = { ...state, page: 1 }
+  delete next.scoreMin
+  delete next.scoreMax
+  return next
+}
+
+/** Ссылка на список клиентов с причиной. scope=main — у кого она главная. */
+export function reasonHref(code: string, scope: ReasonScope = 'any'): string {
+  const params = new URLSearchParams({ reason: code })
+  if (scope === 'main') params.set('reason_scope', 'main')
+  return `/customers?${params.toString()}`
+}
+
+/** Ссылка на клиентов в диапазоне score: корзина гистограммы. */
+export function scoreRangeHref(from: number, to: number): string {
+  return `/customers?${new URLSearchParams({ score_min: String(from), score_max: String(to) }).toString()}`
 }
 
 /** Текстовые столбцы логично начинать по возрастанию, числовые — с самых больших. */
@@ -98,6 +167,10 @@ export function toCustomersQuery(state: CustomersState) {
     search: state.search.trim() || undefined,
     page: state.page,
     page_size: state.pageSize,
+    reason: state.reason,
+    reason_scope: state.reason ? state.reasonScope : undefined,
+    score_min: state.scoreMin,
+    score_max: state.scoreMax,
   }
 }
 

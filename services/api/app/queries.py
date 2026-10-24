@@ -75,12 +75,47 @@ def _escape_like(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def where_clause(levels: list[str], search: str | None) -> tuple[str, list[Any]]:
+def check_score_range(score_min: float | None, score_max: float | None) -> None:
+    if score_min is not None and score_max is not None and score_min >= score_max:
+        raise ApiError(
+            422,
+            "validation_error",
+            "Нижняя граница риска должна быть меньше верхней",
+            [{"field": "score_min", "message": "score_min < score_max", "value": score_min, "type": "range"}],
+        )
+
+
+def where_clause(
+    levels: list[str],
+    search: str | None,
+    *,
+    reason: str | None = None,
+    reason_scope: str = "any",
+    score_min: float | None = None,
+    score_max: float | None = None,
+) -> tuple[str, list[Any]]:
+    """WHERE для списка клиентов.
+
+    reason — код причины: при reason_scope=main она главная (первая в reasons), при any —
+    любая из причин клиента (колонки main_reason и reason_codes из миграции 009).
+    score_min включается, score_max нет, кроме верхней границы шкалы 100: так корзины
+    гистограммы [0, 10), [10, 20) ... [90, 100] не пересекаются и покрывают всю шкалу.
+    """
     conditions: list[str] = []
     args: list[Any] = []
     if levels:
         args.append(levels)
         conditions.append(f"risk_level = ANY(${len(args)}::text[])")
+    if reason:
+        args.append(reason)
+        conditions.append(f"main_reason = ${len(args)}" if reason_scope == "main" else f"reason_codes ? ${len(args)}")
+    if score_min is not None:
+        args.append(float(score_min))
+        conditions.append(f"risk_score >= ${len(args)}")
+    if score_max is not None:
+        args.append(float(score_max))
+        op = "<=" if score_max >= 100 else "<"
+        conditions.append(f"risk_score {op} ${len(args)}")
     term = (search or "").strip()
     if term:
         args.append(f"%{_escape_like(term)}%")
@@ -134,8 +169,15 @@ async def list_customers(
     search: str | None,
     page: int,
     page_size: int,
+    reason: str | None = None,
+    reason_scope: str = "any",
+    score_min: float | None = None,
+    score_max: float | None = None,
 ) -> dict[str, Any]:
-    where, args = where_clause(levels, search)
+    check_score_range(score_min, score_max)
+    where, args = where_clause(
+        levels, search, reason=reason, reason_scope=reason_scope, score_min=score_min, score_max=score_max
+    )
     offset = (page - 1) * page_size
     async with pool.acquire() as conn:
         total = await conn.fetchval(f"SELECT count(*) FROM scoring.customer_scores{where}", *args)

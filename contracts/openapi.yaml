@@ -423,6 +423,10 @@ paths:
           in: query
           description: Поиск по email (подстрока) или точному ID
           schema: { type: string }
+        - $ref: '#/components/parameters/ReasonFilter'
+        - $ref: '#/components/parameters/ReasonScope'
+        - $ref: '#/components/parameters/ScoreMin'
+        - $ref: '#/components/parameters/ScoreMax'
         - name: page
           in: query
           schema: { type: integer, minimum: 1, default: 1 }
@@ -454,6 +458,27 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CustomerDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/customers/{id}/charts:
+    get:
+      tags: [customers]
+      summary: Данные для графиков карточки клиента
+      description: |
+        Баланс по дням против графика автопродлений (до момента, когда кончатся деньги, и ещё
+        неделю; не меньше горизонта и не больше года), платежи по месяцам за 12 месяцев и
+        score клиента в моменты отправки писем. Отдельной истории score по клиенту в базе нет,
+        поэтому score_history пуст, если клиенту ещё не писали.
+      operationId: getCustomerCharts
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '200':
+          description: Ряды для графиков
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerCharts' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -491,6 +516,10 @@ paths:
           in: query
           description: 'Только очередь «С кем связаться сегодня»: есть оценка, есть потеря, нет действующей отметки'
           schema: { type: boolean, default: false }
+        - $ref: '#/components/parameters/ReasonFilter'
+        - $ref: '#/components/parameters/ReasonScope'
+        - $ref: '#/components/parameters/ScoreMin'
+        - $ref: '#/components/parameters/ScoreMax'
       responses:
         '200':
           description: CSV-файл
@@ -987,6 +1016,99 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Summary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/analytics/distribution:
+    get:
+      tags: [analytics]
+      summary: Распределение risk-score по корзинам и деньги по уровням риска
+      description: |
+        Десять корзин score [0, 10), [10, 20) … [90, 100] с разбивкой по уровням (порог уровня
+        может проходить внутри корзины) и выручка с ожидаемой потерей по каждому уровню.
+        Клиенты без оценки в корзины не попадают, в levels они есть (unknown).
+      operationId: getRiskDistribution
+      responses:
+        '200':
+          description: Распределение
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RiskDistribution' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/analytics/scatter:
+    get:
+      tags: [analytics]
+      summary: Точки «риск × ожидаемая потеря» для графика клиентов
+      description: |
+        Клиенты с оценкой под теми же фильтрами, что у списка, самые дорогие по ожидаемой
+        потере первыми, не больше limit. total — сколько клиентов подходит всего.
+      operationId: getRiskScatter
+      parameters:
+        - name: level
+          in: query
+          description: Фильтр по уровням через запятую
+          schema: { type: string }
+        - name: search
+          in: query
+          schema: { type: string, maxLength: 320 }
+        - $ref: '#/components/parameters/ReasonFilter'
+        - $ref: '#/components/parameters/ReasonScope'
+        - $ref: '#/components/parameters/ScoreMin'
+        - $ref: '#/components/parameters/ScoreMax'
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 400, default: 300 } }
+      responses:
+        '200':
+          description: Точки
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RiskScatter' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/analytics/reasons/{code}:
+    get:
+      tags: [analytics]
+      summary: Всё о причине риска — клиенты, деньги, вклад, что делать
+      description: |
+        scope=any — клиенты, у которых причина есть среди признаков (как customers в
+        top_reasons сводки), scope=main — у которых она главная. expected_loss — часть
+        ожидаемой потери этих клиентов, которая приходится именно на причину.
+      operationId: getReason
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-z][a-z0-9_]{0,63}$', examples: [prolong_wait] }
+        - name: scope
+          in: query
+          schema: { type: string, enum: [main, any], default: any }
+      responses:
+        '200':
+          description: Причина
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReasonDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/analytics/history:
+    get:
+      tags: [analytics]
+      summary: Как менялись главные цифры сводки
+      description: |
+        Точки пишет scoring вместе со сводкой: после каждого полного пересчёта и не чаще раза
+        в 10 секунд после частичных. Хранится не больше 500 точек, старая половина
+        прореживается. От старых к новым.
+      operationId: getSummaryHistory
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 500 } }
+      responses:
+        '200':
+          description: История
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SummaryHistory' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /api/v1/analytics/marketing:
@@ -1549,6 +1671,27 @@ components:
         (сжатое тело) и `MAX_BODY_BYTES` (после распаковки).
       schema: { type: string, enum: [gzip, identity] }
 
+    ReasonFilter:
+      name: reason
+      in: query
+      description: 'Код причины риска (как code в Reason): только клиенты с этой причиной'
+      schema: { type: string, pattern: '^[a-z][a-z0-9_]{0,63}$', examples: [prolong_wait] }
+    ReasonScope:
+      name: reason_scope
+      in: query
+      description: '`main` — причина главная (первая в reasons), `any` — любая из причин клиента'
+      schema: { type: string, enum: [main, any], default: any }
+    ScoreMin:
+      name: score_min
+      in: query
+      description: 'Риск не ниже (включительно)'
+      schema: { type: number, minimum: 0, maximum: 100 }
+    ScoreMax:
+      name: score_max
+      in: query
+      description: 'Риск ниже (не включительно; 100 — включительно). Должен быть больше score_min'
+      schema: { type: number, minimum: 0, maximum: 100 }
+
   responses:
     BadRequest:
       description: Тело не читается (например, повреждённый gzip)
@@ -1965,7 +2108,7 @@ components:
     CampaignRequest:
       type: object
       additionalProperties: false
-      description: 'Кому писать: выбранным (customer_ids) или всей очереди (worklist: true) — что-то одно'
+      description: 'Кому писать: выбранным (customer_ids), всей очереди (worklist: true) или всем с причиной риска (reason) — что-то одно'
       properties:
         customer_ids:
           type: array
@@ -1973,6 +2116,11 @@ components:
           maxItems: 5000
           items: { type: integer, format: int64 }
         worklist: { type: boolean, default: false }
+        reason:
+          type: [string, 'null']
+          pattern: '^[a-z][a-z0-9_]{0,63}$'
+          description: 'Всем клиентам с этой причиной (до 5000, самые дорогие по ожидаемой потере первыми)'
+        reason_scope: { type: string, enum: [main, any], default: any, description: 'Как у фильтра списка клиентов' }
         template_code: { type: [string, 'null'], description: 'Один шаблон для всех; не указан — по главной причине каждого клиента' }
         skip_days:
           type: integer
@@ -2545,6 +2693,201 @@ components:
         at_risk_services: { type: [integer, 'null'], description: 'Услуги под риском (high+medium) на дату. В зоне факта известно только на день снимка, в прочие дни null' }
         expected_nonrenewals: { type: [number, 'null'], description: 'Прогноз: ожидаемое число непродлений за день' }
         expected_loss: { type: [integer, 'null'], description: 'Прогноз: ожидаемая потеря за день, евроценты' }
+
+    LevelCounts:
+      type: object
+      required: [high, medium, low, unknown]
+      properties:
+        high: { type: integer }
+        medium: { type: integer }
+        low: { type: integer }
+        unknown: { type: integer }
+
+    RiskDistribution:
+      type: object
+      required: [buckets, levels, scored_at, model_version]
+      properties:
+        buckets:
+          type: array
+          minItems: 10
+          maxItems: 10
+          items:
+            type: object
+            required: [from, to, customers, expected_loss, by_level]
+            properties:
+              from: { type: number, description: 'Нижняя граница score, включительно' }
+              to: { type: number, description: 'Верхняя граница, не включительно (у последней корзины — включительно)' }
+              customers: { type: integer }
+              expected_loss: { type: integer, description: евроценты }
+              by_level:
+                type: object
+                required: [high, medium, low]
+                properties:
+                  high: { type: integer }
+                  medium: { type: integer }
+                  low: { type: integer }
+        levels:
+          type: array
+          items:
+            type: object
+            required: [level, customers, monthly_revenue, expected_loss]
+            properties:
+              level: { $ref: '#/components/schemas/RiskLevel' }
+              customers: { type: integer }
+              monthly_revenue: { type: integer, description: 'Выручка в месяц, евроценты' }
+              expected_loss: { type: integer, description: 'Ожидаемая потеря за горизонт, евроценты' }
+        scored_at: { type: [string, 'null'], format: date-time }
+        model_version: { type: integer }
+
+    RiskScatter:
+      type: object
+      required: [points, total, shown, scored_at, model_version]
+      properties:
+        points:
+          type: array
+          maxItems: 400
+          items:
+            type: object
+            required: [id, email, risk_score, risk_level, expected_loss, monthly_revenue]
+            properties:
+              id: { type: integer, format: int64 }
+              email: { type: string }
+              risk_score: { type: number, minimum: 0, maximum: 100 }
+              risk_level: { $ref: '#/components/schemas/RiskLevel' }
+              expected_loss: { type: integer, description: евроценты }
+              monthly_revenue: { type: integer, description: 'MRR клиента, евроценты' }
+        total: { type: integer, description: 'Сколько клиентов с оценкой подходит под фильтры' }
+        shown: { type: integer }
+        scored_at: { type: [string, 'null'], format: date-time }
+        model_version: { type: integer }
+
+    ReasonDetail:
+      type: object
+      required: [code, scope, title, plain, description, group, customers, primary_customers, monthly_revenue, expected_loss, customers_expected_loss, avg_contribution, by_level, contribution, actions, top_customers, scored_at, model_version]
+      properties:
+        code: { type: string }
+        scope: { type: string, enum: [main, any] }
+        title: { type: string, description: 'Название признака' }
+        plain: { type: [string, 'null'], description: 'Что это за причина простыми словами' }
+        description: { type: [string, 'null'], description: 'Как признак считает модель (из реестра признаков)' }
+        group: { type: [string, 'null'] }
+        customers: { type: integer }
+        primary_customers: { type: integer, description: 'У скольких из них причина главная' }
+        monthly_revenue: { type: integer, description: 'Выручка этих клиентов в месяц, евроценты' }
+        expected_loss: { type: integer, description: 'Часть ожидаемой потери, приходящаяся на причину, евроценты' }
+        customers_expected_loss: { type: integer, description: 'Вся ожидаемая потеря этих клиентов, евроценты' }
+        avg_contribution: { type: [number, 'null'], description: 'Средний вклад причины в score, пунктов' }
+        by_level: { $ref: '#/components/schemas/LevelCounts' }
+        contribution:
+          type: array
+          description: 'Сколько клиентов с каким вкладом причины в score: [0, 5), [5, 10) … [50, 100]'
+          items:
+            type: object
+            required: [from, to, customers]
+            properties:
+              from: { type: number }
+              to: { type: number }
+              customers: { type: integer }
+        actions:
+          type: array
+          description: 'Что делать: самые частые действия по этой причине у её клиентов'
+          items:
+            type: object
+            required: [title, customers]
+            properties:
+              title: { type: string }
+              customers: { type: integer }
+        top_customers:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            required: [id, email, risk_level, risk_score, contribution, expected_loss]
+            properties:
+              id: { type: integer, format: int64 }
+              email: { type: string }
+              risk_level: { $ref: '#/components/schemas/RiskLevel' }
+              risk_score: { type: [number, 'null'] }
+              contribution: { type: [number, 'null'], description: 'Вклад причины в score клиента, пунктов' }
+              expected_loss: { type: integer, description: 'Потеря клиента, приходящаяся на причину, евроценты' }
+        scored_at: { type: [string, 'null'], format: date-time }
+        model_version: { type: integer }
+
+    CustomerCharts:
+      type: object
+      required: [customer_id, as_of, runway, payments, score_history]
+      properties:
+        customer_id: { type: integer, format: int64 }
+        as_of: { type: string, format: date-time, description: 'Опорный момент: время снимка или сейчас' }
+        runway:
+          type: object
+          required: [start_balance, days, runs_out_at, model_runs_out_at, renewals, points]
+          properties:
+            start_balance: { type: integer, description: 'Баланс и разблокированные бонусы, евроценты' }
+            days: { type: integer }
+            runs_out_at:
+              type: [string, 'null']
+              format: date-time
+              description: 'Первое автопродление, на которое денег уже нет, по текущим данным'
+            model_runs_out_at:
+              type: [string, 'null']
+              format: date-time
+              description: 'funds_run_out_at из оценки клиента'
+            renewals: { type: integer, description: 'Сколько автопродлений в окне' }
+            points:
+              type: array
+              items:
+                type: object
+                required: [date, balance, renewals, paid, unpaid]
+                properties:
+                  date: { type: string, format: date }
+                  balance: { type: integer, description: 'Баланс на конец дня, евроценты' }
+                  renewals: { type: integer }
+                  paid: { type: integer, description: 'Списано за продления в этот день, евроценты' }
+                  unpaid: { type: integer, description: 'Продления, на которые денег уже нет, евроценты' }
+        payments:
+          type: array
+          description: '12 месяцев до опорного момента, от старых к новым'
+          items:
+            type: object
+            required: [month, paid, payments, failed]
+            properties:
+              month: { type: string, examples: ['2026-10'] }
+              paid: { type: integer, description: 'Проведено, евроценты' }
+              payments: { type: integer }
+              failed: { type: integer, description: 'Непрошедших платежей' }
+        score_history:
+          type: array
+          description: 'Score в моменты отправки писем и текущий; пусто, если писем не было'
+          items:
+            type: object
+            required: [at, risk_score, source]
+            properties:
+              at: { type: string, format: date-time }
+              risk_score: { type: number }
+              source: { type: string, enum: [email, now] }
+
+    SummaryHistory:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 500
+          items:
+            type: object
+            required: [at, model_version, full, customers_total, by_level, services_at_risk, expected_loss, exposure, monthly_revenue_total, revenue_at_risk_share]
+            properties:
+              at: { type: string, format: date-time }
+              model_version: { type: integer }
+              full: { type: boolean, description: 'Точка полного пересчёта' }
+              customers_total: { type: integer }
+              by_level: { $ref: '#/components/schemas/LevelCounts' }
+              services_at_risk: { type: integer }
+              expected_loss: { type: integer, description: евроценты }
+              exposure: { type: integer, description: евроценты }
+              monthly_revenue_total: { type: integer, description: евроценты }
+              revenue_at_risk_share: { type: number }
 
     Summary:
       type: object

@@ -5,6 +5,7 @@ import { errorMessage } from '@/api/client'
 import { api, queryKeys } from '@/api/endpoints'
 import type { Marketing, MarketingSegment, RetentionScenario } from '@/api/types'
 import { AnimatedNumber } from '@/components/animated-number'
+import { MarketingCharts } from '@/components/charts/marketing-charts'
 import { KpiCard, KpiSkeleton } from '@/components/kpi-card'
 import { PageHeader, RecalcNote } from '@/components/page-header'
 import { RISK_BAR, RiskGlyph, RISK_TEXT } from '@/components/risk'
@@ -529,6 +530,7 @@ export default function MarketingPage() {
           <Assumptions m={m} />
           <Retention m={m} />
           <Segments m={m} />
+          <MarketingCharts m={m} />
           <div className="grid gap-4 lg:grid-cols-2">
             <RevenueStructure m={m} />
             <History m={m} />

@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 import httpx
 import structlog
-from fastapi import Body, Depends, FastAPI, Query, Request
+from fastapi import Body, Depends, FastAPI, Path, Query, Request
 from fastapi.responses import JSONResponse, Response
 from svckit.auth import User, make_current_user, make_require_admin, make_require_role
 from svckit.bus import EventBus
@@ -20,7 +20,19 @@ from svckit.mail import MailConfig
 from svckit.metrics import HttpMetricsMiddleware, check_metrics_token, render
 from svckit.outbox import OutboxRelay
 
-from app import actions, mail_templates, mailer, marketing, metrics, model_quality, model_settings, playbooks, preview, queries
+from app import (
+    actions,
+    charts,
+    mail_templates,
+    mailer,
+    marketing,
+    metrics,
+    model_quality,
+    model_settings,
+    playbooks,
+    preview,
+    queries,
+)
 from app.config import settings
 from app.docs import router as docs_router
 
@@ -35,6 +47,10 @@ AdminUser = Annotated[User, Depends(make_require_admin(current_user))]
 # работа с клиентами (письма, рассылки, отметки) — маркетолог и админ; аналитик только смотрит
 MarketerUser = Annotated[User, Depends(make_require_role(current_user, "marketer"))]
 Pool = Annotated[Any, Depends(get_pool)]
+# Фильтры списка клиентов, общие для таблицы, CSV и графика «риск × потеря»
+ReasonCode = Annotated[str | None, Query(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
+ReasonScope = Annotated[charts.ReasonScope, Query()]
+ScoreBound = Annotated[float | None, Query(ge=0, le=100)]
 
 
 def kick_relay(request: Request) -> None:
@@ -121,10 +137,15 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         search: Annotated[str | None, Query(max_length=320)] = None,
         page: Annotated[int, Query(ge=1, le=1_000_000)] = 1,
         page_size: Annotated[int, Query(ge=1, le=200)] = 25,
+        reason: ReasonCode = None,
+        reason_scope: ReasonScope = "any",
+        score_min: ScoreBound = None,
+        score_max: ScoreBound = None,
     ) -> dict[str, Any]:
         return await queries.list_customers(
             pool, sort=sort, order=order, levels=queries.parse_levels(level),
-            search=search, page=page, page_size=page_size,
+            search=search, page=page, page_size=page_size, reason=reason, reason_scope=reason_scope,
+            score_min=score_min, score_max=score_max,
         )
 
     # объявлен до /customers/{customer_id}, иначе «export.csv» попадёт в customer_id
@@ -137,9 +158,15 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         level: str | None = None,
         search: Annotated[str | None, Query(max_length=320)] = None,
         worklist: bool = False,
+        reason: ReasonCode = None,
+        reason_scope: ReasonScope = "any",
+        score_min: ScoreBound = None,
+        score_max: ScoreBound = None,
     ) -> Response:
+        queries.check_score_range(score_min, score_max)
         rows = await actions.export_rows(
             pool, sort=sort, order=order, levels=queries.parse_levels(level), search=search, worklist=worklist,
+            reason=reason, reason_scope=reason_scope, score_min=score_min, score_max=score_max,
         )
         name = actions.export_filename(datetime.now(UTC))
         return Response(
@@ -151,6 +178,10 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
     @app.get("/api/v1/customers/{customer_id}", tags=["customers"])
     async def get_customer(customer_id: int, _: CurrentUser, pool: Pool) -> dict[str, Any]:
         return await queries.get_customer(pool, customer_id)
+
+    @app.get("/api/v1/customers/{customer_id}/charts", tags=["customers"])
+    async def get_customer_charts(customer_id: int, _: CurrentUser, pool: Pool) -> dict[str, Any]:
+        return await charts.customer(pool, customer_id)
 
     # --- с кем связаться сегодня -------------------------------------------------------
     # Отмечать и писать клиентам может и аналитик: с очередью работает маркетинг, а отметка
@@ -254,6 +285,43 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
     @app.get("/api/v1/analytics/summary", tags=["analytics"])
     async def get_summary(request: Request, _: CurrentUser, pool: Pool) -> dict[str, Any]:
         return await request.app.state.summary_cache.get(pool)
+
+    # --- графики: агрегаты считает Postgres, клиентов целиком в браузер не отдаём --------------
+    @app.get("/api/v1/analytics/distribution", tags=["analytics"])
+    async def get_distribution(_: CurrentUser, pool: Pool) -> dict[str, Any]:
+        return await charts.distribution(pool)
+
+    @app.get("/api/v1/analytics/scatter", tags=["analytics"])
+    async def get_scatter(
+        _: CurrentUser,
+        pool: Pool,
+        level: str | None = None,
+        search: Annotated[str | None, Query(max_length=320)] = None,
+        reason: ReasonCode = None,
+        reason_scope: ReasonScope = "any",
+        score_min: ScoreBound = None,
+        score_max: ScoreBound = None,
+        limit: Annotated[int, Query(ge=1, le=charts.SCATTER_MAX)] = charts.SCATTER_DEFAULT,
+    ) -> dict[str, Any]:
+        return await charts.scatter(
+            pool, level=level, search=search, reason=reason, reason_scope=reason_scope, limit=limit,
+            score_min=score_min, score_max=score_max,
+        )
+
+    @app.get("/api/v1/analytics/reasons/{code}", tags=["analytics"])
+    async def get_reason(
+        code: Annotated[str, Path(pattern=r"^[a-z][a-z0-9_]{0,63}$")],
+        _: CurrentUser,
+        pool: Pool,
+        scope: ReasonScope = "any",
+    ) -> dict[str, Any]:
+        return await charts.reason(pool, code, scope)
+
+    @app.get("/api/v1/analytics/history", tags=["analytics"])
+    async def get_history(
+        _: CurrentUser, pool: Pool, limit: Annotated[int, Query(ge=1, le=charts.HISTORY_MAX)] = charts.HISTORY_MAX
+    ) -> dict[str, Any]:
+        return await charts.history(pool, limit)
 
     # Маркетинговые метрики видят все вошедшие; маржу и CAC меняет только admin.
     # Пересчёта они не запускают: применяются к готовым числам при выдаче.

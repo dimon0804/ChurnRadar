@@ -5,6 +5,7 @@ import { api, queryKeys } from '@/api/endpoints'
 import type { RiskLevel, Summary } from '@/api/types'
 import { AnimatedNumber } from '@/components/animated-number'
 import { ContactTodayCard } from '@/components/contact-today'
+import { OverviewCharts } from '@/components/charts/overview-charts'
 import { ChurnChart } from '@/components/churn-chart'
 import { DataClockBadge, useDataClock } from '@/components/data-clock'
 import { KpiCard, KpiSkeleton } from '@/components/kpi-card'
@@ -15,7 +16,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Skeleton } from '@/components/ui/skeleton'
 import { countLabel, formatInt, formatMoney, formatShare, plural } from '@/lib/format'
 import { RISK_LABEL_LONG } from '@/lib/labels'
-import { RISK_LEVELS } from '@/lib/url-state'
+import { reasonHref, RISK_LEVELS } from '@/lib/url-state'
 import { cn } from '@/lib/utils'
 
 const money = (v: number | null | undefined) => formatMoney(v, { cents: false })
@@ -158,7 +159,7 @@ function TopReasons({ s }: { s: Summary }) {
     <Card>
       <CardHeader>
         <CardTitle>Главные причины риска</CardTitle>
-        <CardDescription>Что чаще всего толкает клиентов к уходу и сколько денег за этим стоит</CardDescription>
+        <CardDescription>Что чаще всего толкает клиентов к уходу и сколько денег за этим стоит. Нажмите на причину — откроются её клиенты.</CardDescription>
       </CardHeader>
       <CardContent>
         {reasons.length === 0 ? (
@@ -177,8 +178,14 @@ function TopReasons({ s }: { s: Summary }) {
             {reasons.map((r, i) => (
               <li
                 key={`${r.code}-${i}`}
-                className={cn('flex items-center gap-3 border-b border-border py-2.5', (i === reasons.length - 1 || i === half - 1) && 'lg:border-0', i === reasons.length - 1 && 'border-0')}
+                className={cn('min-w-0 border-b border-border', (i === reasons.length - 1 || i === half - 1) && 'lg:border-0', i === reasons.length - 1 && 'border-0')}
               >
+                <Link
+                  to={reasonHref(r.code)}
+                  data-reason={r.code}
+                  aria-label={`${r.title}: ${countLabel(r.count, ['клиент', 'клиента', 'клиентов'])}. Открыть клиентов с этой причиной`}
+                  className="group -mx-2 flex items-center gap-3 rounded-md px-2 py-2.5 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                >
                 <span className="w-5 shrink-0 text-right text-[13px] text-subtle-foreground num">{i + 1}</span>
                 <div className="min-w-0 flex-1">
                   <p className="line-clamp-2 text-sm break-words sm:line-clamp-1" title={r.title}>
@@ -204,6 +211,8 @@ function TopReasons({ s }: { s: Summary }) {
                       .join(' · ')}
                   </p>
                 </div>
+                <ArrowRight className="size-3.5 shrink-0 text-subtle-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden />
+                </Link>
               </li>
             ))}
           </ol>
@@ -275,6 +284,7 @@ export default function OverviewPage() {
             <LevelDistribution s={s} />
           </div>
           <TopReasons s={s} />
+          <OverviewCharts s={s} />
         </div>
       ) : null}
     </>

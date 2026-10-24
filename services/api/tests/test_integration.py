@@ -21,7 +21,7 @@ from nats.js.errors import NotFoundError
 
 from app.config import settings
 from app.main import create_app
-from tests.conftest import ADMIN, ANALYST
+from tests.conftest import ADMIN, ANALYST, MARKETER
 
 pytestmark = pytest.mark.integration
 
@@ -260,7 +260,7 @@ async def test_marketing_flow(client):
     assert page["settings"] == {"margin": 1.0, "cac": None, "updated_at": None, "updated_by": None}
     assert "marketing" not in (await client.get("/api/v1/analytics/summary", headers=ANALYST)).json()
 
-    denied = await client.put("/api/v1/analytics/marketing/settings", json={"margin": 0.5}, headers=ANALYST)
+    denied = await client.put("/api/v1/analytics/marketing/settings", json={"margin": 0.5}, headers=MARKETER)
     assert denied.status_code == 403
     saved = await client.put(
         "/api/v1/analytics/marketing/settings", json={"margin": 0.5, "cac": 3_000}, headers=ADMIN
@@ -293,7 +293,7 @@ async def test_settings_flow(client):
     codes = {w["code"] for w in s["weights"]}
     assert {"prolong_wait", "autoprolong_off_expiring", "insufficient_funds"} <= codes
 
-    denied = await client.patch("/api/v1/model/settings", json={"horizon_days": 45}, headers=ANALYST)
+    denied = await client.patch("/api/v1/model/settings", json={"horizon_days": 45}, headers=MARKETER)
     assert denied.status_code == 403
 
     patched = await client.patch(
@@ -417,10 +417,10 @@ async def test_contact_today_marks_and_export(client):
     assert next(i for i in items if i["id"] == 3)["main_reason"] == "Ждёт"
 
     # аналитик отмечает «Решено» — клиент уходит из очереди в «отмеченные»
-    done = await client.put("/api/v1/customers/1/action", json={"status": "resolved", "note": " ответил, пополнит "}, headers=ANALYST)
+    done = await client.put("/api/v1/customers/1/action", json={"status": "resolved", "note": " ответил, пополнит "}, headers=MARKETER)
     assert done.status_code == 200, done.text
     action = done.json()["action"]
-    assert action["status"] == "resolved" and action["active"] is True and action["updated_by"] == "analyst"
+    assert action["status"] == "resolved" and action["active"] is True and action["updated_by"] == "marketer"
     assert action["note"] == "ответил, пополнит" and action["expected_loss_at_mark"] == 4_000
     snoozed = await client.put("/api/v1/customers/4/action", json={"status": "snoozed", "snooze_days": 3}, headers=ADMIN)
     assert snoozed.status_code == 200 and snoozed.json()["action"]["until"].endswith("Z")
@@ -430,10 +430,10 @@ async def test_contact_today_marks_and_export(client):
     assert [i["id"] for i in marked["items"]] == [1, 4]
 
     past = await client.put(
-        "/api/v1/customers/7/action", json={"status": "snoozed", "snoozed_until": "2020-01-01T00:00:00Z"}, headers=ANALYST
+        "/api/v1/customers/7/action", json={"status": "snoozed", "snoozed_until": "2020-01-01T00:00:00Z"}, headers=MARKETER
     )
     assert past.status_code == 422
-    assert (await client.put("/api/v1/customers/999/action", json={"status": "resolved"}, headers=ANALYST)).status_code == 404
+    assert (await client.put("/api/v1/customers/999/action", json={"status": "resolved"}, headers=MARKETER)).status_code == 404
     assert (await client.get("/api/v1/customers/999/action", headers=ANALYST)).status_code == 404
 
     # CSV: те же фильтры и сортировка, что у списка, плюс статус
@@ -463,10 +463,10 @@ async def test_contact_today_marks_and_export(client):
 
     state = (await client.get("/api/v1/customers/1/action", headers=ANALYST)).json()
     assert [h["status"] for h in state["history"]] == ["resolved"]
-    assert state["history"][0]["changed_by"] == "analyst" and state["history"][0]["changed_at"].endswith("Z")
+    assert state["history"][0]["changed_by"] == "marketer" and state["history"][0]["changed_at"].endswith("Z")
 
-    cleared = await client.delete("/api/v1/customers/1/action", headers=ANALYST)
+    cleared = await client.delete("/api/v1/customers/1/action", headers=MARKETER)
     assert cleared.status_code == 200 and cleared.json()["action"] is None
     assert [h["status"] for h in cleared.json()["history"]] == ["cleared", "resolved"]
-    again = await client.delete("/api/v1/customers/1/action", headers=ANALYST)
+    again = await client.delete("/api/v1/customers/1/action", headers=MARKETER)
     assert [h["status"] for h in again.json()["history"]] == ["cleared", "resolved"]  # повторное снятие журнал не засоряет

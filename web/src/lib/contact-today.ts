@@ -19,6 +19,10 @@ export interface ExportQuery {
   levels?: readonly string[]
   search?: string
   worklist?: boolean
+  reason?: string
+  reasonScope?: 'main' | 'any'
+  scoreMin?: number
+  scoreMax?: number
 }
 
 /** Ссылка на CSV с теми же фильтрами и сортировкой, что в таблице. Страница и размер не нужны. */
@@ -30,12 +34,27 @@ export function exportCsvUrl(q: ExportQuery = {}): string {
   const search = q.search?.trim()
   if (search) params.set('search', search)
   if (q.worklist) params.set('worklist', 'true')
+  if (q.reason) {
+    params.set('reason', q.reason)
+    if (q.reasonScope === 'main') params.set('reason_scope', 'main')
+  }
+  if (q.scoreMin !== undefined) params.set('score_min', String(q.scoreMin))
+  if (q.scoreMax !== undefined) params.set('score_max', String(q.scoreMax))
   const qs = params.toString()
   return qs ? `${EXPORT_CSV_PATH}?${qs}` : EXPORT_CSV_PATH
 }
 
 export function exportUrlFromState(state: CustomersState): string {
-  return exportCsvUrl({ sort: state.sort, order: state.order, levels: state.levels, search: state.search })
+  return exportCsvUrl({
+    sort: state.sort,
+    order: state.order,
+    levels: state.levels,
+    search: state.search,
+    reason: state.reason,
+    reasonScope: state.reasonScope,
+    scoreMin: state.scoreMin,
+    scoreMax: state.scoreMax,
+  })
 }
 
 /** Вся очередь «С кем связаться» в том же порядке, что в блоке на обзоре. */

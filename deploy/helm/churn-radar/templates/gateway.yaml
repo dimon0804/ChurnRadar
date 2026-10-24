@@ -2,7 +2,7 @@
 {{- $fullname := include "cr.fullname" . }}
 {{- $authSvc := include "cr.componentName" (dict "root" . "component" "auth") }}
 {{- $authBase := printf "http://%s:8000" (include "cr.svcFqdn" (dict "root" . "name" $authSvc)) }}
-{{- $userHeaders := list "X-User-Id" "X-User-Name" "X-User-Roles" }}
+{{- $userHeaders := list "X-User-Id" "X-User-Name" "X-User-Roles" "X-User-Email" }}
 {{- $hostPrefix := "" }}
 {{- if .Values.gateway.host }}
 {{- $hostPrefix = printf "Host(`%s`) && " .Values.gateway.host }}

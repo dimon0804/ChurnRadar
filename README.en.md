@@ -130,12 +130,34 @@ after such an upload differ a little from the October 19 calculation.
 
 The screenshots below were taken on the 2000-customer set (seed 42) with the stream on.
 
-**Who to call today.** A block on the overview: the five customers where the most money can
-be saved. They are ordered by expected loss, not by score, so a high-risk customer worth €6
+**Who to contact today.** A block on the overview: the five customers where the most money
+can be saved. They are ordered by expected loss, not by score, so a high-risk customer worth €6
 ends up below one worth €1,385. Each row has the ready action from the customer card and how
-much it would save. "Done" hides the customer until their risk grows again, "Snooze" hides
-them until the chosen date. Analysts can mark customers too; who marked whom and when is shown
-in the card. "Export CSV" downloads the whole call queue for a mailing.
+much it would save. The hosting company talks to customers by email, so the main button is
+"Написать" (write): it opens an email from the template for the main risk reason, already
+filled in with the customer's service, dates and amounts. Edit it if needed and send. On the
+demo stand Mailpit catches every email, see http://localhost:8025.
+
+What happens to the customer next:
+
+- **Email sent**: the customer leaves the list for a week (`MAIL_FOLLOWUP_DAYS`) while we wait
+  for an answer. No answer in that time brings them back marked "no reply, send a reminder".
+- **Resolved**: the customer answered or the issue is closed. They come back only if their
+  risk grows.
+- **Snoozed**: until the chosen date.
+
+If the expected loss or risk level grows after a mark, the customer comes back early. Replies
+go to the employee's mailbox when the gateway passes it in `X-User-Email`; otherwise they go to
+`SMTP_REPLY_TO` or `SMTP_FROM`.
+
+"Написать всем" emails the whole queue, and in the customer table you can tick customers and
+press "Написать выбранным". Before sending you see how many emails will go out, who is skipped
+because they already got one in the last 7 days, and what the first email looks like. Emails
+go out in the background, no faster than five per second (`MAIL_RATE_PER_S`), with progress
+and a final "sent X, errors Y" right there. At the bottom of the block a "helped" counter shows
+how many customers had lower risk or a higher balance after the email; the same numbers are in
+`/metrics` (`churn_emails_*`). Analysts can mark and email customers too; only admins edit the
+templates on the "Письма" (emails) page. "CSV" in the block downloads the whole queue.
 
 **Customer ranking.** Sorting by ID, email, balance, total top-ups, risk and expected loss,
 filter by risk level, search by email or ID. "Export CSV" saves the table with the same filters
@@ -436,8 +458,8 @@ service leaves) and how many days the balance will last.
 
 Reason contributions are computed from the logarithms of the noisy-OR factors and add up to
 exactly the customer's score, with no "other" bucket. Each reason comes with an action for the
-marketer using numbers from the data, for example "Срочный звонок: service-0020 удалят через
-3 дн." (urgent call: service-0020 will be deleted in 3 days). The main action `next_action` is
+marketer using numbers from the data, for example "Срочно написать: service-0020 удалят через
+3 дн." (email urgently: service-0020 will be deleted in 3 days). The main action `next_action` is
 chosen by how much money it saves if the reason is removed.
 
 Full description, the reasoning behind the weights and the sample breakdown:
@@ -670,9 +692,13 @@ types are generated from it. Main resources:
 | `POST /api/v1/auth/login` | password login, sets the `cr_session` cookie |
 | `GET /api/v1/customers` | ranking with sorting, level filter, search and pagination |
 | `GET /api/v1/customers/{id}` | card: reasons, score breakdown, money, recommendations, services |
-| `GET /api/v1/customers/export.csv` | the same ranking as an Excel-friendly file; `worklist=true` exports only the call queue |
-| `GET /api/v1/call-today` | who to call today: at-risk customers by expected loss, highest first |
-| `GET/PUT/DELETE /api/v1/customers/{id}/action` | the "done" or "snoozed" mark and its log |
+| `GET /api/v1/customers/export.csv` | the same ranking as an Excel-friendly file; `worklist=true` exports only the contact queue |
+| `GET /api/v1/contact-today` | who to contact today: at-risk customers by expected loss, highest first |
+| `GET/PUT/DELETE /api/v1/customers/{id}/action` | the "email sent", "resolved" or "snoozed" mark and its log |
+| `POST /api/v1/customers/{id}/email/draft`, `POST …/email` | an email from a template: draft and sending over SMTP |
+| `POST /api/v1/mail/campaigns` (plus `…/preview`, `GET …/{id}`) | background mailing with repeat protection and progress |
+| `GET/PUT /api/v1/mail/templates` | email templates, only admins can edit |
+| `GET /api/v1/mail/stats` | how many emails were sent and how many customers they helped |
 | `GET /api/v1/analytics/summary` | base summary, actual and forecast chart, top reasons |
 | `GET /api/v1/analytics/marketing` | marketing metrics: MRR, ARPU, churn, LTV, risk segments, retention scenarios |
 | `GET/PUT /api/v1/analytics/marketing/settings` | margin and customer acquisition cost (CAC); PUT is admin only |

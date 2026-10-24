@@ -1,10 +1,11 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { createColumnHelper, flexRender, getCoreRowModel, useReactTable, type SortingState } from '@tanstack/react-table'
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsUpDown, Download, Search, Users, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsUpDown, Download, Mails, Search, Users, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { Link, Outlet, useNavigate, useSearchParams } from 'react-router'
 import { api, queryKeys } from '@/api/endpoints'
 import type { CustomerPage, CustomerSort, CustomerSummary, RiskLevel } from '@/api/types'
+import { CampaignDialog } from '@/components/campaign-dialog'
 import { PageHeader, RecalcNote } from '@/components/page-header'
 import { RiskBadge, RiskGlyph, RISK_TEXT, ScoreBar } from '@/components/risk'
 import { EmptyState, ErrorState } from '@/components/states'
@@ -15,7 +16,7 @@ import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useDebouncedValue } from '@/hooks/use-debounced'
-import { formatInt, formatMoney } from '@/lib/format'
+import { countLabel, formatInt, formatMoney } from '@/lib/format'
 import { RISK_LABEL } from '@/lib/labels'
 import { isChurned, reasonAction, reasonTooltip, shortReasonTitle } from '@/lib/reasons'
 import { diffRows, scoreTrend } from '@/lib/recalc'
@@ -30,7 +31,7 @@ import {
   toggleLevel,
   type CustomersState,
 } from '@/lib/url-state'
-import { exportUrlFromState } from '@/lib/call-today'
+import { exportUrlFromState } from '@/lib/contact-today'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/providers/auth'
 import { useLive } from '@/providers/live'
@@ -43,9 +44,44 @@ const col = createColumnHelper<CustomerSummary>()
 interface CellContext {
   titles?: ReadonlyMap<string, string>
   trend?: ReadonlyMap<number, 'up' | 'down'>
+  /** Отмеченные галочкой — для рассылки «Написать выбранным». */
+  selected?: ReadonlySet<number>
+  onToggle?: (ids: number[], on: boolean) => void
 }
 
 const columns = [
+  col.display({
+    id: 'select',
+    meta: { className: 'w-[40px] pr-0' },
+    header: (h) => {
+      const meta = h.table.options.meta as CellContext | undefined
+      const ids = h.table.getRowModel().rows.map((r) => r.original.id)
+      const all = ids.length > 0 && ids.every((id) => meta?.selected?.has(id))
+      return (
+        <input
+          type="checkbox"
+          className="size-4 cursor-pointer accent-primary align-middle"
+          aria-label="Выбрать всех на странице"
+          disabled={ids.length === 0}
+          checked={all}
+          onChange={(e) => meta?.onToggle?.(ids, e.target.checked)}
+        />
+      )
+    },
+    cell: (c) => {
+      const meta = c.table.options.meta as CellContext | undefined
+      const id = c.row.original.id
+      return (
+        <input
+          type="checkbox"
+          className="size-4 cursor-pointer accent-primary align-middle"
+          aria-label={`Выбрать клиента ${c.row.original.email || id}`}
+          checked={meta?.selected?.has(id) ?? false}
+          onChange={(e) => meta?.onToggle?.([id], e.target.checked)}
+        />
+      )
+    },
+  }),
   col.accessor('id', {
     header: 'ID',
     meta: { className: 'w-[76px]' },
@@ -245,7 +281,7 @@ function SkeletonRows({ count }: { count: number }) {
         <TableRow key={i}>
           {columns.map((_, j) => (
             <TableCell key={j}>
-              <Skeleton className={cn('h-4', j === 1 ? 'w-40' : j === 6 ? 'w-48' : 'w-16')} />
+              <Skeleton className={cn('h-4', j === 0 ? 'w-4' : j === 2 ? 'w-40' : j === 7 ? 'w-48' : 'w-16')} />
             </TableCell>
           ))}
         </TableRow>
@@ -316,6 +352,18 @@ export default function CustomersPage() {
   }, [data, totalPages])
 
   const sorting: SortingState = [{ id: state.sort, desc: state.order === 'desc' }]
+  const [selected, setSelected] = useState<ReadonlySet<number>>(() => new Set())
+  const [writing, setWriting] = useState(false)
+  const toggleSelected = (ids: number[], on: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const id of ids) {
+        if (on) next.add(id)
+        else next.delete(id)
+      }
+      return next
+    })
+  }
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
     data: items,
@@ -326,7 +374,7 @@ export default function CustomersPage() {
     enableSortingRemoval: false,
     getCoreRowModel: getCoreRowModel(),
     getRowId: (row) => String(row.id),
-    meta: { titles, trend: flash.trend } satisfies CellContext,
+    meta: { titles, trend: flash.trend, selected, onToggle: toggleSelected } satisfies CellContext,
   })
 
   const filtered = state.levels.length > 0 || state.search.trim() !== ''
@@ -334,7 +382,7 @@ export default function CustomersPage() {
 
   const openRow = (id: number) => navigate(`/customers/${id}${detailSuffix}`)
   const onRowClick = (event: MouseEvent, id: number) => {
-    if ((event.target as HTMLElement).closest('a,button')) return
+    if ((event.target as HTMLElement).closest('a,button,input,label')) return
     if (window.getSelection()?.toString()) return
     openRow(id)
   }
@@ -396,6 +444,29 @@ export default function CustomersPage() {
           </Button>
         </div>
       </div>
+
+      {selected.size > 0 && (
+        <div
+          className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-4 py-2.5 text-sm shadow-card"
+          data-testid="selection-bar"
+        >
+          <span className="font-medium num">Выбрано: {countLabel(selected.size, ['клиент', 'клиента', 'клиентов'])}</span>
+          <Button size="sm" onClick={() => setWriting(true)}>
+            <Mails />
+            Написать выбранным
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+            Снять выбор
+          </Button>
+        </div>
+      )}
+      <CampaignDialog
+        target={{ customer_ids: [...selected] }}
+        title={`Написать выбранным · ${selected.size}`}
+        open={writing}
+        onOpenChange={setWriting}
+        onStarted={() => setSelected(new Set())}
+      />
 
       <Card className="relative overflow-hidden">
         {customers.isFetching && !customers.isPending && (

@@ -9,7 +9,7 @@
     "concentration": 8.0,
     "bootstrap": 200,
     "riskcore_version": "1.0.0",
-    "riskcore_sources": "e2d3f6b35d3a",
+    "riskcore_sources": "8d4a86974bd8",
     "simulator_sources": "3b9616ea2ac7",
     "weights": {
       "prolong_wait": 85.0,
@@ -2014,7 +2014,7 @@
       }
     }
   },
-  "elapsed_s": 48.0,
+  "elapsed_s": 58.9,
   "robustness": [
     {
       "label": "seed 42 (основной)",

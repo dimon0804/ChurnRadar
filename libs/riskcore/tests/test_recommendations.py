@@ -86,6 +86,6 @@ def test_prolong_wait_action_names_deadline_and_promo():
     [result] = score_customers([account], [service], [], merge_settings(None), AS_OF)
     action = result.detail["next_action"]
     assert action["code"] == "prolong_wait"
-    assert action["title"].startswith("Срочный звонок")
+    assert action["title"].startswith("Срочно написать")
     assert "через 3 дн." in action["title"]
     assert "промокод" in action["detail"] and "€40" in action["detail"]

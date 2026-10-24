@@ -100,11 +100,11 @@ export const FEATURES: Feature[] = [
     target: { kind: 'route', to: '/notifications', targets: [{ selector: '[data-testid="event-loss_growth"]' }] },
   },
   {
-    id: 'call-today',
-    title: '«Кому позвонить сегодня» и выгрузка CSV',
+    id: 'contact-today',
+    title: '«С кем связаться сегодня» и письма клиентам',
     extra: true,
-    detail: 'Очередь звонков по деньгам, которые можно спасти, кнопки «Сделано» и «Отложить», CSV для рассылки.',
-    target: { kind: 'step', step: 'call-today' },
+    detail: 'Очередь по деньгам, которые можно спасти, письмо по шаблону под причину риска, рассылка всей очереди в фоне и счётчик «помогло».',
+    target: { kind: 'step', step: 'contact-today' },
   },
   {
     id: 'marketing',

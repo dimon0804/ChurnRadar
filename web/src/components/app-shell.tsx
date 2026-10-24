@@ -1,4 +1,4 @@
-import { Activity, Bell, Database, FileCode2, LayoutDashboard, LogOut, Megaphone, Moon, ShieldCheck, SlidersHorizontal, Sun, Users } from 'lucide-react'
+import { Activity, Bell, Database, FileCode2, LayoutDashboard, LogOut, Mail, Megaphone, Moon, ShieldCheck, SlidersHorizontal, Sun, Users } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { NavLink, Outlet } from 'react-router'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -36,6 +36,7 @@ const NAV: NavItem[] = [
   { to: '/marketing', label: 'Маркетинг', icon: <Megaphone /> },
   { to: '/model', label: 'Модель', icon: <SlidersHorizontal />, adminOnly: true },
   { to: '/quality', label: 'Качество модели', icon: <ShieldCheck /> },
+  { to: '/mail', label: 'Письма', icon: <Mail /> },
   { to: '/data', label: 'Данные', icon: <Database />, adminOnly: true },
 ]
 

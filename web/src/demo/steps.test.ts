@@ -31,7 +31,7 @@ function makeCtx(overrides: Partial<DemoApi> = {}, isAdmin = true) {
   const calls: string[] = []
   const simulatorCalls: SimulatorCommand[] = []
   const api: DemoApi = {
-    topHighRisk: vi.fn(async (): Promise<TopCustomer | null> => ({ id: 7, email: 'user-0007@example.test', nextAction: 'Позвонить клиенту' })),
+    topHighRisk: vi.fn(async (): Promise<TopCustomer | null> => ({ id: 7, email: 'user-0007@example.test', nextAction: 'Написать клиенту' })),
     settings: vi.fn(async () => settings),
     patchWeight: vi.fn(async () => settings),
     resetSettings: vi.fn(async () => {
@@ -118,7 +118,7 @@ describe('scenario', () => {
     const { ctx } = makeCtx()
     const message = await step('customer').run?.(ctx)
     expect(ctx.navigate).toHaveBeenCalledWith('/customers/7?level=high')
-    expect(message).toContain('Позвонить клиенту')
+    expect(message).toContain('Написать клиенту')
   })
 
   it('explains when nobody is at high risk', async () => {
@@ -131,7 +131,7 @@ describe('scenario', () => {
   it('follows the jury order', () => {
     expect(DEMO_STEPS.map((s) => s.id)).toEqual([
       'overview',
-      'call-today',
+      'contact-today',
       'chart',
       'customers',
       'customer',
@@ -144,12 +144,12 @@ describe('scenario', () => {
     ])
   })
 
-  it('shows the call list with the CSV button on the overview', async () => {
+  it('shows the contact list with the mass email button on the overview', async () => {
     const { ctx } = makeCtx()
-    await step('call-today').run?.(ctx)
+    await step('contact-today').run?.(ctx)
     expect(ctx.navigate).toHaveBeenCalledWith('/')
     const targets = vi.mocked(ctx.spotlight).mock.calls[0]?.[0] ?? []
-    expect(targets.map((t) => t.selector)).toEqual(['[data-testid="call-today"]', '[data-testid="call-today-csv"]'])
+    expect(targets.map((t) => t.selector)).toEqual(['[data-testid="contact-today"]', '[data-testid="contact-today-mass"]'])
   })
 
   it('turns on what-if on the model page without saving anything', async () => {

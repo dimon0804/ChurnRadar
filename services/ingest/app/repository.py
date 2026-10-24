@@ -140,6 +140,13 @@ async def replace_snapshot(
 
         if reset_history:
             await conn.execute("TRUNCATE source.status_history")
+            # другие клиенты: визиты и соответствия clientID прежних аккаунтов к ним не относятся.
+            # DELETE, а не TRUNCATE: эти таблицы читает scoring, MVCC-снимок ему не помешает
+            await conn.execute(
+                "DELETE FROM source.web_activity; DELETE FROM source.web_visits_daily; "
+                "DELETE FROM source.metrica_client_ids; "
+                "UPDATE source.connectors SET cursor = '{}'::jsonb"
+            )
             prior = {}
         else:
             prior = {

@@ -32,6 +32,10 @@ from svckit.outbox import OutboxRelay
 
 from app import metrics
 from app.config import settings
+from app.connectors import store as connector_store
+from app.connectors.api import build_router as connectors_router
+from app.connectors.http import RetryPolicy
+from app.connectors.scheduler import Scheduler
 from app.repository import OUTBOX_TABLE, WriteResult, apply_changes, replace_snapshot
 from app.schemas import (
     SNAPSHOT,
@@ -45,7 +49,8 @@ from app.schemas import (
 log = structlog.get_logger()
 
 current_user = make_current_user(settings)
-AdminUser = Annotated[User, Depends(make_require_admin(current_user))]
+require_admin = make_require_admin(current_user)
+AdminUser = Annotated[User, Depends(require_admin)]
 Pool = Annotated[Any, Depends(get_pool)]
 
 
@@ -148,8 +153,25 @@ async def lifespan(app: FastAPI):
         seeding = asyncio.create_task(seed_when_schema_ready(app))
     except Exception:
         log.exception("seed_failed")
+    if settings.connectors_enabled:
+        relay = app.state.relay
+        app.state.scheduler = Scheduler(
+            app.state.pool, settings.database_url,
+            tick_s=settings.connectors_tick_s, run_timeout_s=settings.connector_run_timeout_s,
+            http_timeout_s=settings.connector_http_timeout_s,
+            retry=RetryPolicy(attempts=max(1, settings.connector_http_attempts),
+                              base_delay_s=settings.connector_retry_base_s),
+            failure_backoff_s=settings.connector_failure_backoff_s,
+            allowed=settings.connector_allowed_hosts,
+            on_written=lambda: kick_relay(relay),
+            bootstrap=lambda conn: connector_store.bootstrap_from_settings(conn, settings),
+        )
+        app.state.scheduler.start()
     log.info("ingest_started")
     yield
+    scheduler = getattr(app.state, "scheduler", None)
+    if scheduler is not None:
+        await scheduler.stop()
     if seeding is not None:
         seeding.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -245,6 +267,8 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         _observe_write("changes", result)
         kick_relay(relay)
         return EventsAccepted(accepted=total)
+
+    app.include_router(connectors_router(require_admin, lambda: settings.connector_allowed_hosts))
 
     install_probes(app, readiness)
 

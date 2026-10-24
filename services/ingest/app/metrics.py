@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from prometheus_client import CollectorRegistry, Counter, Histogram
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 from svckit.metrics import http_duration_histogram
 from svckit.outbox import OutboxMetrics
 
@@ -31,3 +31,31 @@ parse_duration = Histogram(
     buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60),
 )
 http_duration = http_duration_histogram(registry)
+
+# --- коннекторы (pull) --------------------------------------------------------------------
+connector_runs_total = Counter(
+    "connector_runs_total", "Запуски коннекторов по результату", ["source", "result"], registry=registry
+)
+connector_records_total = Counter(
+    "connector_records_total", "Записи, принятые коннектором из источника", ["source"], registry=registry
+)
+connector_http_retries_total = Counter(
+    "connector_http_retries_total", "Повторные HTTP-запросы коннектора к источнику", ["source"], registry=registry
+)
+connector_run_duration = Histogram(
+    "connector_run_duration_seconds", "Длительность запуска коннектора", ["source"], registry=registry,
+    buckets=(0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600, 900),
+)
+# Значения из source.connectors: их обновляет каждая реплика ingest, поэтому в правилах — max by (source).
+connector_last_success_timestamp = Gauge(
+    "connector_last_success_timestamp",
+    "Время последнего успешного запуска (unix, с); до первого успеха — момент включения",
+    ["source"], registry=registry,
+)
+connector_enabled = Gauge("connector_enabled", "Коннектор включён (1) или выключен (0)", ["source"], registry=registry)
+connector_interval_seconds = Gauge(
+    "connector_interval_seconds", "Расписание коннектора: интервал между запусками", ["source"], registry=registry
+)
+connector_leader = Gauge(
+    "connector_leader", "Эта реплика ingest сейчас исполняет коннекторы (1) или ждёт (0)", registry=registry
+)

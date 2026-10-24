@@ -55,6 +55,7 @@ COOKIE_SECURE=true
 POSTGRES_PASSWORD=$(secret)
 METRICS_TOKEN=$(secret)
 ADMIN_PASSWORD=$(secret)
+MARKETER_PASSWORD=$(secret)
 ANALYST_PASSWORD=$(secret)
 GRAFANA_ADMIN_PASSWORD=$(secret)
 OIDC_CLIENT_SECRET=$(secret)
@@ -67,6 +68,7 @@ AUTHENTIK_DB_PASSWORD=$(secret)
 AUTHENTIK_ADMIN_PASSWORD=$(secret)
 SSO_DEMO_ADMIN_PASSWORD=$(secret)
 SSO_DEMO_MARKETER_PASSWORD=$(secret)
+SSO_DEMO_ANALYST_PASSWORD=$(secret)
 SSO_DEMO_OUTSIDER_PASSWORD=$(secret)
 MAILPIT_PASSWORD=$(secret)
 # на 2 ядрах хватает по одной реплике; HPA и реплики показывает Kubernetes
@@ -77,6 +79,14 @@ ALERTS_REPLICAS=1
 ENV
   umask 022
 fi
+
+# .env, созданный до появления роли маркетолога, дополняем, иначе учётки получат демо-пароли
+for key in MARKETER_PASSWORD SSO_DEMO_ANALYST_PASSWORD; do
+  if ! grep -q "^$key=" .env; then
+    log "Добавляем $key в .env"
+    echo "$key=$(secret)" >> .env
+  fi
+done
 
 log "Mailpit под паролем"
 htpasswd -bc /etc/nginx/churnradar-mailpit.htpasswd mail "$(grep '^MAILPIT_PASSWORD=' .env | cut -d= -f2)" 2>/dev/null
@@ -100,5 +110,5 @@ fi
 systemctl reload nginx
 
 log "Готово: https://$DOMAIN"
-grep -E '^(ADMIN_PASSWORD|ANALYST_PASSWORD|GRAFANA_ADMIN_PASSWORD|MAILPIT_PASSWORD|AUTHENTIK_ADMIN_PASSWORD|SSO_DEMO_[A-Z]+_PASSWORD)=' .env \
+grep -E '^(ADMIN_PASSWORD|MARKETER_PASSWORD|ANALYST_PASSWORD|GRAFANA_ADMIN_PASSWORD|MAILPIT_PASSWORD|AUTHENTIK_ADMIN_PASSWORD|SSO_DEMO_[A-Z]+_PASSWORD)=' .env \
   | sed 's/^/  /'

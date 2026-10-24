@@ -83,7 +83,10 @@ def build_message(config: MailConfig, mail: Mail) -> EmailMessage:
     for item in mail.attachments:
         maintype, _, subtype = item.content_type.partition("/")
         msg.add_attachment(
-            item.content, maintype=maintype or "application", subtype=subtype or "octet-stream", filename=item.filename
+            item.content,
+            maintype=maintype or "application",
+            subtype=subtype or "octet-stream",
+            filename=item.filename,
         )
     return msg
 

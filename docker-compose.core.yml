@@ -1,0 +1,127 @@
+# Временный compose для проверки ядра (ingest, scoring, api, simulator) без гейтвея и фронта.
+# Запуск: docker compose -f docker-compose.core.yml up -d --build
+# Заголовки X-User-* вместо гейтвея подставляет AUTH_DEV_USER (только для локальной проверки).
+name: churnradar-core
+
+x-common-env: &common-env
+  DATABASE_URL: postgresql://churn:churn@postgres:5432/churn
+  NATS_URL: nats://nats:4222
+  REDIS_URL: redis://redis:6379/0
+  LOG_LEVEL: INFO
+  METRICS_TOKEN: churn-metrics-token
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: churn
+      POSTGRES_PASSWORD: churn
+      POSTGRES_DB: churn
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U churn -d churn"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes:
+      - natsdata:/data
+    ports:
+      - "127.0.0.1:4222:4222"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz?js-enabled-only=true"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: services/migrate/Dockerfile
+    environment:
+      <<: *common-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  ingest:
+    build:
+      context: .
+      dockerfile: services/ingest/Dockerfile
+    environment:
+      <<: *common-env
+      SEED_ON_START: "true"
+      SEED_REFERENCE_TIME: "2026-10-19T15:00:00Z"
+      AUTH_DEV_USER: ${AUTH_DEV_USER:-admin}
+    ports:
+      - "127.0.0.1:8002:8002"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      nats:
+        condition: service_healthy
+
+  scoring:
+    build:
+      context: .
+      dockerfile: services/scoring/Dockerfile
+    environment:
+      <<: *common-env
+      RESCORE_INTERVAL_S: "60"
+    ports:
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      nats:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    environment:
+      <<: *common-env
+      SIMULATOR_URL: http://simulator:8003
+      AUTH_DEV_USER: ${AUTH_DEV_USER:-admin}
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  simulator:
+    build:
+      context: .
+      dockerfile: services/simulator/Dockerfile
+    environment:
+      <<: *common-env
+      INGEST_URL: http://ingest:8002
+    ports:
+      - "127.0.0.1:8003:8003"
+    depends_on:
+      ingest:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  natsdata:

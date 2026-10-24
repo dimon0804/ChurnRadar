@@ -41,6 +41,21 @@ def roc_curve(y: np.ndarray, score: np.ndarray) -> tuple[np.ndarray, np.ndarray]
     return np.r_[0.0, fp / neg], np.r_[0.0, tp / pos]
 
 
+def roc_on_grid(y: np.ndarray, score: np.ndarray, grid: np.ndarray) -> np.ndarray:
+    """TPR ROC-кривой в заданных точках FPR.
+
+    Между порогами кривая линейна (как при случайном разбиении ничьих). На вертикальном
+    участке берётся верхняя точка: последний порог с FPR ≤ g, дальше прямая к следующему.
+    """
+    fpr, tpr = roc_curve(y, score)
+    grid = np.asarray(grid, dtype=float)
+    i = np.clip(np.searchsorted(fpr, grid, side="right") - 1, 0, len(fpr) - 1)
+    j = np.minimum(i + 1, len(fpr) - 1)
+    span = fpr[j] - fpr[i]
+    weight = np.divide(grid - fpr[i], span, out=np.zeros_like(grid), where=span > 0)
+    return tpr[i] + weight * (tpr[j] - tpr[i])
+
+
 def average_precision(y: np.ndarray, score: np.ndarray) -> float:
     """PR AUC как average precision: Σ (R_i − R_{i−1}) · P_i по уникальным порогам."""
     y = np.asarray(y, dtype=bool)

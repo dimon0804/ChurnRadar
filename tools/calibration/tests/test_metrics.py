@@ -73,3 +73,14 @@ def test_bootstrap_ci_contains_point_estimate():
     y = rng.random(500) < score
     low, high = metrics.bootstrap_ci(metrics.roc_auc, y, score, 100, np.random.default_rng(4))
     assert low < metrics.roc_auc(y, score) < high
+
+
+def test_roc_on_grid_follows_curve():
+    # Точки ROC: (0,0) (0,0.5) (0.5,0.5) (0.5,1) (1,1) — ступенька без ничьих.
+    y = np.array([1, 0, 1, 0])
+    score = np.array([0.9, 0.8, 0.7, 0.6])
+    tpr = metrics.roc_on_grid(y, score, np.array([0.0, 0.25, 0.5, 0.75, 1.0]))
+    assert tpr.tolist() == pytest.approx([0.5, 0.5, 1.0, 1.0, 1.0])
+    # Все score равны: кривая — диагональ.
+    flat = metrics.roc_on_grid(y, np.zeros(4), np.array([0.0, 0.3, 1.0]))
+    assert flat.tolist() == pytest.approx([0.0, 0.3, 1.0])

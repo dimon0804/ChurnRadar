@@ -4,6 +4,7 @@ import type {
   CustomerDetail,
   CustomerPage,
   LoginRequest,
+  ModelQuality,
   ModelSettings,
   ModelSettingsPatch,
   SettingsHistory,
@@ -33,6 +34,7 @@ export const api = {
   resetSettings: () => request<ModelSettings>('/api/v1/model/settings/reset', { method: 'POST' }),
   settingsHistory: (limit = 50, signal?: AbortSignal) =>
     request<SettingsHistory>('/api/v1/model/settings/history', { query: { limit }, signal }),
+  modelQuality: (signal?: AbortSignal) => request<ModelQuality>('/api/v1/model/quality', { signal }),
 
   putSnapshot: (body: SourceSnapshot) =>
     request<SnapshotAccepted>('/api/v1/source/snapshot', { method: 'PUT', body }),
@@ -51,5 +53,6 @@ export const queryKeys = {
   summary: ['summary'] as const,
   settings: ['settings'] as const,
   history: ['settings-history'] as const,
+  modelQuality: ['model-quality'] as const,
   simulator: ['simulator'] as const,
 }

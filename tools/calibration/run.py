@@ -30,6 +30,14 @@ NAMES = {
     "segment_oracle": "скрытый сегмент (недоступен модели)",
 }
 LEVEL_NAMES = {"low": "низкий", "medium": "средний", "high": "высокий", "all": "все"}
+# Прогоны на устойчивость: что меняем относительно основного и какие сценарии при этом считаем.
+ROBUSTNESS = (
+    ("seed 43", {"seed": 43}, SCENARIOS),
+    ("seed 44", {"seed": 44}, SCENARIOS),
+    ("темп потока 1/12 в сутки", {"stream_rate": 1 / 12}, ("stream",)),
+    ("темп потока 1/3 в сутки", {"stream_rate": 1 / 3}, ("stream",)),
+    ("разброс поведения сильнее (concentration 2)", {"concentration": 2.0}, ("calendar",)),
+)
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -61,12 +69,28 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--out", type=Path, default=ROOT / "tools" / "calibration" / "results")
     p.add_argument("--img", type=Path, default=ROOT / "docs" / "img" / "calibration")
     p.add_argument("--no-plots", action="store_true")
+    p.add_argument(
+        "--no-robustness",
+        action="store_true",
+        help="не считать дополнительные прогоны с другими seed и параметрами (быстрее в 3 раза)",
+    )
     args = p.parse_args(argv)
     if not 100 <= args.accounts <= 200_000:
         p.error("--accounts должен быть от 100 до 200000")
     if not 1 <= args.horizon <= 365:
         p.error("--horizon должен быть от 1 до 365")
     return args
+
+
+def json_safe(value: Any) -> Any:
+    """NaN и бесконечности в null: так results.json остаётся валидным JSON для любого читателя."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {k: json_safe(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [json_safe(v) for v in value]
+    return value
 
 
 def fingerprint(directory: Path) -> str:
@@ -143,6 +167,39 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, evaluate.Ac
     return report, tables
 
 
+def robustness_row(label: str, args: argparse.Namespace, report: dict[str, Any]) -> dict[str, Any]:
+    scenarios = {}
+    for name, sc in report["scenarios"].items():
+        high = next(row for row in sc["levels"] if row["level"] == "high")
+        scenarios[name] = {
+            "roc_auc": sc["ranking"]["churned"]["model"]["roc_auc"],
+            "pr_auc": sc["ranking"]["churned"]["model"]["pr_auc"],
+            "churn_lift_high": high.get("churn_lift", math.nan),
+            "base_churned": sc["base_rates"]["churned"],
+        }
+    return {
+        "label": label,
+        "seed": args.seed,
+        "stream_rate": args.stream_rate,
+        "concentration": args.concentration,
+        "scenarios": scenarios,
+    }
+
+
+def run_robustness(args: argparse.Namespace, main_report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Основной прогон и несколько соседних: другие seed, темп потока и разброс поведения."""
+    rows = [robustness_row(f"seed {args.seed} (основной)", args, main_report)]
+    for label, overrides, scenarios in ROBUSTNESS:
+        variant = argparse.Namespace(**{**vars(args), **overrides, "bootstrap": 0})
+        variant.scenarios = [name for name in scenarios if name in args.scenarios]
+        if not variant.scenarios:
+            continue
+        _log(f"устойчивость: {label}")
+        report, _ = run(variant)
+        rows.append(robustness_row(label, variant, report))
+    return rows
+
+
 # --- вывод ----------------------------------------------------------------------------------------
 
 
@@ -170,7 +227,8 @@ def ranking_table(ranking: dict[str, dict[str, Any]]) -> list[str]:
     for name, row in ranking.items():
         auc = _f(row["roc_auc"])
         pr = _f(row["pr_auc"])
-        if "roc_auc_ci" in row and not math.isnan(row["roc_auc_ci"][0]):
+        low = row.get("roc_auc_ci", [None])[0]
+        if low is not None and not math.isnan(low):
             auc += f" [{_f(row['roc_auc_ci'][0])}–{_f(row['roc_auc_ci'][1])}]"
             pr += f" [{_f(row['pr_auc_ci'][0])}–{_f(row['pr_auc_ci'][1])}]"
         lines.append(
@@ -226,6 +284,20 @@ def calibration_md(rows: list[dict[str, Any]]) -> list[str]:
             f"| {row['group']} | {row['n']} | {row['score_min']:.1f}–{row['score_max']:.1f} | "
             f"{_pct(row['predicted_share'])} | {_pct(row['actual_share'])} |"
         )
+    return lines
+
+
+def robustness_md(rows: list[dict[str, Any]]) -> list[str]:
+    lines = [
+        "| Прогон | stream ROC AUC | stream lift high | calendar ROC AUC | calendar lift high |",
+        "|---|---|---|---|---|",
+    ]
+    for row in rows:
+        cells = []
+        for name in SCENARIOS:
+            sc = row["scenarios"].get(name)
+            cells += [_f(sc["roc_auc"]), _f(sc["churn_lift_high"], 2)] if sc else ["—", "—"]
+        lines.append(f"| {row['label']} | " + " | ".join(cells) + " |")
     return lines
 
 
@@ -294,6 +366,8 @@ def to_markdown(report: dict[str, Any]) -> str:
             f"События будущего: {', '.join(f'{k} {v}' for k, v in sc['events'].items())}.",
             "",
         ]
+    if report.get("robustness"):
+        out += ["## Устойчивость", "", *robustness_md(report["robustness"]), ""]
     return "\n".join(out)
 
 
@@ -303,8 +377,11 @@ def main(argv: list[str] | None = None) -> int:
             stream_.reconfigure(encoding="utf-8")
     args = parse_args(argv)
     report, tables = run(args)
+    if not args.no_robustness:
+        report["robustness"] = run_robustness(args, report)
     args.out.mkdir(parents=True, exist_ok=True)
-    (args.out / "results.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = json.dumps(json_safe(report), ensure_ascii=False, indent=2, allow_nan=False)
+    (args.out / "results.json").write_bytes((payload + "\n").encode("utf-8"))
     markdown = to_markdown(report)
     (args.out / "tables.md").write_text(markdown + "\n", encoding="utf-8")
     if not args.no_plots:

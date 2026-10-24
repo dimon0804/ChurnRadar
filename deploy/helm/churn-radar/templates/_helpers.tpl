@@ -104,6 +104,40 @@ true
 {{- default (printf "%s-alerts" (include "cr.fullname" .)) .Values.secrets.alerts.existingSecret -}}
 {{- end -}}
 
+{{/* Secret с секретом OIDC-клиента внешнего IdP */}}
+{{- define "cr.ssoSecretName" -}}
+{{- default (printf "%s-sso" (include "cr.fullname" .)) .Values.sso.existingSecret -}}
+{{- end -}}
+
+{{/* переменные SSO для auth (ConfigMap); секрет клиента — в cr.ssoSecretName */}}
+{{- define "cr.ssoEnv" -}}
+{{- $sso := .Values.sso -}}
+OIDC_ENABLED: {{ $sso.oidc.enabled | toString | quote }}
+SAML_ENABLED: {{ $sso.saml.enabled | toString | quote }}
+SSO_ADMIN_GROUPS: {{ $sso.adminGroups | quote }}
+SSO_ANALYST_GROUPS: {{ $sso.analystGroups | quote }}
+SSO_DEFAULT_ROLE: {{ $sso.defaultRole | quote }}
+{{- if $sso.oidc.enabled }}
+OIDC_PUBLIC_ISSUER: {{ required "sso.oidc.issuer обязателен при sso.oidc.enabled" $sso.oidc.issuer | quote }}
+OIDC_INTERNAL_ISSUER: {{ default $sso.oidc.issuer $sso.oidc.internalIssuer | quote }}
+OIDC_CLIENT_ID: {{ $sso.oidc.clientId | quote }}
+OIDC_SCOPES: {{ $sso.oidc.scopes | quote }}
+OIDC_DISPLAY_NAME: {{ $sso.oidc.displayName | quote }}
+{{- end }}
+{{- if $sso.saml.enabled }}
+{{- if not (or $sso.saml.idpMetadataUrl $sso.saml.idpMetadataXml) }}
+{{- fail "sso.saml: нужен idpMetadataUrl или idpMetadataXml" }}
+{{- end }}
+SAML_IDP_METADATA_URL: {{ $sso.saml.idpMetadataUrl | quote }}
+SAML_IDP_METADATA_XML: {{ $sso.saml.idpMetadataXml | quote }}
+SAML_IDP_PUBLIC_URL: {{ $sso.saml.idpPublicUrl | quote }}
+SAML_SP_ENTITY_ID: {{ $sso.saml.spEntityId | quote }}
+SAML_ROLES_ATTRIBUTE: {{ $sso.saml.rolesAttribute | quote }}
+SAML_GROUPS_ATTRIBUTE: {{ $sso.saml.groupsAttribute | quote }}
+SAML_DISPLAY_NAME: {{ $sso.saml.displayName | quote }}
+{{- end }}
+{{- end -}}
+
 {{- define "cr.postgresHost" -}}
 {{- include "cr.componentName" (dict "root" . "component" "postgresql") -}}
 {{- end -}}

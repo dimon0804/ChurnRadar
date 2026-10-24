@@ -83,7 +83,7 @@ spec:
   routes:
     {{- /* public auth endpoints */}}
     - kind: Rule
-      match: {{ printf "%s(Path(`/api/v1/auth/login`) || Path(`/api/v1/auth/providers`) || PathPrefix(`/api/v1/auth/oidc/`))" $hostPrefix | quote }}
+      match: {{ printf "%s(Path(`/api/v1/auth/login`) || Path(`/api/v1/auth/providers`) || PathPrefix(`/api/v1/auth/oidc/`) || PathPrefix(`/api/v1/auth/saml/`))" $hostPrefix | quote }}
       priority: 200
       middlewares:
         - name: {{ $fullname }}-strip-user-headers

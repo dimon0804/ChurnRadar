@@ -156,12 +156,14 @@ auth:
   image:
     repository: churn-radar-auth
   secretKeys: [DATABASE_URL, REDIS_URL, METRICS_TOKEN, ADMIN_PASSWORD, ANALYST_PASSWORD]
+  # секрет OIDC-клиента (OIDC_CLIENT_SECRET); нет Secret — переменной нет
+  envFromSecret: '{{ include "cr.ssoSecretName" . }}'
   env:
     SERVICE_NAME: auth
-    # внешний адрес панели (redirect после входа, OIDC callback)
+    # внешний адрес панели (redirect после входа, OIDC callback, ACS и entityID SAML)
     PUBLIC_URL: http://localhost:8080
     COOKIE_SECURE: "false"
-    OIDC_ENABLED: "false"
+    # OIDC_* и SAML_* собираются из блока sso ниже
 
 notifier:
   enabled: true
@@ -473,6 +475,49 @@ gateway:
     app.kubernetes.io/name: traefik
   # web (nginx) сам выставляет заголовки безопасности
   securityHeaders: false
+
+# Вход через внешний IdP (Authentik, Keycloak, Entra ID и любой OIDC/SAML-провайдер).
+# Сам IdP чарт не ставит: это отдельная система, у компании она обычно уже есть.
+sso:
+  # группы IdP -> роли панели (через запятую). Пустая роль по умолчанию — без группы входа нет.
+  adminGroups: churn-admins
+  analystGroups: churn-analysts
+  defaultRole: ""
+  # готовый Secret с ключом OIDC_CLIENT_SECRET; пусто — чарт создаст <релиз>-sso из oidc.clientSecret
+  existingSecret: ""
+  oidc:
+    enabled: false
+    displayName: Войти через Authentik (OIDC)
+    # публичный issuer, как его видит браузер, например https://auth.example.com/application/o/churn-radar/
+    issuer: ""
+    # адрес внутри кластера для discovery, обмена кода и JWKS; пусто — тот же, что issuer
+    internalIssuer: ""
+    clientId: churn-radar
+    clientSecret: ""
+    # churn-radar — scope с claim roles из blueprint'а Authentik; для других IdP хватит openid profile email
+    scopes: openid profile email
+  saml:
+    enabled: false
+    displayName: Войти через Authentik (SAML)
+    # метаданные IdP: URL (качаются auth при старте и раз в 10 минут) или XML целиком
+    idpMetadataUrl: ""
+    idpMetadataXml: ""
+    # публичный адрес IdP, если метаданные качаются по внутреннему адресу
+    idpPublicUrl: ""
+    # пусто — <PUBLIC_URL>/api/v1/auth/saml/metadata
+    spEntityId: ""
+    rolesAttribute: churn-radar-role
+    groupsAttribute: http://schemas.xmlsoap.org/claims/Group
+  # исходящие auth -> IdP (NetworkPolicy). Применяются, когда включён oidc или saml.
+  # По умолчанию — HTTPS наружу кроме приватных сетей; IdP внутри кластера — своё правило.
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16]
+      ports:
+        - port: 443
+          protocol: TCP
 
 networkPolicy:
   enabled: true

@@ -12,7 +12,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PACKAGES=(libs/riskcore libs/svckit services/migrate services/ingest services/api services/scoring services/simulator)
+PACKAGES=(libs/riskcore libs/svckit services/migrate services/ingest services/api services/scoring services/simulator services/alerts)
 
 integration=0
 lint=0

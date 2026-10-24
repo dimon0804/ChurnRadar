@@ -16,7 +16,9 @@ servers:
     description: Локальный запуск через Docker Compose
 tags:
   - name: auth
-    description: Вход, сессия, SSO (OIDC и SAML)
+    description: Вход, сессия, SSO (OIDC и SAML), свой профиль
+  - name: users
+    description: Управление пользователями панели (только администратор)
   - name: customers
     description: Клиенты и их оценки риска
   - name: actions
@@ -77,6 +79,195 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/User' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      tags: [auth]
+      summary: Сменить свой email
+      operationId: updateProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: [string, 'null'], maxLength: 254, description: 'null или пустая строка — убрать' }
+      responses:
+        '200':
+          description: Обновлённый профиль
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/auth/me/password:
+    post:
+      tags: [auth]
+      summary: Сменить свой пароль
+      description: Только для входа по паролю. Остальные сессии пользователя закрываются, текущая остаётся.
+      operationId: changePassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string, minLength: 1, maxLength: 256 }
+                new_password: { type: string, minLength: 8, maxLength: 256 }
+      responses:
+        '204': { description: Пароль изменён }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/auth/users:
+    get:
+      tags: [users]
+      summary: Пользователи панели (только admin)
+      operationId: listUsers
+      parameters:
+        - name: q
+          in: query
+          description: Поиск по логину, имени и email
+          schema: { type: string, maxLength: 128 }
+      responses:
+        '200':
+          description: Список пользователей
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ManagedUser' } }
+                  total: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [users]
+      summary: Создать пользователя
+      description: |
+        С паролем, со сгенерированным временным паролем (поле password пустое, ответ вернёт его
+        один раз) или «только SSO» — учётка ждёт первого входа через Authentik с тем же логином.
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserCreate' }
+      responses:
+        '201':
+          description: Пользователь создан
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/ManagedUser' }
+                  temporary_password: { type: string, description: Показывается один раз }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Логин занят, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/auth/users/{user_id}:
+    parameters:
+      - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [users]
+      summary: Изменить имя, email, роль или статус
+      description: |
+        Себя заблокировать или понизить нельзя, последнего активного администратора — тоже (409).
+        При блокировке и смене роли все сессии пользователя сбрасываются.
+      operationId: updateUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserUpdate' }
+      responses:
+        '200':
+          description: Обновлённый пользователь
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: '#/components/schemas/ManagedUser' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Последний активный администратор, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [users]
+      summary: Удалить пользователя
+      operationId: deleteUser
+      responses:
+        '204': { description: Удалён }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Последний активный администратор, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /api/v1/auth/users/{user_id}/password:
+    parameters:
+      - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [users]
+      summary: Сбросить пароль
+      description: Пустой password — сгенерировать временный и вернуть один раз. Сессии пользователя сбрасываются.
+      operationId: resetUserPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password: { type: [string, 'null'], minLength: 8, maxLength: 256 }
+      responses:
+        '200':
+          description: Временный пароль
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [temporary_password]
+                properties:
+                  temporary_password: { type: string }
+        '204': { description: Задан пароль из запроса }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/auth/audit:
+    get:
+      tags: [users]
+      summary: Журнал действий с пользователями
+      operationId: userAudit
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        '200':
+          description: Последние записи, новые сверху
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/v1/auth/logout:
     post:
@@ -873,6 +1064,59 @@ components:
           type: array
           items: { type: string, enum: [admin, analyst] }
         auth_method: { type: string, enum: [password, oidc, saml] }
+        email:
+          type: [string, 'null']
+          description: Адрес для уведомлений; задаёт сам пользователь в профиле, админ или SSO
+
+    ManagedUser:
+      type: object
+      required: [id, username, display_name, email, role, status, source, has_password, created_at, last_login_at]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        display_name: { type: string }
+        email: { type: [string, 'null'] }
+        role: { type: string, enum: [admin, analyst] }
+        status: { type: string, enum: [active, blocked] }
+        source:
+          type: string
+          enum: [password, oidc, saml, sso]
+          description: '`sso` — заведён «только для SSO» и ещё ни разу не входил'
+        has_password: { type: boolean }
+        created_at: { type: [string, 'null'], format: date-time }
+        last_login_at: { type: [string, 'null'], format: date-time }
+
+    UserCreate:
+      type: object
+      required: [username]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._@-]*$' }
+        display_name: { type: string, maxLength: 128 }
+        email: { type: [string, 'null'], maxLength: 254 }
+        role: { type: string, enum: [admin, analyst], default: analyst }
+        password: { type: [string, 'null'], minLength: 8, maxLength: 256 }
+        sso_only: { type: boolean, default: false }
+
+    UserUpdate:
+      type: object
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 128 }
+        email: { type: [string, 'null'], maxLength: 254 }
+        role: { type: string, enum: [admin, analyst] }
+        status: { type: string, enum: [active, blocked] }
+
+    AuditEntry:
+      type: object
+      required: [id, actor, action, target, details, created_at]
+      properties:
+        id: { type: integer }
+        actor: { type: string }
+        action:
+          type: string
+          examples: [user.create, user.update, user.role, user.block, user.unblock, user.password_reset, user.delete]
+        target: { type: [string, 'null'] }
+        details: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
 
     RiskLevel:
       type: string

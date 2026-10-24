@@ -355,6 +355,12 @@ USERNAME_ATTRS = (
     "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",
     "email",
 )
+EMAIL_ATTRS = (
+    "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",
+    "email",
+    "mail",
+    "urn:oid:0.9.2342.19200300.100.1.3",
+)
 NAME_ATTRS = (
     "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",
     "displayName",

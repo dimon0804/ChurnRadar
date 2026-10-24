@@ -24,6 +24,7 @@ class OidcIdentity:
     username: str
     display_name: str
     roles: list[str]
+    email: str | None = None
 
 
 def pkce_pair() -> tuple[str, str]:
@@ -197,4 +198,7 @@ def identity_from_claims(claims: dict, settings: Settings) -> OidcIdentity:
     roles = map_roles(settings, raw_roles, groups)
     username = claims.get("preferred_username") or claims.get("email") or claims["sub"]
     display = claims.get("name") or username
-    return OidcIdentity(subject=claims["sub"], username=username, display_name=display, roles=roles)
+    email = claims.get("email")
+    return OidcIdentity(
+        subject=claims["sub"], username=username, display_name=display, roles=roles, email=email or None
+    )

@@ -18,11 +18,12 @@ from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .accounts import SsoDenied, clean_email, sso_sign_in
 from .config import Settings, get_settings
 from .observability import LOGINS, VERIFY, RequestContextMiddleware, request_id_var, setup_logging
 from .oidc import OidcClient, OidcError, pkce_pair
 from .roles import map_roles
-from .saml import NAME_ATTRS, USERNAME_ATTRS, SamlClient, SamlError, new_request_id
+from .saml import EMAIL_ATTRS, NAME_ATTRS, USERNAME_ATTRS, SamlClient, SamlError, new_request_id
 from .sessions import (
     SAML_REQUEST_PREFIX,
     LoginRateLimiter,
@@ -33,6 +34,7 @@ from .sessions import (
     now,
 )
 from .users import PostgresUserRepo, UserRepo
+from .users_api import register_user_routes
 
 log = logging.getLogger("auth")
 
@@ -145,9 +147,13 @@ def create_app(
         return error_response(exc.status, exc.code, exc.message, exc.headers)
 
     @app.exception_handler(RequestValidationError)
-    async def _validation(_: Request, exc: RequestValidationError):
+    async def _validation(request: Request, exc: RequestValidationError):
         details = [{"loc": list(e["loc"]), "msg": e["msg"]} for e in exc.errors()]
-        return error_response(422, "validation_error", "Проверьте логин и пароль", details=details)
+        if request.url.path == "/api/v1/auth/login":
+            return error_response(422, "validation_error", "Проверьте логин и пароль", details=details)
+        # для форм управления пользователями — первое понятное сообщение валидатора
+        first = next((d["msg"].removeprefix("Value error, ") for d in details), "Проверьте введённые данные")
+        return error_response(422, "validation_error", first, details=details)
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(_: Request, exc: StarletteHTTPException):
@@ -199,6 +205,16 @@ def create_app(
             raise ApiError(401, "unauthorized", "Нужно войти в систему")
         return session
 
+    register_user_routes(
+        app,
+        ctx=ctx,
+        current_session=current_session,
+        extract_token=extract_token,
+        same_origin=same_origin,
+        hasher=hasher,
+        api_error=ApiError,
+    )
+
     # ---- public auth API -------------------------------------------------------------
 
     @app.post("/api/v1/auth/login")
@@ -222,13 +238,18 @@ def create_app(
             ok = hasher.verify(user.password_hash if user and user.password_hash else DUMMY_HASH, body.password)
         except (VerificationError, InvalidHashError):
             ok = False
-        ok = ok and user is not None and user.is_active
+        ok = ok and user is not None
+        blocked = ok and not user.is_active
 
-        await st.repo.record_login(body.username, "password", ok, ip)
+        await st.repo.record_login(body.username, "password", ok and not blocked, ip)
         if not ok:
             await st.limiter.register_failure(ip, body.username)
             LOGINS.labels("password", "failure").inc()
             raise ApiError(401, "invalid_credentials", "Неверный логин или пароль")
+        if blocked:
+            # пароль верный, поэтому честно говорим, в чём дело
+            LOGINS.labels("password", "blocked").inc()
+            raise ApiError(403, "account_blocked", "Учётная запись заблокирована. Обратитесь к администратору")
 
         await st.limiter.reset(ip, body.username)
         if user.password_hash and hasher.check_needs_rehash(user.password_hash):
@@ -236,13 +257,19 @@ def create_app(
         session = Session(user.id, user.username, user.display_name, user.roles, "password", now())
         token = await st.sessions.create(session)
         LOGINS.labels("password", "success").inc()
-        response = JSONResponse(session.public())
+        response = JSONResponse({**session.public(), "email": user.email})
         set_session_cookie(response, token)
         return response
 
     @app.get("/api/v1/auth/me")
-    async def me(session: Annotated[Session, Depends(current_session)]):
-        return session.public()
+    async def me(request: Request, st: Ctx, session: Annotated[Session, Depends(current_session)]):
+        user = await st.repo.get_user(session.user_id)
+        if user is None or not user.is_active:
+            # удалён или заблокирован, а сессия каким-то образом пережила сброс
+            token, _ = extract_token(request)
+            await st.sessions.delete(token)
+            raise ApiError(401, "unauthorized", "Нужно войти в систему")
+        return {**session.public(), "display_name": user.display_name, "email": user.email}
 
     @app.post("/api/v1/auth/logout", status_code=204)
     async def logout(request: Request, st: Ctx, session: Annotated[Session, Depends(current_session)]):
@@ -271,18 +298,23 @@ def create_app(
         subject: str,
         username: str,
         display: str,
+        email: str | None,
         roles: list[str],
         ip: str,
         next_url: str,
         status_code: int = 302,
     ) -> Response:
         """Same session as after a password login, then back to the panel."""
-        if not roles:
-            log.warning("sso user without panel role", extra={"fields": {"method": method, "username": username}})
-            LOGINS.labels(method, "forbidden").inc()
+        try:
+            user = await sso_sign_in(st.repo, method, subject, username, display, clean_email(email), roles)
+        except SsoDenied as exc:
+            log.warning(
+                "sso login denied",
+                extra={"fields": {"method": method, "username": username, "reason": str(exc)}},
+            )
+            LOGINS.labels(method, exc.code).inc()
             await st.repo.record_login(username, method, False, ip)
-            return RedirectResponse("/login?error=forbidden", status_code=status_code)
-        user = await st.repo.upsert_sso_user(method, subject, username, display, roles)
+            return RedirectResponse(f"/login?error={exc.code}", status_code=status_code)
         await st.repo.record_login(user.username, method, True, ip)
         session = Session(user.id, user.username, user.display_name, user.roles, method, now())
         token = await st.sessions.create(session)
@@ -332,6 +364,7 @@ def create_app(
             identity.subject,
             identity.username,
             identity.display_name,
+            identity.email,
             identity.roles,
             client_ip(request),
             saved["next"],
@@ -392,8 +425,9 @@ def create_app(
         )
         username = assertion.first(*USERNAME_ATTRS) or assertion.subject
         display = assertion.first(*NAME_ATTRS) or username
+        email = assertion.first(*EMAIL_ATTRS) or None
         return await start_sso_session(
-            st, "saml", assertion.subject, username[:128], display, roles, ip, saved["next"], 303
+            st, "saml", assertion.subject, username[:128], display, email, roles, ip, saved["next"], 303
         )
 
     # ---- gateway hooks -----------------------------------------------------------------

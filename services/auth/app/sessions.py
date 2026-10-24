@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from redis.asyncio import Redis
 
 SESSION_PREFIX = "cr:sess:"
+USER_SESSIONS_PREFIX = "cr:usess:"
 RATE_PREFIX = "cr:rl:login:"
 OIDC_STATE_PREFIX = "cr:oidc:"
 SAML_REQUEST_PREFIX = "cr:saml:req:"
@@ -46,8 +47,26 @@ class SessionStore:
 
     async def create(self, session: Session) -> str:
         token = secrets.token_urlsafe(32)
-        await self.redis.set(_key(token), json.dumps(asdict(session)), ex=self.ttl)
+        key = _key(token)
+        index = USER_SESSIONS_PREFIX + session.user_id
+        async with self.redis.pipeline(transaction=True) as pipe:
+            pipe.set(key, json.dumps(asdict(session)), ex=self.ttl)
+            # список сессий пользователя: при блокировке или смене роли их надо сбросить разом
+            pipe.sadd(index, key)
+            pipe.expire(index, self.ttl * 2)
+            await pipe.execute()
         return token
+
+    async def revoke_user(self, user_id: str, *, keep_token: str | None = None) -> int:
+        """Drop every session of the user (optionally except the current one)."""
+        index = USER_SESSIONS_PREFIX + user_id
+        keys = set(await self.redis.smembers(index))
+        if keep_token:
+            keys.discard(_key(keep_token))
+        if keys:
+            await self.redis.delete(*keys)
+            await self.redis.srem(index, *keys)
+        return len(keys)
 
     async def get(self, token: str, *, touch: bool = True) -> Session | None:
         if not token or len(token) > 256:

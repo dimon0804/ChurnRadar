@@ -228,6 +228,7 @@ async def test_summary_empty_when_not_scored(client, app):
     assert body["scored_at"] is None
     assert body["timeline"] == [] and body["top_reasons"] == []
     assert body["horizon_days"] == 30 and body["model_version"] == 0
+    assert body["deleted_services"] == {"total": 0, "last_date": None, "last_estimated": False}
 
 
 async def test_customer_not_found(client, app):

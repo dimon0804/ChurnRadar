@@ -56,22 +56,34 @@ def build_timeline(
     as_of = ensure_utc(as_of)
     today = as_of.date()
 
-    deletions: Counter[date] = Counter(
-        ensure_utc(change.changed_at).date() for change in status_history if change.new_status == "deleted"
-    )
+    deletions: Counter[date] = Counter()
+    estimated: Counter[date] = Counter()
+    for change in status_history:
+        if change.new_status != "deleted":
+            continue
+        day = ensure_utc(change.changed_at).date()
+        deletions[day] += 1
+        if change.estimated:
+            estimated[day] += 1
+
+    decisions = [_decision_day(o, as_of, horizon_days) for o in outcomes if o.probability is not None]
+    risky = [d for d in decisions if d.outcome.level in AT_RISK_LEVELS]
+
+    # Истории оценок нет, поэтому «под риском» в зоне факта известно только на момент снимка:
+    # эта точка связывает факт с прогнозом.
     points: list[dict[str, Any]] = [
         {
             "date": day.isoformat(),
             "kind": "fact",
             "deletions": deletions.get(day, 0),
-            "at_risk_services": None,
+            "estimated_deletions": estimated.get(day, 0),
+            "at_risk_services": len(risky) if day == today else None,
             "expected_nonrenewals": None,
             "expected_loss": None,
         }
         for day in (today - timedelta(days=offset) for offset in range(FACT_DAYS - 1, -1, -1))
     ]
 
-    decisions = [_decision_day(o, as_of, horizon_days) for o in outcomes if o.probability is not None]
     nonrenewals: dict[date, float] = defaultdict(float)
     losses: dict[date, float] = defaultdict(float)
     spread_p = 0.0
@@ -85,7 +97,6 @@ def build_timeline(
             nonrenewals[d.day] += p
             losses[d.day] += d.outcome.expected_loss
 
-    risky = [d for d in decisions if d.outcome.level in AT_RISK_LEVELS]
     for offset in range(1, horizon_days + 1):
         day = today + timedelta(days=offset)
         points.append(
@@ -99,6 +110,39 @@ def build_timeline(
             }
         )
     return points
+
+
+def _deleted_services(
+    services: Iterable[Service], status_history: Sequence[StatusChange], as_of: datetime
+) -> dict[str, Any]:
+    """Удалённые услуги в снимке и дата последнего удаления.
+
+    Дата берётся из истории статусов. Если смены статуса никто не видел (услуга пришла
+    в снимке уже удалённой), оцениваем её так же, как ingest: окончание оплаты плюс
+    пять дней ожидания продления. Так видно, есть ли удаления раньше окна графика.
+    """
+    seen: dict[int, tuple[datetime, bool]] = {}
+    for change in status_history:
+        if change.new_status != "deleted":
+            continue
+        at = ensure_utc(change.changed_at)
+        if change.service_id not in seen or at > seen[change.service_id][0]:
+            seen[change.service_id] = (at, change.estimated)
+
+    total = 0
+    last: tuple[datetime, bool] | None = None
+    for service in services:
+        if service.status != "deleted":
+            continue
+        total += 1
+        at, is_estimate = seen.get(service.id) or (min(service.expires_at + PROLONG_WAIT_GRACE, as_of), True)
+        if last is None or at > last[0]:
+            last = (at, is_estimate)
+    return {
+        "total": total,
+        "last_date": last[0].date().isoformat() if last else None,
+        "last_estimated": last[1] if last else False,
+    }
 
 
 def _top_reasons(results: Sequence[CustomerResult]) -> list[dict[str, Any]]:
@@ -173,6 +217,8 @@ def build_summary(
 ) -> dict[str, Any]:
     """Сводка в форме схемы Summary."""
     as_of = ensure_utc(as_of)
+    services = list(services)
+    status_history = list(status_history)
     by_level = Counter(r.risk_level for r in results)
     outcomes = [o for r in results for o in r.services]
     revenue = sum(r.horizon_revenue for r in results)
@@ -194,6 +240,7 @@ def build_summary(
         "top_reasons": _top_reasons(results),
         "risk_scores": _risk_scores(results),
         "timeline": build_timeline(outcomes, status_history, as_of, settings.horizon_days),
+        "deleted_services": _deleted_services(services, status_history, as_of),
         "scored_at": isoformat_z(scored_at or as_of),
         "model_version": settings.version,
     }

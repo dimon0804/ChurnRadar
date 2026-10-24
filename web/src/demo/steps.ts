@@ -90,6 +90,8 @@ export const MARKETING_TARGETS: Target[] = [
 ]
 const CONTACT_TODAY_TARGET: Target = { selector: '[data-testid="contact-today"]' }
 const CONTACT_TODAY_MASS_TARGET: Target = { selector: '[data-testid="contact-today-mass"]' }
+export const PLAYBOOKS_TARGET: Target = { selector: '[data-testid="playbooks-list"]' }
+export const PLAYBOOK_EFFECT_TARGET: Target = { selector: '[data-testid="playbook-effect"]' }
 const QUALITY_LIFT_TARGET: Target = { selector: '[data-testid="quality-lift"]' }
 const QUALITY_AUC_TARGET: Target = { selector: '[data-testid="quality-auc"]' }
 export const WHAT_IF_SWITCH: Target = { selector: 'label:has(button[role="switch"])', text: 'Что если' }
@@ -241,6 +243,18 @@ export const DEMO_STEPS: DemoStep[] = [
       ctx.navigate(`/customers/${top.id}?level=high`)
       ctx.spotlight([sheetSection('Почему'), sheetSection('Что сделать'), sheetSection('Работа с клиентом')])
       return top.nextAction ? `Главное действие: ${top.nextAction}` : `Клиент #${top.id}, ${top.email}`
+    },
+  },
+  {
+    id: 'playbooks',
+    title: 'Сценарии: удержание на автопилоте и честный эффект',
+    say:
+      'Рутину маркетолог отдаёт сценариям: «если риск стал высоким и давно не писали — письмо», и после каждого пересчёта оно срабатывает само, с лимитом писем в день и сначала в режиме симуляции. Пятую часть клиентов сценарий не трогает, это контрольная группа, и карточка эффекта сравнивает их с остальными, так что на вопрос «а письма вообще помогают?» мы отвечаем цифрой с интервалом, а при малой выборке так и пишем: мало данных.',
+    show: 'Страница «Сценарии»: готовые шаблоны сверху, у выбранного сценария карточка «Помогает ли сценарий» с графиком «затронутые против контроля».',
+    run: async (ctx) => {
+      ctx.navigate('/playbooks')
+      await ctx.waitFor(PLAYBOOKS_TARGET)
+      ctx.spotlight([PLAYBOOKS_TARGET, PLAYBOOK_EFFECT_TARGET])
     },
   },
   {

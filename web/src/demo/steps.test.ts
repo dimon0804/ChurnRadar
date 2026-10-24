@@ -135,6 +135,7 @@ describe('scenario', () => {
       'chart',
       'customers',
       'customer',
+      'playbooks',
       'marketing',
       'model',
       'quality',
@@ -142,6 +143,14 @@ describe('scenario', () => {
       'ops',
       'roles',
     ])
+  })
+
+  it('opens playbooks and highlights the effect card', async () => {
+    const { ctx } = makeCtx()
+    await step('playbooks').run?.(ctx)
+    expect(ctx.navigate).toHaveBeenCalledWith('/playbooks')
+    const targets = vi.mocked(ctx.spotlight).mock.calls[0]?.[0] ?? []
+    expect(targets.map((t) => t.selector)).toEqual(['[data-testid="playbooks-list"]', '[data-testid="playbook-effect"]'])
   })
 
   it('shows the contact list with the mass email button on the overview', async () => {

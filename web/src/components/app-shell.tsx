@@ -14,6 +14,7 @@ import {
   Sun,
   UserCog,
   Users,
+  Workflow,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { Role } from '@/api/types'
@@ -60,6 +61,7 @@ const NAV: NavItem[] = [
   { to: '/model', label: 'Модель', icon: <SlidersHorizontal />, adminOnly: true },
   { to: '/quality', label: 'Качество модели', icon: <ShieldCheck /> },
   { to: '/mail', label: 'Письма', icon: <Mail /> },
+  { to: '/playbooks', label: 'Сценарии', icon: <Workflow /> },
   { to: '/data', label: 'Данные', icon: <Database />, adminOnly: true },
   { to: '/users', label: 'Пользователи', icon: <UserCog />, adminOnly: true },
 ]

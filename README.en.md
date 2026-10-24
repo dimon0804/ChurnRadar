@@ -32,6 +32,7 @@ evaluate the project.
 - [Users and SSO](#users-and-sso)
 - [Risk model](#risk-model)
 - [Quality check](#quality-check)
+- [Retention playbooks](#retention-playbooks)
 - [Marketing metrics](#marketing-metrics)
 - [Adding a new feature](#adding-a-new-feature)
 - [Case requirements](#case-requirements)
@@ -652,6 +653,40 @@ by `GET /api/v1/model/quality`. An api test compares the riskcore and simulator 
 fingerprints stored in the file with the current code, so after a model change CI asks you to
 rerun the check. If the weights in the settings differ from the tested ones, the page says so.
 
+## Retention playbooks
+
+The "Сценарии" (playbooks) page (`/playbooks`) takes routine off the marketer: an "if — then"
+rule fires on its own after every score recalculation.
+
+**Conditions** (all at once): risk level or "risk became high since the last recalculation",
+main reason, expected loss from N €, no email for M days, customer MRR from/to, auto-renewal
+off, a charge within N days. **Actions**: an email from a template (through the same queue as
+mailings), the "snoozed" or "resolved" status, a bell notification for the person in charge.
+**Guards**: at most N customers a day, once per K days per customer, a "simulation" mode (only
+records who would be affected) and an on/off switch. Ready-made playbooks: "not enough money
+for renewal — email 3 days before the charge", "auto-renewal off at a big customer — email and
+notify", "high risk and no email for a while — email". The builder shows right away: "N
+customers match now, M of them go to control".
+
+**Do emails actually help.** Every playbook has a control group, 20% by default. Membership is
+decided by a hash of the customer id: the split is the same on every run and across all
+playbooks, so a control customer never gets an email "from another playbook". Control customers
+get nothing but are logged. After 7, 14 and 30 days the effect card compares the groups: the
+share with lower risk, with a top-up and still with us. The difference is the playbook effect,
+shown with a 95% interval (Agresti–Caffo). With fewer than 30 customers in a group the page
+says so: not enough data, the difference may be chance. The daily limit stops the whole pass,
+not just the treated ones, so control comes from the same top of the list and the groups stay
+comparable.
+
+**How it works.** The runner lives in api, which already has templates, the email queue and
+customer statuses; alerts would have to duplicate them. It learns about a recalculation from the
+`scoring.summary` row, which scoring rewrites in the same transaction as the scores, and checks
+it every `PLAYBOOK_POLL_INTERVAL_S` seconds (5 by default). A pass runs in one transaction under
+`pg_try_advisory_xact_lock`: with several api replicas only one fires, and the "this
+recalculation is done" mark is written together with the hits. Admins create, enable and run
+playbooks; everyone signed in can view them. Metrics: `playbook_runs_total`,
+`playbook_actions_total{action}`, `playbook_holdout_total`.
+
 ## Marketing metrics
 
 The "Marketing" page (`/marketing`, open to everyone signed in) shows the numbers a marketer
@@ -859,6 +894,9 @@ types are generated from it. Main resources:
 | `POST /api/v1/mail/campaigns` (plus `…/preview`, `GET …/{id}`) | background mailing with repeat protection and progress |
 | `GET/PUT /api/v1/mail/templates` | email templates, only admins can edit |
 | `GET /api/v1/mail/stats` | how many emails were sent and how many customers they helped |
+| `GET/POST /api/v1/playbooks`, `GET/PUT/DELETE …/{id}` | retention playbooks, editing is admin only |
+| `POST /api/v1/playbooks/preview`, `POST …/{id}/run` | who the rule hits now; run without waiting for a recalculation |
+| `GET /api/v1/playbooks/{id}/runs`, `…/hits`, `…/uplift` | hit log and effect against the control group |
 | `GET /api/v1/analytics/summary` | base summary, actual and forecast chart, top reasons |
 | `GET /api/v1/analytics/marketing` | marketing metrics: MRR, ARPU, churn, LTV, risk segments, retention scenarios |
 | `GET/PUT /api/v1/analytics/marketing/settings` | margin and customer acquisition cost (CAC); PUT is admin only |

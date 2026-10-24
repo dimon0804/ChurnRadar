@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
+import { AlertsBell } from '@/components/alerts-bell'
 import { RecalcToast } from '@/components/recalc-toast'
 import { formatAgo } from '@/lib/format'
 import { ROLE_LABEL } from '@/lib/labels'
@@ -205,6 +206,7 @@ export function AppShell() {
           </nav>
           <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-1.5">
             <LiveIndicator />
+            <AlertsBell />
             <ThemeToggle />
             <div className="mx-1 h-5 w-px bg-border max-sm:hidden" aria-hidden />
             <UserMenu />

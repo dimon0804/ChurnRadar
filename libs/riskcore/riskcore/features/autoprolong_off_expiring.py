@@ -35,11 +35,15 @@ class AutoprolongOffExpiring(ServiceFeature):
             )
         if value <= 0:
             return None
-        return Signal(value, explanation, {"service": service.name, "date": date})
+        ended = "закончилась" if days < 0 else "заканчивается"
+        return Signal(value, explanation, {"service": service.name, "date": date, "ended": ended})
 
     def recommend(self, signal: Signal) -> Recommendation:
         return Recommendation(
             code=self.code,
-            title=f"Напомнить о продлении {signal.facts['service']} до {signal.facts['date']}",
-            detail="Предложить включить автопродление и дать за это бонус.",
+            title=(
+                f"Включить автопродление: напомнить письмом, что {signal.facts['service']} "
+                f"{signal.facts.get('ended', 'заканчивается')} {signal.facts['date']}"
+            ),
+            detail="Предложить включить автопродление и дать за это небольшой бонус на баланс.",
         )

@@ -43,6 +43,30 @@ def test_level_distribution_is_explainable(sample_results):
     assert levels["high"] + levels["medium"] >= 1
 
 
+def test_hourly_revenue_is_capped_by_what_customer_can_pay(sample_results):
+    results, _, _ = sample_results
+    by_id = {r.customer_id: r for r in results}
+    for customer_id, service_id in ((5, 25), (9, 19)):
+        result = by_id[customer_id]
+        [outcome] = [o for o in result.services if o.service.id == service_id]
+        assert outcome.service.payment_term == "hour"
+        assert outcome.revenue < outcome.contract_revenue
+        assert outcome.revenue_note is not None
+        # Выручка за горизонт не больше того, что клиент способен заплатить.
+        assert result.horizon_revenue <= result.balance + result.total_replenished
+
+
+def test_every_scored_customer_has_next_action(sample_results):
+    results, _, _ = sample_results
+    for result in results:
+        action = result.detail["next_action"]
+        assert action is not None, result.customer_id
+        assert action["primary"] is True
+        if result.risk_score is not None:
+            assert action["expected_saving"] > 0
+            assert all(reason["action"] for reason in result.reasons)
+
+
 def test_sample_summary(sample_results):
     results, services, settings = sample_results
     summary = build_summary(results, services, [], settings, AS_OF)

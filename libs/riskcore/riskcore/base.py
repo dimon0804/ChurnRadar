@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from .context import AccountContext, ServiceContext
 from .types import FeatureLevel
@@ -28,14 +28,30 @@ class Signal:
 
 @dataclass(frozen=True, slots=True)
 class Recommendation:
+    """Действие для маркетолога.
+
+    Признак заполняет code, title и detail. Остальное дописывает модель: к какой услуге
+    относится действие, сколько ожидаемых потерь оно может сберечь (евроценты) и является
+    ли оно главным для клиента.
+    """
+
     code: str
     title: str
     detail: str | None = None
+    service_id: int | None = None
+    expected_saving: int | None = None
+    primary: bool = False
 
-    def to_api(self) -> dict[str, str]:
-        data = {"code": self.code, "title": self.title}
+    def to_api(self) -> dict[str, Any]:
+        data: dict[str, Any] = {"code": self.code, "title": self.title}
         if self.detail:
             data["detail"] = self.detail
+        if self.service_id is not None:
+            data["service_id"] = self.service_id
+        if self.expected_saving is not None:
+            data["expected_saving"] = self.expected_saving
+        if self.primary:
+            data["primary"] = True
         return data
 
 

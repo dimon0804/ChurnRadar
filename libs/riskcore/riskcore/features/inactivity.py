@@ -2,10 +2,24 @@ from __future__ import annotations
 
 from ..base import AccountFeature, Recommendation, Signal
 from ..context import SECONDS_PER_DAY, AccountContext
+from ..money import MONTHLY_FACTOR
 from ..registry import register
 
 QUIET_DAYS = 60
-SILENT_DAYS = 90
+RAMP_DAYS = 30
+# Сколько молчания сверх оплаченного периода считаем нормальным.
+GRACE_DAYS = 30
+
+
+def quiet_days(ctx: AccountContext) -> float:
+    """После скольких дней без платежей молчание становится подозрительным.
+
+    Клиент с одной годовой услугой и не должен платить чаще раза в год, поэтому порог
+    отсчитывается от самого короткого периода оплаты среди действующих услуг.
+    """
+    periods = [30 / MONTHLY_FACTOR[s.payment_term] for s in ctx.live_services]
+    shortest = min(periods, default=0.0)
+    return max(QUIET_DAYS, shortest + GRACE_DAYS)
 
 
 @register
@@ -13,7 +27,9 @@ class Inactivity(AccountFeature):
     code = "inactivity"
     title = "Давно не платил"
     description = (
-        "Нет успешных платежей больше 60 дней: сила растёт линейно от 0 на 60-й день до 1.0 на 90-й."
+        "Успешных платежей нет дольше, чем положено по периоду оплаты: порог 60 дней, а если "
+        "самый короткий период у клиента длиннее месяца, то этот период плюс 30 дней. "
+        "Сила растёт линейно от 0 на пороге до 1.0 через 30 дней после него."
     )
     group = "behavior"
     default_weight = 20.0
@@ -27,9 +43,10 @@ class Inactivity(AccountFeature):
         if not performed:
             return Signal(1.0, "У клиента нет ни одного успешного платежа")
         days = (ctx.as_of - max(performed)).total_seconds() / SECONDS_PER_DAY
-        if days <= QUIET_DAYS:
+        quiet = quiet_days(ctx)
+        if days <= quiet:
             return None
-        value = min((days - QUIET_DAYS) / (SILENT_DAYS - QUIET_DAYS), 1.0)
+        value = min((days - quiet) / RAMP_DAYS, 1.0)
         return Signal(
             value=value,
             explanation=f"Последний успешный платёж был {int(days)} дн. назад",
@@ -37,8 +54,10 @@ class Inactivity(AccountFeature):
         )
 
     def recommend(self, signal: Signal) -> Recommendation:
+        days = signal.facts.get("days")
+        silence = f"Платежей не было {days} дн." if days else "Успешных платежей не было"
         return Recommendation(
             code=self.code,
-            title="Написать клиенту и спросить, всё ли устраивает",
-            detail="Платежей давно не было: предложить помощь с настройкой или обзор тарифа.",
+            title=f"{silence}: написать и спросить, всё ли устраивает",
+            detail="Предложить помощь с настройкой или подобрать тариф под текущую нагрузку.",
         )

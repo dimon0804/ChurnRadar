@@ -1,11 +1,12 @@
-"""Что делать маркетологу: действие по каждой из главных причин риска."""
+"""Что делать маркетологу: действие по каждой причине риска и одно главное действие по клиенту."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any
 
-from .base import Recommendation
+from .base import Feature, Recommendation, Signal
 
 if TYPE_CHECKING:
     from .scoring import FeatureTotal
@@ -27,24 +28,45 @@ UNKNOWN_ACTIONS: dict[str, Recommendation] = {
 }
 
 
+def action_for(feature: Feature[Any], signal: Signal) -> Recommendation:
+    """Действие признака по конкретному срабатыванию; без своего действия — общая формулировка."""
+    return feature.recommend(signal) or Recommendation(
+        code=feature.code,
+        title=f"Разобраться с причиной: {feature.title.lower()}",
+        detail=signal.explanation,
+    )
+
+
 def build_recommendations(
     totals: Sequence[FeatureTotal], unknown_code: str | None = None
 ) -> list[Recommendation]:
+    """До трёх действий по убыванию денежного эффекта; первое помечено как главное.
+
+    Денежный эффект — на сколько снизится ожидаемая потеря клиента, если причина исчезнет
+    (см. FeatureTotal.saving). Он не совпадает с вкладом в score: вклад делит уже случившийся
+    риск между причинами, а эффект отвечает на вопрос «что даст действие».
+    """
     if unknown_code is not None:
         action = UNKNOWN_ACTIONS.get(unknown_code)
-        return [action] if action else []
+        return [replace(action, primary=True)] if action else []
 
+    candidates = sorted(
+        (total for total in totals if total.points > MIN_POINTS),
+        key=lambda t: (-t.saving, -t.points, t.code),
+    )
     result: list[Recommendation] = []
     seen: set[str] = set()
-    for total in totals:
-        if total.points <= MIN_POINTS or len(result) >= RECOMMENDATIONS_LIMIT:
+    for total in candidates:
+        if len(result) >= RECOMMENDATIONS_LIMIT:
             break
-        action = total.feature.recommend(total.top_hit.signal) or Recommendation(
-            code=total.code,
-            title=f"Разобраться с причиной: {total.feature.title.lower()}",
-            detail=total.top_hit.signal.explanation,
+        action = replace(
+            action_for(total.feature, total.top_hit.signal),
+            service_id=total.service_id,
+            expected_saving=round(total.saving),
         )
         if action.code not in seen:
             seen.add(action.code)
             result.append(action)
+    if result:
+        result[0] = replace(result[0], primary=True)
     return result

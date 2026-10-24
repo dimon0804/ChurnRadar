@@ -505,12 +505,28 @@ components:
         title: { type: string, description: Объяснение по-русски для маркетолога }
         contribution: { type: number, description: 'Вклад в score, пунктов из 100' }
         service_id: { type: [integer, 'null'], format: int64, description: 'К какой услуге относится, если относится' }
+        action: { type: string, description: 'Что сделать маркетологу по этой причине, коротко и с цифрами из данных' }
+        expected_loss: { type: integer, description: 'Сколько ожидаемых потерь за горизонт приходится на эту причину, евроценты' }
+
+    Recommendation:
+      type: object
+      required: [code, title]
+      properties:
+        code: { type: string, description: 'Код признака, от которого идёт действие, или код действия для клиентов без оценки' }
+        title: { type: string, description: Действие коротко }
+        detail: { type: string, description: Подробности и цифры }
+        service_id: { type: [integer, 'null'], format: int64, description: 'К какой услуге относится действие, если относится' }
+        expected_saving:
+          type: integer
+          description: 'На сколько снизится ожидаемая потеря за горизонт, если причина исчезнет, евроценты'
+        primary: { type: boolean, description: 'Главное действие по клиенту (наибольший денежный эффект)' }
 
     Money:
       type: object
       required: [monthly_revenue, exposure, expected_loss, explanation]
       properties:
         monthly_revenue: { type: integer, description: 'Выручка с живых услуг клиента, приведённая к месяцу, евроценты' }
+        horizon_revenue: { type: integer, description: 'Выручка с живых услуг за горизонт, по которой взвешивается score, евроценты' }
         exposure: { type: integer, description: 'Максимум, что можно потерять за горизонт, если уйдут все услуги под риском, евроценты' }
         expected_loss: { type: integer, description: 'Ожидаемая потеря за горизонт с учётом вероятности и покрытия балансом, евроценты' }
         balance_coverage_days: { type: [number, 'null'], description: 'На сколько дней хватит денег на балансе для текущих услуг' }
@@ -573,6 +589,12 @@ components:
           type: array
           items: { $ref: '#/components/schemas/Reason' }
         expected_loss: { type: integer, description: евроценты }
+        horizon_revenue:
+          type: integer
+          description: 'Выручка услуги за горизонт, которую реально можно получить: по цене, но не больше, чем клиент способен заплатить; евроценты'
+        revenue_note:
+          type: [string, 'null']
+          description: 'Пояснение, если выручку ограничила платёжеспособность клиента'
 
     FeatureContribution:
       type: object
@@ -618,14 +640,13 @@ components:
             money: { $ref: '#/components/schemas/Money' }
             recommendations:
               type: array
-              description: Что предпринять маркетологу
-              items:
-                type: object
-                required: [code, title]
-                properties:
-                  code: { type: string }
-                  title: { type: string }
-                  detail: { type: string }
+              description: 'Что предпринять маркетологу, по убыванию денежного эффекта; первое — главное'
+              items: { $ref: '#/components/schemas/Recommendation' }
+            next_action:
+              description: 'Одно главное действие по клиенту (то же, что первое в recommendations)'
+              anyOf:
+                - $ref: '#/components/schemas/Recommendation'
+                - type: 'null'
             scored_at: { type: [string, 'null'], format: date-time }
             model_version: { type: integer }
 

@@ -31,9 +31,6 @@ class WithdrawPressure(AccountFeature):
     def recommend(self, signal: Signal) -> Recommendation:
         return Recommendation(
             code=self.code,
-            title="Выяснить, не собирается ли клиент вывести деньги",
-            detail=(
-                f"К выводу доступно {signal.facts['amount']}: "
-                "предложить потратить их на продление со скидкой."
-            ),
+            title=f"Может вывести {signal.facts['amount']}: предложить потратить их на продление со скидкой",
+            detail="Выяснить, не собирается ли клиент забрать деньги и уйти.",
         )

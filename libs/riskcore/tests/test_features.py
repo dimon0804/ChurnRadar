@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import timedelta
+
 import pytest
 
-from riskcore import feature_catalog
+from riskcore import feature_catalog, score_customers
 from riskcore.registry import get_feature
 
-from .factories import account_ctx, make_account, make_service, make_tx, service_ctx
+from .factories import AS_OF, account_ctx, make_account, make_service, make_tx, service_ctx
 
 EXPECTED_DEFAULTS = {
     "prolong_wait": 85,
@@ -40,13 +43,42 @@ def test_catalog_has_all_v1_features_with_defaults():
 
 class TestProlongWait:
     def test_not_enough_money_gives_full_strength(self):
-        service = make_service(status="prolong_wait", price=5_000, expires_in_days=-2)
+        service = make_service(status="prolong_wait", auto_prolong=False, price=5_000, expires_in_days=-2)
         signal = feature("prolong_wait").compute(service_ctx(service, make_account(balance=1_000)))
         assert signal is not None
         assert signal.value == 1.0
         assert "service-0001" in signal.explanation
         assert "~3 дн." in signal.explanation
         assert "€40" in signal.explanation
+
+    def test_autoprolong_leaves_money_to_insufficient_funds(self):
+        # Один пустой баланс — один признак: с автопродлением нехватку считает insufficient_funds.
+        service = make_service(status="prolong_wait", auto_prolong=True, price=5_000, expires_in_days=-2)
+        ctx = service_ctx(service, make_account(balance=1_000))
+        waiting = feature("prolong_wait").compute(ctx)
+        funds = feature("insufficient_funds").compute(ctx)
+        assert waiting is not None and waiting.value == 0.6
+        assert "€40" in waiting.explanation
+        assert funds is not None and funds.value == pytest.approx(0.8)
+
+    def test_money_is_counted_once(self, settings):
+        account = make_account(balance=1_000)
+        manual = make_service(
+            status="prolong_wait",
+            auto_prolong=False,
+            payment_term="quarter_year",
+            price=5_000,
+            expires_in_days=-2,
+        )
+        auto = replace(manual, auto_prolong=True)
+        [manual_result] = score_customers([account], [manual], [], settings, AS_OF)
+        [auto_result] = score_customers([account], [auto], [], settings, AS_OF)
+        # Ручная оплата: 0.85 · 1.0. Автопродление: 1 − (1 − 0.85 · 0.6)(1 − 0.55 · 0.8).
+        # Раньше было 1 − (1 − 0.85)(1 − 0.55 · 0.8) ≈ 0.92: один пустой баланс считался дважды.
+        assert manual_result.risk_score == pytest.approx(85.0)
+        assert auto_result.risk_score == pytest.approx(100 * (1 - (1 - 0.51) * (1 - 0.44)))
+        codes = [f["code"] for f in auto_result.detail["features"]]
+        assert sorted(codes) == ["insufficient_funds", "prolong_wait"]
 
     def test_enough_money_gives_partial_strength(self):
         service = make_service(status="prolong_wait", price=5_000, expires_in_days=-1)
@@ -112,13 +144,32 @@ class TestInsufficientFunds:
         assert signal.value == pytest.approx(0.6)
         assert "€60" in signal.explanation
 
-    def test_counts_all_renewals_of_customer(self):
-        service = make_service(id=1, price=6_000, expires_in_days=5)
-        other = make_service(id=2, price=6_000, expires_in_days=10)
-        signal = feature("insufficient_funds").compute(
-            service_ctx(service, make_account(balance=9_000), others=[other])
-        )
-        assert signal is not None and signal.value == pytest.approx(0.25)
+    def test_renewals_are_paid_in_time_order(self):
+        first = make_service(id=1, price=6_000, expires_in_days=5)
+        second = make_service(id=2, price=6_000, expires_in_days=10)
+        account = make_account(balance=9_000)
+        f = feature("insufficient_funds")
+        # Первое продление оплатится, денег не хватит только на второе.
+        assert f.compute(service_ctx(first, account, others=[second])) is None
+        late = f.compute(service_ctx(second, account, others=[first]))
+        assert late is not None and late.value == pytest.approx(0.25)
+        assert "service-0002" in late.explanation
+
+    def test_hourly_service_is_partly_covered(self):
+        service = make_service(payment_term="hour", price=100, expires_in_days=0.5 / 24)
+        ctx = service_ctx(service, make_account(balance=24_000))
+        signal = feature("insufficient_funds").compute(ctx)
+        # 720 часов по €1, денег на 240 часов: без оплаты останутся 480 из 720.
+        assert signal is not None
+        assert signal.value == pytest.approx(480 / 720)
+        assert "без оплаты останутся продления на €480 из €720" in signal.explanation
+        recommendation = feature("insufficient_funds").recommend(signal)
+        assert "бонус €48" in (recommendation.detail or "")
+
+    def test_shortfall_moment_is_exact(self):
+        service = make_service(payment_term="hour", price=100, expires_in_days=0.5 / 24)
+        ctx = service_ctx(service, make_account(balance=24_050))
+        assert ctx.funds.shortfall_at == service.expires_at + timedelta(hours=240)
 
     def test_hourly_service_costs_every_hour_in_horizon(self):
         service = make_service(payment_term="hour", price=10, expires_in_days=0.5 / 24)
@@ -238,6 +289,27 @@ class TestInactivity:
 
     def test_no_transactions_is_unknown(self):
         assert feature("inactivity").compute(account_ctx(services=[make_service()])) is None
+
+    def test_quiet_period_follows_payment_term(self):
+        # Годовую услугу оплачивают раз в год: 200 дней без платежей для неё норма.
+        yearly = make_service(payment_term="year", expires_in_days=165)
+        tx = [make_tx(1, days_ago=200)]
+        f = feature("inactivity")
+        assert f.compute(account_ctx(services=[yearly], transactions=tx)) is None
+        late = f.compute(account_ctx(services=[yearly], transactions=[make_tx(1, days_ago=405)]))
+        assert late is not None and late.value == pytest.approx(0.5, abs=1e-3)
+        # Самый короткий период клиента задаёт порог: с месячной услугой 200 дней — уже тревога.
+        monthly = make_service(id=2, payment_term="month")
+        mixed = f.compute(account_ctx(services=[yearly, monthly], transactions=tx))
+        assert mixed is not None and mixed.value == 1.0
+
+    def test_recommendation_without_payments(self):
+        f = feature("inactivity")
+        signal = f.compute(
+            account_ctx(services=[make_service()], transactions=[make_tx(1, status="not_performed")])
+        )
+        assert signal is not None and signal.value == 1.0
+        assert f.recommend(signal).title.startswith("Успешных платежей не было")
 
     def test_only_failed_transactions_means_inactive(self):
         txs = [make_tx(1, status="not_performed")]

@@ -30,7 +30,7 @@ class FailedPayments(ServiceFeature):
     def recommend(self, signal: Signal) -> Recommendation:
         return Recommendation(
             code=self.code,
-            title="Проверить способ оплаты",
+            title=f"Платежи по {signal.facts['service']} не проходят: попросить обновить карту",
             detail=(
                 f"{signal.facts['failed']} из {signal.facts['total']} продлений "
                 f"{signal.facts['service']} не прошли: возможно, карта устарела или на ней нет денег."

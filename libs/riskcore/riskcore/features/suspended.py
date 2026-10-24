@@ -3,6 +3,7 @@ from __future__ import annotations
 from ..base import Recommendation, ServiceFeature, Signal
 from ..context import ServiceContext
 from ..registry import register
+from ..text import format_eur
 
 
 @register
@@ -20,12 +21,15 @@ class Suspended(ServiceFeature):
         return Signal(
             value=1.0,
             explanation=f"Сервер {name} выключен клиентом: платит, но не пользуется",
-            facts={"service": name},
+            facts={"service": name, "monthly": format_eur(ctx.horizon_revenue * 30 / ctx.horizon_days)},
         )
 
     def recommend(self, signal: Signal) -> Recommendation:
         return Recommendation(
             code=self.code,
-            title=f"Узнать, почему выключен сервер {signal.facts['service']}",
-            detail="Предложить тариф дешевле или паузу вместо отказа.",
+            title=f"Сервер {signal.facts['service']} выключен: позвонить и узнать причину",
+            detail=(
+                f"Клиент платит около {signal.facts.get('monthly', '')} в месяц за сервер, "
+                "которым не пользуется: предложить тариф дешевле или паузу вместо отказа."
+            ),
         )

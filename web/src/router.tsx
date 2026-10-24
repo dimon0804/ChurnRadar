@@ -4,6 +4,7 @@ import { isApiError } from '@/api/client'
 import { AppShell, Logo } from '@/components/app-shell'
 import { ErrorState, ForbiddenState, NotFoundState } from '@/components/states'
 import { Skeleton } from '@/components/ui/skeleton'
+import { DemoMode } from '@/demo/demo-mode'
 import { AuthProvider, useAuth, useMeQuery } from '@/providers/auth'
 import { LiveProvider } from '@/providers/live'
 import { LoginPage } from '@/pages/login'
@@ -59,6 +60,7 @@ function RequireAuth() {
     <AuthProvider user={me.data}>
       <LiveProvider>
         <AppShell />
+        <DemoMode />
       </LiveProvider>
     </AuthProvider>
   )

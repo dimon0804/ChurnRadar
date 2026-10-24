@@ -237,27 +237,37 @@ async def load_summary(pool: asyncpg.Pool) -> dict[str, Any]:
 
 
 class SummaryCache:
-    """Сводка с коротким TTL: её читают и /analytics/summary, и /metrics."""
+    """Сводка для /analytics/summary и /metrics.
+
+    Перед выдачей из кэша сверяется отметка пересчёта (scored_at, model_version): после
+    scores.updated панель сразу перезапрашивает сводку и не должна получить прежние цифры.
+    TTL ограничивает только частоту этой сверки.
+    """
 
     def __init__(self, ttl_s: float) -> None:
         self.ttl_s = ttl_s
         self._value: dict[str, Any] | None = None
+        self._stamp: tuple[Any, Any] | None = None
         self._at = 0.0
         self._lock = asyncio.Lock()
 
     def invalidate(self) -> None:
         self._at = 0.0
+        self._stamp = None
 
     @property
     def last(self) -> dict[str, Any] | None:
         return self._value
 
     async def get(self, pool: asyncpg.Pool) -> dict[str, Any]:
-        if self._value is not None and time.monotonic() - self._at < self.ttl_s:
-            return self._value
         async with self._lock:
-            if self._value is not None and time.monotonic() - self._at < self.ttl_s:
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT scored_at, model_version FROM scoring.summary WHERE id = 1")
+            stamp = (row["scored_at"], row["model_version"]) if row is not None else None
+            fresh = time.monotonic() - self._at < self.ttl_s
+            if self._value is not None and stamp is not None and stamp == self._stamp and fresh:
                 return self._value
             self._value = await load_summary(pool)
+            self._stamp = stamp
             self._at = time.monotonic()
             return self._value

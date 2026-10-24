@@ -24,7 +24,7 @@ class Settings(ServiceSettings):
     simulator_url: str = "http://simulator:8000"
     simulator_timeout_s: float = 120.0
     openapi_path: str = _default_openapi_path()
-    summary_cache_ttl_s: float = 2.0
+    summary_cache_ttl_s: float = 30.0
 
     db_pool_max: int = 10
     nats_wait_on_start_s: float = 5.0

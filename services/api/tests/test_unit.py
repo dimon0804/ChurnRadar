@@ -321,3 +321,45 @@ async def test_customer_card_without_next_action(client, app):
     body = (await client.get("/api/v1/customers/7", headers=ANALYST)).json()
     assert body["next_action"] is None
     assert body["recommendations"] == []
+
+
+class _SummaryConn:
+    def __init__(self, state: dict) -> None:
+        self.state = state
+
+    async def fetchrow(self, sql: str, *args: object) -> dict | None:
+        self.state["queries"].append(sql)
+        if "data" in sql:
+            return {"data": {"customers_total": self.state["total"]}, **self.state["stamp"]}
+        return dict(self.state["stamp"])
+
+
+class _SummaryPool:
+    def __init__(self, state: dict) -> None:
+        self.state = state
+
+    def acquire(self):  # type: ignore[no-untyped-def]
+        state = self.state
+
+        class _Ctx:
+            async def __aenter__(self) -> _SummaryConn:
+                return _SummaryConn(state)
+
+            async def __aexit__(self, *exc: object) -> None:
+                return None
+
+        return _Ctx()
+
+
+async def test_summary_cache_reloads_after_rescore() -> None:
+    state = {"queries": [], "total": 10, "stamp": {"scored_at": NOW, "model_version": 1}}
+    pool = _SummaryPool(state)
+    cache = queries.SummaryCache(ttl_s=60)
+
+    assert (await cache.get(pool))["customers_total"] == 10  # type: ignore[arg-type]
+    state["total"] = 99
+    assert (await cache.get(pool))["customers_total"] == 10  # type: ignore[arg-type]
+
+    # пересчёт сменил отметку: кэш не должен отдать прежние цифры, даже в пределах TTL
+    state["stamp"] = {"scored_at": NOW, "model_version": 2}
+    assert (await cache.get(pool))["customers_total"] == 99  # type: ignore[arg-type]

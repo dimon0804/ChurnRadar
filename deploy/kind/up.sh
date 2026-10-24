@@ -7,6 +7,7 @@
 #   SKIP_BUILD=1     — не пересобирать образы
 #   MOCK_CORE=1|0    — принудительно включить/выключить заглушку ядра
 #   HELM_EXTRA_ARGS  — дополнительные аргументы для helm upgrade
+#   HELM_TIMEOUT     — сколько ждать готовности релиза (15m)
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -160,7 +161,7 @@ helm status "$release" --kube-context "$ctx" --namespace "$namespace" >/dev/null
 helm upgrade --install "$release" "$chart" \
   --kube-context "$ctx" --namespace "$namespace" --create-namespace \
   -f "$chart/values-kind.yaml" "${helm_args[@]}" ${HELM_EXTRA_ARGS:-} \
-  --wait --timeout 10m
+  --wait --timeout "${HELM_TIMEOUT:-15m}"
 
 # тег :dev не меняется, поэтому после пересборки поды нужно перезапустить
 if [[ "$existed" == "1" && "${SKIP_BUILD:-0}" != "1" ]]; then

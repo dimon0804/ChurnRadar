@@ -1,0 +1,13 @@
+# Однонодовый kind-кластер для CI (job helm-kind): образы грузятся в один узел,
+# это заметно быстрее, чем в три. Порт Traefik 30080 -> localhost:8080, как в cluster.yaml.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: churn-radar
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.33.1
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8080
+        listenAddress: "127.0.0.1"
+        protocol: TCP

@@ -287,10 +287,13 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         search: Annotated[str | None, Query(max_length=320)] = None,
         reason: ReasonCode = None,
         reason_scope: ReasonScope = "any",
+        score_min: ScoreBound = None,
+        score_max: ScoreBound = None,
         limit: Annotated[int, Query(ge=1, le=charts.SCATTER_MAX)] = charts.SCATTER_DEFAULT,
     ) -> dict[str, Any]:
         return await charts.scatter(
-            pool, level=level, search=search, reason=reason, reason_scope=reason_scope, limit=limit
+            pool, level=level, search=search, reason=reason, reason_scope=reason_scope, limit=limit,
+            score_min=score_min, score_max=score_max,
         )
 
     @app.get("/api/v1/analytics/reasons/{code}", tags=["analytics"])

@@ -858,6 +858,8 @@ paths:
           schema: { type: string, maxLength: 320 }
         - $ref: '#/components/parameters/ReasonFilter'
         - $ref: '#/components/parameters/ReasonScope'
+        - $ref: '#/components/parameters/ScoreMin'
+        - $ref: '#/components/parameters/ScoreMax'
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 400, default: 300 } }
       responses:
         '200':

@@ -17,7 +17,7 @@ from typing import Any, Literal
 import asyncpg
 from svckit.errors import ApiError
 
-from app.queries import BIGINT_MAX, iso_z, parse_levels, where_clause
+from app.queries import BIGINT_MAX, check_score_range, iso_z, parse_levels, where_clause
 
 ReasonScope = Literal["main", "any"]
 
@@ -150,9 +150,14 @@ async def scatter(
     reason: str | None,
     reason_scope: ReasonScope,
     limit: int,
+    score_min: float | None = None,
+    score_max: float | None = None,
 ) -> dict[str, Any]:
     """Самые дорогие клиенты с оценкой под текущими фильтрами списка; total — сколько их всего."""
-    where, args = where_clause(parse_levels(level), search, reason=reason, reason_scope=reason_scope)
+    check_score_range(score_min, score_max)
+    where, args = where_clause(
+        parse_levels(level), search, reason=reason, reason_scope=reason_scope, score_min=score_min, score_max=score_max
+    )
     where = f"{where} AND risk_score IS NOT NULL" if where else " WHERE risk_score IS NOT NULL"
     async with pool.acquire() as conn:
         total = await conn.fetchval(f"SELECT count(*) FROM scoring.customer_scores{where}", *args)
@@ -242,8 +247,10 @@ SELECT customer_id, email, risk_level, risk_score, points,
             ELSE 0 END AS reason_loss
 FROM c ORDER BY reason_loss DESC, expected_loss DESC, customer_id LIMIT $2
 """
+# Действие у каждого клиента своё, с его услугой и датой («Включить автопродление: напомнить
+# письмом, что vps-1 заканчивается 31.10»). Группируем по общей части до двоеточия.
 _REASON_ACTIONS = """
-SELECT r ->> 'action' AS action, count(*) AS customers
+SELECT btrim(split_part(r ->> 'action', ':', 1)) AS action, count(*) AS customers
 FROM scoring.customer_scores cs, jsonb_array_elements(cs.reasons) r
 WHERE r ->> 'code' = $1 AND COALESCE(r ->> 'action', '') <> '' AND {cond}
 GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT $2

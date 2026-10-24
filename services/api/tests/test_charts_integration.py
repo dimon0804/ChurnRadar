@@ -37,7 +37,7 @@ async def seed(url: str) -> None:
             else:
                 reasons = [
                     {"code": code, "title": f"{code} у клиента {cid}", "contribution": pts,
-                     "action": "Написать клиенту" if code == "prolong_wait" else "Позвонить"}
+                     "action": f"Написать клиенту: vps-{cid} ждёт оплаты" if code == "prolong_wait" else "Позвонить"}
                     for code, pts in features
                 ]
             detail = {
@@ -165,6 +165,10 @@ async def test_scatter(client, contract):  # noqa: F811
         await client.get("/api/v1/analytics/scatter", params={"reason": "inactivity"}, headers=ANALYST)
     ).json()
     assert sorted(p["id"] for p in filtered["points"]) == [1, 2, 5]
+    ranged = (
+        await client.get("/api/v1/analytics/scatter", params={"score_min": 30, "score_max": 50}, headers=ANALYST)
+    ).json()
+    assert sorted(p["id"] for p in ranged["points"]) == [2, 3]
 
 
 async def test_reason_detail(client, contract):  # noqa: F811

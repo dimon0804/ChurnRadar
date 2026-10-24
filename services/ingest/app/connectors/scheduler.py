@@ -90,7 +90,8 @@ class Scheduler:
 
     def start(self) -> None:
         if self._task is None or self._task.done():
-            self._client = httpx.AsyncClient(transport=self._transport, follow_redirects=False)
+            if self._client is None:
+                self._client = httpx.AsyncClient(transport=self._transport, follow_redirects=False)
             self._task = asyncio.create_task(self._loop(), name="connectors-scheduler")
 
     async def stop(self) -> None:
@@ -276,7 +277,8 @@ class Scheduler:
                 await conn.close()  # закрытие снимает и advisory-блокировку запуска
 
     def _source_client(self, row: asyncpg.Record) -> SourceClient:
-        assert self._client is not None, "планировщик не запущен"
+        if self._client is None:
+            self._client = httpx.AsyncClient(transport=self._transport, follow_redirects=False)
         return SourceClient(
             self._client,
             row["base_url"],

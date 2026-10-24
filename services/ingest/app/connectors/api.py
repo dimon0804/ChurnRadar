@@ -1,6 +1,8 @@
-"""HTTP API коннекторов: /api/v1/source/connectors*, /api/v1/source/metrica*. Только admin."""
+"""HTTP API коннекторов: /api/v1/source/connectors*, /api/v1/source/metrica*. Только admin.
 
-from __future__ import annotations
+Без `from __future__ import annotations`: FastAPI должен видеть зависимость admin из замыкания
+build_router как объект, а не как строку.
+"""
 
 from decimal import Decimal
 from typing import Annotated, Any

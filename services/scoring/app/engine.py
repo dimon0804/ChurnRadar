@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copyreg
 import dataclasses
+import functools
 import gc
 import multiprocessing
+import operator
 import time
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
@@ -16,7 +19,8 @@ from typing import Any
 
 import asyncpg
 import riskcore
-from riskcore import CustomerResult
+from riskcore import CustomerResult, ServiceOutcome, Signal
+from riskcore.scoring import FeatureHit, FeatureTotal
 from riskcore.types import Service, Settings
 from svckit.logs import get_logger
 
@@ -24,6 +28,23 @@ from . import repository as repo
 from .metrics import CUSTOMERS, DURATION, RUNS
 
 log = get_logger("scoring.engine")
+
+
+def _reduce_by_fields(cls: type, values: operator.attrgetter, obj: Any) -> tuple[type, tuple[Any, ...]]:
+    return cls, values(obj)
+
+
+def _fast_pickle(*classes: type) -> None:
+    """Результаты из процессов пересчёта — сотни тысяч датаклассов со slots. Стандартный pickle
+    для них зовёт dataclasses.fields() на каждый объект и в главном процессе отнимает секунды
+    на 100k клиентов. Конструктор с кортежем полей (attrgetter на C) — в разы дешевле.
+    Регистрация на импорте модуля: процессы spawn импортируют его ради _score_chunk."""
+    for cls in classes:
+        names = [f.name for f in dataclasses.fields(cls)]
+        copyreg.pickle(cls, functools.partial(_reduce_by_fields, cls, operator.attrgetter(*names)))
+
+
+_fast_pickle(CustomerResult, ServiceOutcome, FeatureHit, FeatureTotal, Signal, Service)
 
 
 def merged_settings(version: int, data: dict[str, Any]) -> Settings:
@@ -253,7 +274,7 @@ class Scorer:
                     future = loop.run_in_executor(
                         executor, _score_chunk, data, settings, as_of, version, scored_at
                     )
-                    await queue.put((future, data.services, len(data.transactions)))
+                    await queue.put((future, data.service_objects(), len(data.transactions)))
                     started = time.perf_counter()
             except Exception as exc:
                 await queue.put(exc)  # потребитель пробросит ошибку
@@ -409,7 +430,7 @@ class Scorer:
 
 
 def _score_chunk(
-    chunk: repo.SourceData, settings: Any, as_of: datetime, version: int, scored_at: datetime
+    rows: repo.SourceRows, settings: Any, as_of: datetime, version: int, scored_at: datetime
 ) -> tuple[list[Any], list[tuple[Any, ...]]]:
     """Считает часть клиентов: облегчённые результаты для сводки и строки для COPY.
 
@@ -419,6 +440,7 @@ def _score_chunk(
     gc_was_enabled = gc.isenabled()
     gc.disable()
     try:
+        chunk = rows.to_data()
         results = riskcore.score_customers(chunk.accounts, chunk.services, chunk.transactions, settings, as_of)
         records = _records(results, version, scored_at)
         return [_slim(r) for r in results], records

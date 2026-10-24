@@ -271,7 +271,7 @@ def score_record(row: dict[str, Any], model_version: int, scored_at: datetime) -
 def _json_default(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    if isinstance(value, (set, frozenset)):
+    if isinstance(value, set | frozenset):
         return sorted(value)
     raise TypeError(f"не сериализуется в JSON: {type(value).__name__}")
 

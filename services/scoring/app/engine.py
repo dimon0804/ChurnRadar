@@ -248,9 +248,15 @@ class Scorer:
         один снимок source.*), части считаются параллельно (процессы или поток), второе
         соединение в одной транзакции удаляет старые строки и пишет новые через COPY.
         Память ограничена несколькими частями в работе и облегчёнными результатами для сводки.
+
+        load_s, score_s и write_s — время ожидания этапов на одном цикле событий: они
+        перекрываются и включают простой главного процесса без CPU. cpu_main_s в логе —
+        процессорное время главного процесса: если оно близко к duration, упираемся в CPU
+        (лимит контейнера, SCORING_WORKERS), а не в Postgres.
         """
         timings = {"load_s": 0.0, "score_s": 0.0, "write_s": 0.0}
         t0 = time.perf_counter()
+        cpu0 = time.process_time()
         self._cache = None  # не держим два набора результатов в памяти одновременно
         scored_at = now_ms()
         slim: dict[int, Any] = {}
@@ -340,6 +346,7 @@ class Scorer:
             customers=len(slim),
             chunks=chunks,
             duration_ms=round(duration_ms, 1),
+            cpu_main_s=round(time.process_time() - cpu0, 1),
             **counts,
             **{k: round(v, 3) for k, v in timings.items()},
         )

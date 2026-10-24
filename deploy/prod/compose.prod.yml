@@ -21,9 +21,12 @@ services:
     ports: !override
       - "127.0.0.1:9000:9000"
     environment:
-      # Authentik живёт на том же домене по пути /sso/
+      # Authentik живёт на том же домене по пути /sso/; base_url — схема и хост без пути,
+      # иначе за nginx он строит ссылки с http://
       AUTHENTIK_WEB__PATH: /sso/
+      AUTHENTIK_WEB__BASE_URL: ${PUBLIC_URL}
 
   authentik-worker:
     environment:
       AUTHENTIK_WEB__PATH: /sso/
+      AUTHENTIK_WEB__BASE_URL: ${PUBLIC_URL}

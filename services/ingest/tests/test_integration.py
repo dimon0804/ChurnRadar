@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import importlib.util
 import json
@@ -61,11 +62,33 @@ async def purge_stream(url: str) -> None:
         await nc.close()
 
 
-async def last_event(subject: str) -> dict:
+async def last_event(subject: str, where=None, timeout_s: float = 10.0) -> dict:
+    """Последнее событие subject; ждём его — relay outbox отправляет в фоне."""
+    deadline = asyncio.get_running_loop().time() + timeout_s
     nc = await nats.connect(NATS_URL)
     try:
-        msg = await nc.jetstream().get_last_msg("CHURN", subject)
-        return json.loads(msg.data)
+        while True:
+            try:
+                msg = await nc.jetstream().get_last_msg("CHURN", subject)
+                event = json.loads(msg.data)
+                if where is None or where(event):
+                    return event
+            except NotFoundError:
+                pass
+            if asyncio.get_running_loop().time() > deadline:
+                raise AssertionError(f"событие {subject} не пришло за {timeout_s} с")
+            await asyncio.sleep(0.05)
+    finally:
+        await nc.close()
+
+
+async def stream_count(subject: str) -> int:
+    nc = await nats.connect(NATS_URL)
+    try:
+        info = await nc.jetstream().stream_info("CHURN", subjects_filter=subject)
+        return (info.state.subjects or {}).get(subject, 0)
+    except NotFoundError:
+        return 0
     finally:
         await nc.close()
 
@@ -107,7 +130,7 @@ async def test_migrator_is_idempotent(env):
     applied = await migrator.run(DB_URL, [str(REPO_ROOT / "db" / "core"), "/no/such/dir"], connect_timeout_s=5)
     assert applied == []
     rows = await fetch("SELECT name FROM public.schema_migrations")
-    assert [r["name"] for r in rows] == ["core/001_core.sql"]
+    assert [r["name"] for r in rows] == ["core/001_core.sql", "core/002_outbox.sql"]
 
 
 async def test_seed_on_start_and_event(running):
@@ -168,8 +191,8 @@ async def test_snapshot_replace_records_status_diff(running, sample):
     assert rows[0]["changed_at"].isoformat() == "2026-10-20T10:00:00+00:00"
     assert (await fetch("SELECT count(*) c FROM source.transactions"))[0]["c"] == 50
 
-    event = await last_event("churn.source.changed")
-    assert event["payload"]["snapshot_id"] == body["snapshot_id"]
+    event = await last_event("churn.source.changed", lambda e: e["payload"]["snapshot_id"] == body["snapshot_id"])
+    assert event["payload"]["kind"] == "snapshot"
 
 
 async def test_snapshot_reset_history_starts_clean(running, sample):
@@ -215,9 +238,8 @@ async def test_events_upsert(running, sample):
         (5_000, None, "active"),
     ]
 
-    event = await last_event("churn.source.changed")
+    event = await last_event("churn.source.changed", lambda e: e["payload"]["kind"] == "changes")
     payload = event["payload"]
-    assert payload["kind"] == "changes"
     expected = sorted({acc["id"], svc["ownerId"], new_svc["ownerId"], sample["services"][5]["ownerId"]})
     assert payload["account_ids"] == expected
 
@@ -268,3 +290,96 @@ async def test_seed_waits_for_schema(env):
     finally:
         main_mod.seed_if_empty = original
     assert len(calls) == 3
+
+
+# --- outbox: NATS пропадает и возвращается --------------------------------------------------
+
+SUBJECT = "churn.source.changed"
+
+
+async def wait_until(cond, timeout_s: float = 15.0) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    while not cond():
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError("условие не выполнилось вовремя")
+        await asyncio.sleep(0.05)
+
+
+async def outbox_rows():
+    return await fetch("SELECT event_id, payload, published_at, attempts FROM source.outbox ORDER BY id")
+
+
+@pytest.fixture
+async def gate(env, monkeypatch):
+    """NATS для сервиса — через закрываемый прокси; сид выключен, чтобы событие было одно."""
+    from svckit.testing import TcpGate
+
+    g = TcpGate(NATS_URL)
+    monkeypatch.setattr(settings, "nats_url", g.url)
+    monkeypatch.setattr(settings, "nats_wait_on_start_s", 0.5)
+    monkeypatch.setattr(settings, "seed_on_start", False)
+    yield g
+    await g.close()
+
+
+async def test_nats_down_on_write_event_survives_in_outbox(gate, sample):
+    app = create_app()
+    async with app.router.lifespan_context(app), AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        assert not app.state.bus.connected
+        resp = await client.put("/api/v1/source/snapshot", json=sample, headers=ADMIN)
+        assert resp.status_code == 202, resp.text
+        snapshot_id = resp.json()["snapshot_id"]
+
+        # данные записаны, событие ждёт в outbox
+        assert (await fetch("SELECT count(*) c FROM source.accounts"))[0]["c"] == 10
+        rows = await outbox_rows()
+        assert len(rows) == 1 and rows[0]["published_at"] is None
+        payload = json.loads(rows[0]["payload"])
+        assert payload == {
+            "kind": "snapshot", "snapshot_id": snapshot_id,
+            "counts": {"accounts": 10, "services": 30, "transactions": 100}, "account_ids": [],
+        }
+        await asyncio.sleep(1.0)
+        assert await stream_count(SUBJECT) == 0
+
+        # NATS появился — событие уходит само
+        await gate.open()
+        event = await last_event(SUBJECT, lambda e: e["payload"]["snapshot_id"] == snapshot_id, timeout_s=30)
+        assert event["event_id"] == str(rows[0]["event_id"])
+        assert event["type"] == "source.changed" and event["producer"] == "ingest"
+        assert event["schema_version"] == 1 and event["payload"] == payload
+
+        # лишний пинок и время на повтор — дубля нет
+        app.state.relay.kick()
+        await asyncio.sleep(1.0)
+        assert await stream_count(SUBJECT) == 1
+        [row] = await outbox_rows()
+        assert row["published_at"] is not None
+
+
+async def test_nats_lost_after_start_event_sent_on_return(gate, sample):
+    await gate.open()
+    app = create_app()
+    async with app.router.lifespan_context(app), AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await wait_until(lambda: app.state.bus.connected)
+        await gate.close()
+        await wait_until(lambda: not app.state.bus.connected)
+
+        snap = await client.put("/api/v1/source/snapshot", json=sample, headers=ADMIN)
+        assert snap.status_code == 202, snap.text
+        acc = dict(sample["accounts"][0], balance=7)
+        resp = await client.post("/api/v1/source/events", json={"accounts": [acc]}, headers=ADMIN)
+        assert resp.status_code == 202, resp.text
+        assert (await fetch("SELECT balance FROM source.accounts WHERE id=$1", acc["id"]))[0]["balance"] == 7
+        assert [r["published_at"] for r in await outbox_rows()] == [None, None]
+
+        await gate.open()
+        event = await last_event(SUBJECT, lambda e: e["payload"]["kind"] == "changes", timeout_s=30)
+        assert event["payload"]["account_ids"] == [acc["id"]]
+        await asyncio.sleep(0.5)
+        assert await stream_count(SUBJECT) == 2  # снимок и изменения, по одному разу
+        assert all(r["published_at"] is not None for r in await outbox_rows())

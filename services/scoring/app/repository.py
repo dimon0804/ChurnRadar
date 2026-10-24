@@ -51,10 +51,19 @@ class SourceData:
     transactions: list[Transaction]
 
 
-async def create_pool(dsn: str, *, min_size: int = 1, max_size: int = 8) -> asyncpg.Pool:
+async def create_pool(
+    dsn: str,
+    *,
+    min_size: int = 1,
+    max_size: int = 8,
+    statement_timeout_ms: int | None = 600_000,
+    idle_in_transaction_timeout_ms: int | None = 600_000,
+) -> asyncpg.Pool:
     # jsonb пишем и читаем строками сами, повторы подключения — в main
     return await db.create_pool(
-        dsn, min_size, max_size, timeout_s=0, command_timeout=600, json_codec=False
+        dsn, min_size, max_size, timeout_s=0, command_timeout=600, json_codec=False,
+        statement_timeout_ms=statement_timeout_ms,
+        idle_in_transaction_timeout_ms=idle_in_transaction_timeout_ms,
     )
 
 

@@ -93,7 +93,14 @@ async def run() -> None:
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop.set)
 
-    state.pool = await _connect_with_retry(lambda: repo.create_pool(config.database_url), "postgres")
+    state.pool = await _connect_with_retry(
+        lambda: repo.create_pool(
+            config.database_url,
+            statement_timeout_ms=config.db_statement_timeout_ms,
+            idle_in_transaction_timeout_ms=config.db_idle_in_transaction_timeout_ms,
+        ),
+        "postgres",
+    )
     scorer = Scorer(
         state.pool,
         lock_key=config.advisory_lock_key,

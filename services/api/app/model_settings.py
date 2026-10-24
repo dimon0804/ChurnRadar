@@ -9,8 +9,13 @@ from typing import Any
 import asyncpg
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from svckit.errors import ApiError
+from svckit.outbox import add_event
 
 from app import model_catalog
+
+# churn.settings.changed пишется в outbox той же транзакцией, что и новая версия настроек
+OUTBOX_TABLE = "scoring.outbox"
+SUBJECT_SETTINGS_CHANGED = "churn.settings.changed"
 
 
 class ThresholdsPatch(BaseModel):
@@ -170,6 +175,10 @@ async def _write_new(
             "INSERT INTO scoring.settings_history (version, data, changes, changed_at, changed_by) "
             "VALUES ($1, $2, $3, $4, $5)",
             version, new, changes, updated["updated_at"], user_name,
+        )
+        await add_event(
+            conn, OUTBOX_TABLE, SUBJECT_SETTINGS_CHANGED, "settings.changed",
+            {"version": updated["version"], "updated_by": updated["updated_by"]},
         )
     return _api_of(updated), True
 

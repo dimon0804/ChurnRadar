@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import os
@@ -91,14 +92,22 @@ async def insert_scores(url: str) -> None:
         await conn.close()
 
 
-async def last_event(subject: str) -> dict | None:
+async def last_event(subject: str, where=None, timeout_s: float = 10.0) -> dict | None:
+    """Последнее событие subject; ждём — relay outbox отправляет в фоне. Не дождались — None."""
+    deadline = asyncio.get_running_loop().time() + timeout_s
     nc = await nats.connect(NATS_URL)
     try:
-        try:
-            msg = await nc.jetstream().get_last_msg("CHURN", subject)
-        except NotFoundError:
-            return None
-        return json.loads(msg.data)
+        while True:
+            try:
+                msg = await nc.jetstream().get_last_msg("CHURN", subject)
+                event = json.loads(msg.data)
+                if where is None or where(event):
+                    return event
+            except NotFoundError:
+                pass
+            if asyncio.get_running_loop().time() > deadline:
+                return None
+            await asyncio.sleep(0.05)
     finally:
         await nc.close()
 
@@ -251,7 +260,8 @@ async def test_settings_flow(client):
     sus = next(w for w in p["weights"] if w["code"] == "suspended")
     assert sus["weight"] == 12.5 and sus["enabled"] is False
 
-    event = await last_event("churn.settings.changed")
+    event = await last_event("churn.settings.changed", lambda e: e["payload"]["version"] == 2)
+    assert event is not None
     assert event["type"] == "settings.changed" and event["producer"] == "api"
     assert event["payload"] == {"version": 2, "updated_by": "admin"}
 
@@ -272,3 +282,57 @@ async def test_settings_flow(client):
     v2_paths = {c["path"] for c in history[1]["changes"]}
     assert v2_paths == {"horizon_days", "weights.suspended.weight", "weights.suspended.enabled"}
     assert history[0]["changed_by"] == "admin" and history[0]["changed_at"].endswith("Z")
+
+
+async def test_settings_event_waits_in_outbox_while_nats_is_down(monkeypatch):
+    """NATS лежит: PATCH проходит, событие в scoring.outbox; NATS вернулся — оно уходит один раз."""
+    if not DB_URL or not NATS_URL:
+        pytest.skip("нужны TEST_DATABASE_URL и TEST_NATS_URL")
+    from svckit.testing import TcpGate
+
+    try:
+        await reset_database(DB_URL)
+        nc = await nats.connect(NATS_URL)
+        try:
+            await nc.jetstream().purge_stream("CHURN")
+        except NotFoundError:
+            pass
+        await nc.close()
+    except (OSError, asyncpg.PostgresError, nats.errors.NoServersError) as exc:
+        pytest.skip(f"Postgres/NATS недоступны: {exc}")
+    gate = TcpGate(NATS_URL)
+    monkeypatch.setattr(settings, "database_url", DB_URL)
+    monkeypatch.setattr(settings, "nats_url", gate.url)
+    monkeypatch.setattr(settings, "nats_wait_on_start_s", 0.5)
+    app = create_app()
+    try:
+        async with app.router.lifespan_context(app), AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.patch("/api/v1/model/settings", json={"horizon_days": 60}, headers=ADMIN)
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["version"] == 2
+
+            conn = await asyncpg.connect(DB_URL)
+            try:
+                rows = await conn.fetch("SELECT event_id, payload::text p, published_at FROM scoring.outbox")
+                assert len(rows) == 1 and rows[0]["published_at"] is None
+                assert json.loads(rows[0]["p"]) == {"version": 2, "updated_by": "admin"}
+                assert await last_event("churn.settings.changed", timeout_s=0.5) is None
+
+                await gate.open()
+                event = await last_event("churn.settings.changed", timeout_s=30)
+                assert event is not None and event["event_id"] == str(rows[0]["event_id"])
+                assert event["payload"] == {"version": 2, "updated_by": "admin"} and event["producer"] == "api"
+                await asyncio.sleep(0.5)
+                nc = await nats.connect(NATS_URL)
+                try:
+                    info = await nc.jetstream().stream_info("CHURN", subjects_filter="churn.settings.changed")
+                    assert (info.state.subjects or {}).get("churn.settings.changed") == 1
+                finally:
+                    await nc.close()
+                assert await conn.fetchval("SELECT count(*) FROM scoring.outbox WHERE published_at IS NULL") == 0
+            finally:
+                await conn.close()
+    finally:
+        await gate.close()

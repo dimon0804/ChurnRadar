@@ -16,8 +16,12 @@ from typing import Any
 
 from prometheus_client import CollectorRegistry, Gauge
 from svckit.metrics import http_duration_histogram
+from svckit.outbox import OutboxMetrics
 
 registry = CollectorRegistry(auto_describe=True)
+
+# отправка churn.settings.changed из scoring.outbox
+outbox = OutboxMetrics.create(registry)
 
 customers_by_level = Gauge(
     "churn_customers_by_risk_level", "Клиенты по уровню риска", ["level"], registry=registry

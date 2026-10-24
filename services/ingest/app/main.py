@@ -1,4 +1,8 @@
-"""ingest: приём исходных данных (снимок и поток изменений) и публикация churn.source.changed."""
+"""ingest: приём исходных данных (снимок и поток изменений) и публикация churn.source.changed.
+
+Событие пишется в source.outbox той же транзакцией, что и данные, и уходит в NATS через relay:
+недоступный NATS не теряет пересчёт.
+"""
 
 from __future__ import annotations
 
@@ -24,10 +28,11 @@ from svckit.errors import ApiError, RequestIdMiddleware, install_error_handlers
 from svckit.health import install_probes
 from svckit.logs import configure_logging
 from svckit.metrics import HttpMetricsMiddleware, check_metrics_token, render
+from svckit.outbox import OutboxRelay
 
 from app import metrics
 from app.config import settings
-from app.repository import WriteResult, apply_changes, replace_snapshot
+from app.repository import OUTBOX_TABLE, WriteResult, apply_changes, replace_snapshot
 from app.schemas import (
     SNAPSHOT,
     EventsAccepted,
@@ -38,8 +43,6 @@ from app.schemas import (
 )
 
 log = structlog.get_logger()
-
-SUBJECT_SOURCE_CHANGED = "churn.source.changed"
 
 current_user = make_current_user(settings)
 AdminUser = Annotated[User, Depends(make_require_admin(current_user))]
@@ -55,20 +58,14 @@ def release_memory() -> None:
             ctypes.CDLL(libc).malloc_trim(0)
 
 
-def get_bus(request: Request) -> EventBus | None:
-    return getattr(request.app.state, "bus", None)
+def get_relay(request: Request) -> OutboxRelay | None:
+    return getattr(request.app.state, "relay", None)
 
 
-async def publish_source_changed(bus: EventBus | None, kind: str, result: WriteResult) -> None:
-    payload = {
-        "kind": kind,
-        "snapshot_id": result.batch_id,
-        "counts": result.counts,
-        "account_ids": [] if kind == "snapshot" else result.account_ids,
-    }
-    sent = await bus.publish(SUBJECT_SOURCE_CHANGED, "source.changed", payload) if bus else None
-    if sent is None:
-        metrics.publish_failures_total.inc()
+def kick_relay(relay: OutboxRelay | None) -> None:
+    """Событие уже в outbox (закоммичено с данными) — будим relay, чтобы отправил без ожидания."""
+    if relay is not None:
+        relay.kick()
 
 
 def _observe_write(kind: str, result: WriteResult) -> None:
@@ -107,7 +104,7 @@ async def seed_if_empty(app: FastAPI) -> WriteResult | None:
         return None
     _observe_write("seed", result)
     log.info("seed_loaded", **result.counts, snapshot_id=result.batch_id)
-    await publish_source_changed(app.state.bus, "snapshot", result)
+    kick_relay(getattr(app.state, "relay", None))
     return result
 
 
@@ -130,9 +127,20 @@ async def seed_when_schema_ready(app: FastAPI, attempts: int = 150, pause_s: flo
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging(settings.log_level, "ingest")
-    app.state.pool = await create_pool(settings.database_url, settings.db_pool_min, settings.db_pool_max)
+    app.state.pool = await create_pool(
+        settings.database_url, settings.db_pool_min, settings.db_pool_max,
+        statement_timeout_ms=settings.db_statement_timeout_ms,
+        idle_in_transaction_timeout_ms=settings.db_idle_in_transaction_timeout_ms,
+    )
     app.state.bus = EventBus(settings.nats_url, producer="ingest")
     await app.state.bus.start(wait_s=settings.nats_wait_on_start_s)
+    app.state.relay = OutboxRelay(
+        app.state.pool, app.state.bus, OUTBOX_TABLE,
+        metrics=metrics.outbox, batch_size=settings.outbox_batch_size, interval_s=settings.outbox_interval_s,
+        backoff_max_s=settings.outbox_backoff_max_s, retention_s=settings.outbox_retention_s,
+    )
+    # таблицы ещё может не быть (миграции идут параллельно) — relay подождёт её сам
+    app.state.relay.start()
     seeding: asyncio.Task[None] | None = None
     try:
         await seed_if_empty(app)
@@ -146,6 +154,7 @@ async def lifespan(app: FastAPI):
         seeding.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await seeding
+    await app.state.relay.stop()
     await app.state.bus.close()
     await app.state.pool.close()
 
@@ -180,7 +189,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         request: Request,
         user: AdminUser,
         pool: Pool,
-        bus: Annotated[EventBus | None, Depends(get_bus)] = None,
+        relay: Annotated[OutboxRelay | None, Depends(get_relay)] = None,
         reset_history: bool = False,
     ) -> SnapshotAccepted:
         # Тело разбираем сами: JSON сразу в датаклассы (pydantic-core), без промежуточных dict.
@@ -208,7 +217,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
             receive_s=round(parse_started - received, 2), parse_s=round(started - parse_started, 2),
             write_s=round(written - started, 2),
         )
-        await publish_source_changed(bus, "snapshot", result)
+        kick_relay(relay)
         del body
         release_memory()
         return SnapshotAccepted(snapshot_id=result.batch_id, counts=result.counts)
@@ -218,7 +227,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         body: SourceChangeBatch,
         user: AdminUser,
         pool: Pool,
-        bus: Annotated[EventBus | None, Depends(get_bus)] = None,
+        relay: Annotated[OutboxRelay | None, Depends(get_relay)] = None,
     ) -> EventsAccepted:
         total = len(body.accounts) + len(body.services) + len(body.transactions)
         if total == 0:
@@ -234,7 +243,7 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         result = await apply_changes(pool, body, created_by=user.name)
         metrics.write_duration.labels("changes").observe(time.perf_counter() - started)
         _observe_write("changes", result)
-        await publish_source_changed(bus, "changes", result)
+        kick_relay(relay)
         return EventsAccepted(accepted=total)
 
     install_probes(app, readiness)

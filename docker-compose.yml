@@ -214,6 +214,7 @@ services:
   scoring:
     <<: [*restart, *app-hardening]
     image: churn-radar-scoring:dev
+    stop_grace_period: 60s
     build: {context: ., dockerfile: services/scoring/Dockerfile}
     environment:
       <<: *app-env
@@ -229,6 +230,7 @@ services:
   simulator:
     <<: [*restart, *app-hardening]
     image: churn-radar-simulator:dev
+    stop_grace_period: 60s
     build: {context: ., dockerfile: services/simulator/Dockerfile}
     environment:
       <<: *app-env

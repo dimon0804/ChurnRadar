@@ -92,6 +92,13 @@ http:
       service: simulator
       middlewares: [strip-identity, auth]
 
+    alerts:
+      rule: "PathPrefix(`/api/v1/alerts`)"
+      entryPoints: [web]
+      priority: 150
+      service: alerts
+      middlewares: [strip-identity, auth, compress]
+
     docs:
       rule: "PathPrefix(`/api/v1/docs`) || PathPrefix(`/api/v1/openapi`) || PathPrefix(`/api/v1/redoc`)"
       entryPoints: [web]
@@ -148,6 +155,10 @@ http:
     simulator:
       loadBalancer:
         servers: [{url: "http://simulator:8000"}]
+    alerts:
+      loadBalancer:
+        servers: [{url: "http://alerts:8000"}]
+        healthCheck: {path: /healthz, interval: 10s, timeout: 3s}
     web:
       loadBalancer:
         servers: [{url: "http://web:8080"}]

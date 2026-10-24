@@ -8,7 +8,8 @@
                  │ /api/v1/stream        → notifier (SSE) ┐                   │
                  │ /api/v1/source/*      → ingest         │ ForwardAuth       │
                  │ /api/v1/simulator     → simulator      ├─► auth            │
-                 │ /api/v1/*, /docs      → api            │   /internal/verify│
+                 │ /api/v1/alerts        → alerts         │   /internal/verify│
+                 │ /api/v1/*, /docs      → api            │                   │
                  │ /                     → web            ┘                   │
                  │ /metrics              → api  (ForwardAuth: METRICS_TOKEN)   │
                  └────────────────────────────────────────────────────────────┘
@@ -16,9 +17,10 @@
   ingest ──► NATS JetStream  churn.source.changed  ──► scoring (N реплик)
   api    ──► NATS JetStream  churn.settings.changed ──► scoring
   scoring ─► NATS JetStream  churn.scores.updated  ──► notifier (M реплик) ──SSE──► браузеры
-                                                   └─► api (сброс кэша)
+                                                   ├─► api (сброс кэша)
+                                                   └─► alerts (K реплик) ──► лента, webhook, Telegram
 
-  PostgreSQL 16: схемы source, scoring, auth · Redis: сессии, лимиты, кэш
+  PostgreSQL 16: схемы source, scoring, alerts, auth · Redis: сессии, лимиты, кэш
   Prometheus ◄── /metrics всех сервисов и экспортёров · Grafana · Keycloak (OIDC, профиль oidc)
 ```
 
@@ -54,6 +56,22 @@ subject'а, поэтому получает все события и разда�
 переподключается сам, не тормозя остальных. При остановке реплика закрывает все потоки,
 браузеры переподключаются к соседней через 3 секунды (`retry: 3000`).
 
+### alerts
+
+Python, FastAPI и nats-py, как scoring. Оповещения о росте риска оттока: свой durable
+consumer `alerts` на `churn.scores.updated`, свой subject DLQ `churn.dlq.alerts`, своя схема
+`alerts` в PostgreSQL. Ни один существующий сервис ради него не менялся: scoring публикует
+событие для всех, alerts просто ещё один подписчик.
+
+На каждую пачку событий сервис под `pg_advisory_xact_lock` сравнивает `scoring.customer_scores`
+(только чтение) с `alerts.customer_state` одним запросом и решает, кому слать: переход в
+высокий риск, рост ожидаемой потери клиента больше порога, рост общей потери больше порога в
+процентах. В той же транзакции пишет ленту `alerts.feed`, очередь `alerts.deliveries` и
+отметку `alerts.processed_events`, поэтому повтор события ничего не задваивает. Внешние каналы
+(webhook, Telegram) разбирает фоновый цикл: берёт доставки через `FOR UPDATE SKIP LOCKED` с
+арендой, при ошибке откладывает по backoff, после последней попытки помечает `failed`. Лента
+для панели — `GET /api/v1/alerts` за ForwardAuth, как остальные API.
+
 ### web
 
 React 19 + Vite, статика отдаётся nginx-unprivileged. Состояние сервера в TanStack
@@ -83,6 +101,10 @@ Query; события SSE инвалидируют нужные запросы, 
 - `api` масштабируется HPA по CPU, ответы кэшируются и сбрасываются по `scores.updated`.
 - `notifier` — каждая реплика независима, нагрузка распределяется балансировщиком по
   соединениям.
+- `alerts` — реплики делят события через свой durable consumer, состояние клиентов меняется
+  под advisory lock, доставки во внешние каналы разбираются через `SKIP LOCKED`.
+- Новый потребитель событий подключается без правок в остальных: свой durable consumer на
+  нужный subject, своя схема в базе. Так добавлен alerts.
 
 ## Отказоустойчивость
 
@@ -93,6 +115,8 @@ Query; события SSE инвалидируют нужные запросы, 
 | NATS | Издатели и подписчики переподключаются сами, readiness notifier становится `503` и трафик уходит на живые реплики. События `ingest` и `api` ждут в outbox и уходят, когда шина вернётся. |
 | auth | Защищённые маршруты отвечают ошибкой, а не пропускают без проверки (fail closed). |
 | Redis | Новые входы невозможны, readiness auth `503`; данные панели не теряются. |
+| Реплика alerts | Неподтверждённое событие передоставит JetStream, взятую доставку через минуту (аренда) заберёт соседняя реплика. |
+| Webhook или Telegram недоступен | Оповещение уже в ленте, доставка повторяется по backoff, после 8 попыток — `failed`; алерт `AlertsDeliveryFailing`. |
 | Перезапуск api/scoring | Коэффициенты модели в PostgreSQL, после рестарта действуют те же. |
 
 В Kubernetes у каждого сервиса liveness/readiness/startup probes, PodDisruptionBudget и

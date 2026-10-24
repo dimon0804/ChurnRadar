@@ -15,7 +15,7 @@ $ErrorActionPreference = 'Stop'
 
 $Root = Split-Path -Parent $PSScriptRoot
 $Packages = @('libs/riskcore', 'libs/svckit', 'services/migrate', 'services/ingest', 'services/api',
-    'services/scoring', 'services/simulator')
+    'services/scoring', 'services/simulator', 'services/alerts')
 
 if ($env:PYTHON) { $Py = $env:PYTHON }
 elseif (Test-Path "$Root/.venv/Scripts/python.exe") { $Py = "$Root/.venv/Scripts/python.exe" }

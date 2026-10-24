@@ -31,6 +31,11 @@ render kind -f "$chart/values-kind.yaml" | validate
 render mock-core -f "$chart/values-kind.yaml" --set mockCore.enabled=true | validate
 render full --set keda.enabled=true --set serviceMonitor.enabled=true --set nats.streams.enabled=true \
   --set postgresql.enabled=false --set postgresql.external.url=postgresql://u:p@db.example:5432/churn | validate
+# оповещения с обоими внешними каналами; затем с готовым Secret и без сервиса вовсе
+render alerts-channels --set secrets.alerts.webhookUrl=https://hooks.example/churn \
+  --set secrets.alerts.telegramBotToken=123:abc --set secrets.alerts.telegramChatId=-100123 | validate
+render alerts-existing --set secrets.alerts.existingSecret=churn-alerts-channels | validate
+render alerts-off --set alerts.enabled=false | validate
 # повторная установка (upgrade) рендерит миграции как pre-upgrade хук
 render upgrade --is-upgrade | validate
 # бэкап во внешнюю БД с готовым PVC, PriorityClass для всех подов

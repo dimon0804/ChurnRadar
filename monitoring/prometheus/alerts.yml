@@ -109,3 +109,18 @@ groups:
           description: >-
             Сейчас подключено {{ $value }} клиентов живых обновлений. Возможны проблемы
             с notifier, шлюзом или NATS — панели перестанут обновляться сами.
+
+      - alert: AlertsDeliveryFailing
+        expr: |
+          sum by (channel) (increase(alerts_failed_total[15m])) > 0
+          unless on (channel)
+          sum by (channel) (increase(alerts_sent_total[15m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Оповещения не доходят в {{ $labels.channel }}"
+          description: >-
+            За 15 минут ни одна попытка отправить оповещение в {{ $labels.channel }} не прошла.
+            Лента в панели работает, внешний канал — нет. Проверьте адрес webhook или токен
+            и chat id Telegram, логи alerts (delivery_failed) и таблицу alerts.deliveries.

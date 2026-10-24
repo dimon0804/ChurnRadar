@@ -12,6 +12,9 @@ services:
     profiles: [core]
   simulator:
     profiles: [core]
+  # оповещения читают scoring.customer_scores, а заглушка их не пишет
+  alerts:
+    profiles: [core]
 
   mock-core:
     restart: unless-stopped

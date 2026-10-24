@@ -7,7 +7,8 @@
 |---|---|---|---|
 | `churn.source.changed` | ingest | scoring, notifier | `source.updated` |
 | `churn.settings.changed` | api | scoring, notifier | `settings.updated` |
-| `churn.scores.updated` | scoring | notifier, api (сброс кэша) | `scores.updated` |
+| `churn.scores.updated` | scoring | notifier, api (сброс кэша), alerts (оповещения) | `scores.updated` |
+| `churn.dlq.scoring`, `churn.dlq.alerts` | scoring, alerts | — (разбор вручную) | — |
 
 Стрим JetStream: `CHURN` (subjects `churn.>`), хранение file, retention limits, max_age 24h.
 Обработчики идемпотентны по `event_id`.

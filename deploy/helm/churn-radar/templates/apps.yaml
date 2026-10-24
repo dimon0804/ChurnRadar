@@ -101,6 +101,12 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ $name }}
+            {{- with $app.envFromSecret }}
+            # необязательный Secret целиком (например, каналы alerts): нет его — переменных нет
+            - secretRef:
+                name: {{ tpl . $ }}
+                optional: true
+            {{- end }}
           {{- if or $app.secretKeys $app.extraEnv }}
           env:
             {{- include "cr.secretEnv" (dict "root" $ "keys" $app.secretKeys) | trim | nindent 12 }}

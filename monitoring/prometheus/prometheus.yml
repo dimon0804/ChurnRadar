@@ -91,6 +91,20 @@ scrape_configs:
         labels:
           service: simulator
 
+  # alerts в двух репликах, как scoring: каждую реплику находим через DNS
+  - job_name: alerts
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/metrics_token
+    dns_sd_configs:
+      - names: ["alerts"]
+        type: A
+        port: 8000
+        refresh_interval: 15s
+    relabel_configs:
+      - target_label: service
+        replacement: alerts
+
   # entrypoint "metrics" в traefik (--metrics.prometheus.entryPoint=metrics)
   - job_name: traefik
     static_configs:

@@ -56,7 +56,7 @@ async def test_apply_idempotent_and_concurrent(fresh_db, tmp_path):
     results = await asyncio.gather(*(migrate.run(fresh_db, dirs, 10) for _ in range(3)))
     applied = sorted(name for r in results for name in r)
     expected = sorted(f"core/{p.name}" for p in (REPO_ROOT / "db" / "core").glob("*.sql"))
-    assert len(expected) >= 2
+    assert expected[:2] == ["core/001_core.sql", "core/002_outbox.sql"]
     assert applied == expected  # каждая применена ровно один раз
     assert await migrate.run(fresh_db, dirs, 10) == []
 

@@ -46,7 +46,7 @@ app.kubernetes.io/component: {{ .component }}
 
 {{/* app keys in values -> kubernetes component names */}}
 {{- define "cr.appKeys" -}}
-auth notifier web api ingest scoring simulator mockCore
+auth notifier web api ingest scoring simulator alerts mockCore
 {{- end -}}
 
 {{- define "cr.appEnabled" -}}
@@ -97,6 +97,11 @@ true
 
 {{- define "cr.secretName" -}}
 {{- default (printf "%s-secrets" (include "cr.fullname" .)) .Values.secrets.existingSecret -}}
+{{- end -}}
+
+{{/* Secret с каналами сервиса оповещений (webhook, Telegram) */}}
+{{- define "cr.alertsSecretName" -}}
+{{- default (printf "%s-alerts" (include "cr.fullname" .)) .Values.secrets.alerts.existingSecret -}}
 {{- end -}}
 
 {{- define "cr.postgresHost" -}}

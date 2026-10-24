@@ -46,3 +46,26 @@ tests:
             exp_annotations:
               summary: "Пересчёт отстаёт: в очереди 5 необработанных событий"
               description: "Консьюмер scoring потока CHURN не успевает разбирать события больше 30 секунд. Панель показывает устаревшие оценки риска."
+
+  # alerts: webhook падает каждую минуту и ни разу не доставил; telegram ошибается, но доходит
+  - interval: 1m
+    input_series:
+      - series: 'alerts_failed_total{job="alerts",channel="webhook"}'
+        values: '0+2x40'
+      - series: 'alerts_sent_total{job="alerts",channel="webhook"}'
+        values: '0x40'
+      - series: 'alerts_failed_total{job="alerts",channel="telegram"}'
+        values: '0+1x40'
+      - series: 'alerts_sent_total{job="alerts",channel="telegram"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AlertsDeliveryFailing
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: AlertsDeliveryFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, channel: webhook}
+            exp_annotations:
+              summary: "Оповещения не доходят в webhook"
+              description: "За 15 минут ни одна попытка отправить оповещение в webhook не прошла. Лента в панели работает, внешний канал — нет. Проверьте адрес webhook или токен и chat id Telegram, логи alerts (delivery_failed) и таблицу alerts.deliveries."

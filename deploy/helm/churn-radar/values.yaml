@@ -27,6 +27,15 @@ secrets:
   metricsToken: churn-metrics-demo-token
   adminPassword: admin
   analystPassword: analyst
+  # Каналы сервиса оповещений. Пустое значение — канал выключен (лента в панели работает всегда).
+  # Попадают в отдельный Secret <релиз>-alerts; existingSecret — взять готовый с ключами
+  # WEBHOOK_URL, WEBHOOK_SECRET, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (любые можно опустить).
+  alerts:
+    existingSecret: ""
+    webhookUrl: ""
+    webhookSecret: ""
+    telegramBotToken: ""
+    telegramChatId: ""
 
 # Общие переменные окружения всех приложений (попадают в ConfigMap каждого сервиса)
 commonEnv:
@@ -273,6 +282,32 @@ simulator:
   serviceMonitor:
     bearerToken: true
 
+# Оповещения: свой потребитель churn.scores.updated, лента /api/v1/alerts, webhook и Telegram.
+# Реплики делят события через durable-консьюмер JetStream, состояние клиентов — под advisory lock.
+alerts:
+  enabled: true
+  image:
+    repository: churn-radar-alerts
+  secretKeys: [DATABASE_URL, METRICS_TOKEN]
+  # Secret с ключами каналов подключается целиком (optional: нет Secret — каналы выключены)
+  envFromSecret: '{{ include "cr.alertsSecretName" . }}'
+  env:
+    SERVICE_NAME: alerts
+    # ссылки на карточку клиента в сообщениях
+    PUBLIC_URL: http://localhost:8080
+    ALERT_LOSS_JUMP_EUR: "50"
+    ALERT_TOTAL_LOSS_JUMP_PCT: "10"
+    ALERT_COOLDOWN_MIN: "60"
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 192Mi
+  serviceMonitor:
+    bearerToken: true
+
 # Тестовая заглушка (tests/mock-core): реализует маршруты api+ingest+simulator
 # одним процессом. При включении заменяет эти три сервиса.
 mockCore:
@@ -455,6 +490,16 @@ networkPolicy:
         k8s-app: kube-dns
   # дополнительные egress-правила для приложений (OIDC-провайдер, внешние БД и т.п.)
   extraAppEgress: []
+  # исходящие alerts наружу: Telegram Bot API и внешний webhook по HTTPS.
+  # Webhook внутри кластера или на другом порту — добавьте сюда своё правило.
+  alertsEgress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16]
+      ports:
+        - port: 443
+          protocol: TCP
   #  - to:
   #      - ipBlock:
   #          cidr: 0.0.0.0/0

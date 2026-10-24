@@ -121,6 +121,11 @@ else
   log "services/scoring/Dockerfile не найден — scoring не разворачивается"
   helm_args+=(--set scoring.enabled=false)
 fi
+if [[ -f "$root/services/alerts/Dockerfile" ]]; then
+  build alerts . services/alerts/Dockerfile
+else
+  helm_args+=(--set alerts.enabled=false)
+fi
 
 mock_core="${MOCK_CORE:-$core_missing}"
 if [[ "$mock_core" == "1" ]]; then

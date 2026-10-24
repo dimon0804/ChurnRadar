@@ -62,6 +62,7 @@
         },
         "priorityClassName": { "type": "string" },
         "secretKeys": { "type": "array", "items": { "type": "string" } },
+        "envFromSecret": { "type": "string" },
         "env": {
           "type": "object",
           "additionalProperties": { "type": ["string", "number", "boolean"] }
@@ -133,7 +134,17 @@
         "existingSecret": { "type": "string" },
         "metricsToken": { "type": "string" },
         "adminPassword": { "type": "string" },
-        "analystPassword": { "type": "string" }
+        "analystPassword": { "type": "string" },
+        "alerts": {
+          "type": "object",
+          "properties": {
+            "existingSecret": { "type": "string" },
+            "webhookUrl": { "type": "string" },
+            "webhookSecret": { "type": "string" },
+            "telegramBotToken": { "type": "string" },
+            "telegramChatId": { "type": ["string", "integer"] }
+          }
+        }
       }
     },
     "commonEnv": {
@@ -156,6 +167,7 @@
     "ingest": { "$ref": "#/definitions/app" },
     "scoring": { "$ref": "#/definitions/app" },
     "simulator": { "$ref": "#/definitions/app" },
+    "alerts": { "$ref": "#/definitions/app" },
     "mockCore": { "$ref": "#/definitions/app" },
     "migrations": {
       "type": "array",
@@ -250,7 +262,8 @@
         "enabled": { "type": "boolean" },
         "prometheus": { "type": "object" },
         "dns": { "type": "object" },
-        "extraAppEgress": { "type": "array" }
+        "extraAppEgress": { "type": "array" },
+        "alertsEgress": { "type": "array" }
       }
     },
     "serviceMonitor": {

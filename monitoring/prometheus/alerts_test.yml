@@ -58,6 +58,10 @@ tests:
         values: '0+1x40'
       - series: 'alerts_sent_total{job="alerts",channel="telegram"}'
         values: '0+1x40'
+      - series: 'alerts_failed_total{job="alerts",channel="email"}'
+        values: '0+1x40'
+      - series: 'alerts_sent_total{job="alerts",channel="email"}'
+        values: '0x40'
     alert_rule_test:
       - eval_time: 5m
         alertname: AlertsDeliveryFailing
@@ -67,5 +71,26 @@ tests:
         exp_alerts:
           - exp_labels: {severity: warning, channel: webhook}
             exp_annotations:
-              summary: "Оповещения не доходят в webhook"
-              description: "За 15 минут ни одна попытка отправить оповещение в webhook не прошла. Лента в панели работает, внешний канал — нет. Проверьте адрес webhook или токен и chat id Telegram, логи alerts (delivery_failed) и таблицу alerts.deliveries."
+              summary: "Уведомления не доходят в webhook"
+              description: "За 15 минут ни одна попытка отправить уведомление в webhook не прошла. В панели всё видно, внешний канал — нет. Проверьте настройки канала (адрес webhook, SMTP_*, токен бота), логи alerts (delivery_failed) и таблицу alerts.deliveries."
+          - exp_labels: {severity: warning, channel: email}
+            exp_annotations:
+              summary: "Уведомления не доходят в email"
+              description: "За 15 минут ни одна попытка отправить уведомление в email не прошла. В панели всё видно, внешний канал — нет. Проверьте настройки канала (адрес webhook, SMTP_*, токен бота), логи alerts (delivery_failed) и таблицу alerts.deliveries."
+
+  # бот: getUpdates падает раз в минуту
+  - interval: 1m
+    input_series:
+      - series: 'alerts_bot_poll_errors_total{job="alerts",instance="a"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: AlertsTelegramBotPollFailing
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: AlertsTelegramBotPollFailing
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Telegram-бот не получает сообщения"
+              description: "Реплика alerts, которая ведёт опрос getUpdates, за 10 минут получила 10 ошибок. Бот не отвечает на команды и не привязывает новые чаты; уведомления в Telegram при этом продолжают уходить. Проверьте TELEGRAM_BOT_TOKEN и доступ к api.telegram.org."

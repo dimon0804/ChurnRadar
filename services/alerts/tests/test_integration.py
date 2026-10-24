@@ -1,4 +1,4 @@
-"""Интеграция с реальными Postgres и NATS: событие в шину → лента и webhook.
+"""Интеграция с реальными Postgres и NATS: событие в шину → подписчики, журнал, почта, Telegram, webhook.
 
 scoring здесь не запускается: его результат (scoring.customer_scores) пишем сами,
 а churn.scores.updated публикуем в том же формате, что и он.
@@ -16,7 +16,10 @@ from typing import Any
 
 import nats
 import pytest
+from svckit.mail import MailConfig
 
+from app import repository as repo
+from app.catalog import parse_prefs
 from app.channels import build_channels
 from app.config import Config
 from app.delivery import Dispatcher
@@ -24,6 +27,7 @@ from app.events import SUBJECT_SCORES
 from app.metrics import EVENTS, FAILED, SENT
 from app.worker import Worker
 from conftest import TEST_DATABASE_URL, TEST_NATS_URL, WebhookServer, put_score
+from fakes import FakeSmtp, FakeTelegram, put_summary
 
 pytestmark = pytest.mark.integration
 
@@ -125,8 +129,6 @@ def make_config(**overrides: Any) -> Config:
         nats_url=TEST_NATS_URL,
         durable_name=f"alerts-test-{uuid.uuid4().hex[:8]}",  # свой потребитель на каждый тест
         public_url="https://churn.example",
-        loss_jump_cents=5_000,
-        total_loss_jump_pct=10.0,
         cooldown_s=3600,
         delivery_backoff_s=(0.2, 0.2, 0.2),
         delivery_max_attempts=20,
@@ -141,68 +143,143 @@ async def seeded(db_pool: Any) -> AsyncIterator[Any]:
         await put_score(conn, 1, "medium", 1_000)
         await put_score(conn, 2, "low", 500)
         await put_score(conn, 3, "high", 20_000)
+        await put_summary(conn, loss=100_000, high=1, share=0.2)
     yield db_pool
 
 
-async def test_event_to_feed_and_webhook_without_duplicates(seeded: Any, webhook: WebhookServer) -> None:
-    stack = Stack(seeded, make_config(webhook_url=webhook.url + "/hook", webhook_secret="s"))
+async def _baseline(stack: Stack) -> None:
+    first = scores_updated([], 100_000, full=True)
+    await stack.publish(first)
+    await wait_for(lambda: stack.processed(first["event_id"]), what="исходный срез")
+
+
+async def _subscribe(pool: Any, username: str, body: dict[str, Any]) -> None:
+    async with pool.acquire() as conn:
+        await repo.save_prefs(conn, parse_prefs(username, body), username)
+
+
+async def _notifications(pool: Any, username: str) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM alerts.notifications WHERE username = $1 ORDER BY id", username)
+    return [dict(r) for r in rows]
+
+
+async def test_personal_thresholds_panel_and_email(seeded: Any, smtp: FakeSmtp) -> None:
+    mail = MailConfig(host="127.0.0.1", port=smtp.port, from_addr="radar@churn.example")
+    stack = Stack(seeded, make_config(mail=mail))
     await stack.start()
     try:
-        # первый пересчёт — исходный срез, оповещений нет, хотя клиент 3 уже в высоком риске
-        first = scores_updated([], 21_500, full=True)
-        await stack.publish(first)
-        await wait_for(lambda: stack.processed(first["event_id"]), what="исходный срез")
-        assert await stack.feed() == []
+        # Анна хочет знать о росте потери больше 5 % — в панели и на почту; Борису хватит 50 %
+        await _subscribe(
+            seeded,
+            "anna",
+            {
+                "email": "anna@example.com",
+                "events": {"loss_growth": {"threshold": 5, "period_h": 24, "channels": ["panel", "email"]}},
+            },
+        )
+        await _subscribe(seeded, "boris", {"events": {"loss_growth": {"threshold": 50, "channels": ["panel"]}}})
+        await _baseline(stack)
 
-        # scoring пересчитал клиента 1: перешёл в высокий риск
+        # пересчёт: потеря выросла на 20 %, клиент 2 ушёл в высокий риск с маленькой потерей
         async with seeded.acquire() as conn:
-            await put_score(conn, 1, "high", 9_000)
-        event = scores_updated([1], 22_000)
-        await stack.publish(event, msg_id=event["event_id"])
-        feed = await wait_for(stack.feed, what="запись в ленте")
-        assert len(feed) == 1
-        assert feed[0]["kind"] == "high_risk" and feed[0]["customer_id"] == 1
-        assert "перешёл в высокий риск" in feed[0]["message"]
-
-        await wait_for(lambda: _true(len(webhook.requests) == 1), what="webhook")
-        hook = webhook.requests[0]
-        assert hook["path"] == "/hook"
-        assert hook["headers"]["X-ChurnRadar-Signature"].startswith("sha256=")
-        assert hook["body"]["alerts"][0]["url"] == "https://churn.example/customers/1"
-        assert hook["body"]["text"].startswith("ChurnRadar: 1 оповещение")
-
-        # то же событие ещё раз (без Nats-Msg-Id, чтобы JetStream не отсёк сам): дубля нет
-        duplicates_before = EVENTS.labels(result="duplicate")._value.get()
+            await put_summary(conn, loss=120_000, high=2, share=0.25)
+            await put_score(conn, 2, "high", 600)
+        event = scores_updated([2], 120_000)
         await stack.publish(event)
-        await wait_for(lambda: _true(EVENTS.labels(result="duplicate")._value.get() > duplicates_before), what="повтор")
-        await asyncio.sleep(0.5)
-        assert len(await stack.feed()) == 1
-        assert len(webhook.requests) == 1
+        await wait_for(lambda: stack.processed(event["event_id"]), what="пересчёт")
+
+        anna = await _notifications(seeded, "anna")
+        assert [n["event_type"] for n in anna] == ["loss_growth"]
+        assert anna[0]["title"] == "Ожидаемая потеря выросла на 20\u00a0% за сутки"
+        assert await _notifications(seeded, "boris") == []
+
+        await wait_for(lambda: _true(len(smtp.messages) == 1), what="письмо")
+        letter = smtp.messages[0]
+        assert letter["to"] == ["anna@example.com"]
+        assert letter["subject"] == "ChurnRadar: Ожидаемая потеря выросла на 20\u00a0% за сутки"
+        html = letter["message"].get_body(preferencelist=("html",)).get_content()
+        assert "https://churn.example/" in html and "Настроить уведомления" in html
+
+        # журнал — по порогам по умолчанию (10 %): рост в нём есть, поклиентских записей нет
+        assert [r["kind"] for r in await stack.feed()] == ["loss_growth"]
+
+        # повтор того же события ничего не добавляет
+        duplicates = EVENTS.labels(result="duplicate")._value.get()
+        await stack.publish(event)
+        await wait_for(lambda: _true(EVENTS.labels(result="duplicate")._value.get() > duplicates), what="повтор")
+        await asyncio.sleep(0.3)
+        assert len(await _notifications(seeded, "anna")) == 1 and len(smtp.messages) == 1
+
+        # дальнейший рост в пределах анти-спама не шлём, хотя порог превышен
         async with seeded.acquire() as conn:
-            assert await conn.fetchval("SELECT status FROM alerts.deliveries") == "sent"
+            await put_summary(conn, loss=140_000, high=2, share=0.25)
+        again = scores_updated([], 140_000, full=True)
+        await stack.publish(again)
+        await wait_for(lambda: stack.processed(again["event_id"]), what="второй пересчёт")
+        assert len(await _notifications(seeded, "anna")) == 1
     finally:
         await stack.stop()
 
 
-async def test_loss_and_total_jump_in_one_batch(seeded: Any) -> None:
-    stack = Stack(seeded, make_config())
+async def test_big_customer_to_telegram_with_quiet_hours(seeded: Any, telegram: FakeTelegram) -> None:
+    stack = Stack(seeded, make_config(telegram_bot_token="123:abc", telegram_api_url=telegram.url))
     await stack.start()
     try:
-        first = scores_updated([], 21_500, full=True)
-        await stack.publish(first)
-        await wait_for(lambda: stack.processed(first["event_id"]), what="исходный срез")
+        big = {"big_customer_high": {"threshold": 100, "channels": ["telegram", "panel"]}}
+        await _subscribe(seeded, "anna", {"events": big})
+        # у Бориса тихие часы на весь день: сообщение ляжет в очередь до их конца
+        await _subscribe(seeded, "boris", {"events": big, "quiet_from": "00:00", "quiet_to": "23:59"})
+        async with seeded.acquire() as conn:
+            await repo.link_chat(conn, "anna", 1001, "anna_tg")
+            await repo.link_chat(conn, "boris", 1002, "boris_tg")
+        await _baseline(stack)
 
         async with seeded.acquire() as conn:
-            await put_score(conn, 2, "low", 7_000)  # +€65 при пороге €50
-        event = scores_updated([], 28_000, full=True)  # общая +30 %
+            await put_score(conn, 1, "high", 50_000)  # €500 — выше порога €100
+        event = scores_updated([1], 100_000)
         await stack.publish(event)
-        feed = await wait_for(stack.feed, what="лента")
-        kinds = sorted(r["kind"] for r in feed)
-        assert kinds == ["loss_jump", "total_loss_jump"]
-        assert len({r["batch_id"] for r in feed}) == 1  # одна пачка
-        # каналы не настроены — в очереди доставки пусто, лента есть всегда
+        await wait_for(lambda: stack.processed(event["event_id"]), what="пересчёт")
+
+        await wait_for(lambda: _true(telegram.replies(1001)), what="сообщение Анне")
+        sent = next(m for m in telegram.sent if m["chat_id"] == "1001")
+        assert "Крупный клиент #1 (user1@example.com) перешёл в высокий риск" in sent["text"]
+        assert sent["reply_markup"]["inline_keyboard"][0][0]["url"] == "https://churn.example/customers/1"
+        assert [n["link"] for n in await _notifications(seeded, "anna")] == ["/customers/1"]
+
+        await asyncio.sleep(0.5)
+        assert telegram.replies(1002) == []  # тихие часы
         async with seeded.acquire() as conn:
-            assert await conn.fetchval("SELECT count(*) FROM alerts.deliveries") == 0
+            row = await conn.fetchrow(
+                "SELECT status, next_attempt_at > now() AS later FROM alerts.deliveries WHERE username = 'boris'"
+            )
+        assert row["status"] == "pending" and row["later"]
+        # в панели у Бориса запись есть сразу
+        assert len(await _notifications(seeded, "boris")) == 1
+    finally:
+        await stack.stop()
+
+
+async def test_journal_to_webhook_without_duplicates(seeded: Any, webhook: WebhookServer) -> None:
+    stack = Stack(seeded, make_config(webhook_url=webhook.url + "/hook", webhook_secret="s"))
+    await stack.start()
+    try:
+        await _baseline(stack)
+        async with seeded.acquire() as conn:
+            await put_summary(conn, loss=130_000, high=1, share=0.2)
+        event = scores_updated([], 130_000, full=True)
+        await stack.publish(event, msg_id=event["event_id"])
+        await wait_for(lambda: _true(len(webhook.requests) == 1), what="webhook")
+        hook = webhook.requests[0]
+        assert hook["headers"]["X-ChurnRadar-Signature"].startswith("sha256=")
+        assert [a["kind"] for a in hook["body"]["alerts"]] == ["loss_growth"]
+        assert hook["body"]["alerts"][0]["url"] == "https://churn.example/"
+
+        duplicates = EVENTS.labels(result="duplicate")._value.get()
+        await stack.publish(event)
+        await wait_for(lambda: _true(EVENTS.labels(result="duplicate")._value.get() > duplicates), what="повтор")
+        await asyncio.sleep(0.5)
+        assert len(webhook.requests) == 1 and len(await stack.feed()) == 1
     finally:
         await stack.stop()
 
@@ -214,134 +291,48 @@ async def test_webhook_down_retries_then_recovers(seeded: Any, webhook: WebhookS
     failed_before = FAILED.labels(channel="webhook")._value.get()
     sent_before = SENT.labels(channel="webhook")._value.get()
     try:
-        first = scores_updated([], 21_500, full=True)
-        await stack.publish(first)
-        await wait_for(lambda: stack.processed(first["event_id"]), what="исходный срез")
+        await _baseline(stack)
         async with seeded.acquire() as conn:
-            await put_score(conn, 2, "high", 600)
-        await stack.publish(scores_updated([2], 21_600))
+            await put_summary(conn, loss=150_000)
+        await stack.publish(scores_updated([], 150_000, full=True))
 
         await wait_for(lambda: _true(len(webhook.requests) >= 3), what="повторные попытки")
         assert FAILED.labels(channel="webhook")._value.get() - failed_before >= 3
         async with seeded.acquire() as conn:
             row = await conn.fetchrow("SELECT status, attempts, last_error FROM alerts.deliveries")
         assert row["status"] == "pending" and row["attempts"] >= 2 and "503" in row["last_error"]
-        assert len(await stack.feed()) == 1  # лента не зависит от внешнего канала
+        assert len(await stack.feed()) == 1  # журнал не зависит от внешнего канала
 
         webhook.status = 200
         await wait_for(lambda: _true(SENT.labels(channel="webhook")._value.get() > sent_before), what="доставка")
-        async with seeded.acquire() as conn:
-            assert await conn.fetchval("SELECT status FROM alerts.deliveries") == "sent"
     finally:
         await stack.stop()
 
 
-async def test_webhook_unreachable_counts_failures(seeded: Any) -> None:
-    from svckit.testing import free_port
-
-    stack = Stack(
-        seeded,
-        make_config(webhook_url=f"http://127.0.0.1:{free_port()}/nobody", webhook_timeout_s=1, delivery_max_attempts=2),
-    )
-    await stack.start()
-    failed_before = FAILED.labels(channel="webhook")._value.get()
-    try:
-        first = scores_updated([], 21_500, full=True)
-        await stack.publish(first)
-        await wait_for(lambda: stack.processed(first["event_id"]), what="исходный срез")
-        async with seeded.acquire() as conn:
-            await put_score(conn, 1, "high", 2_000)
-        await stack.publish(scores_updated([1], 21_600))
-
-        async def given_up() -> bool:
-            async with seeded.acquire() as conn:
-                return await conn.fetchval("SELECT status FROM alerts.deliveries") == "failed"
-
-        await wait_for(given_up, what="отказ после всех попыток")
-        assert FAILED.labels(channel="webhook")._value.get() - failed_before == 2
-    finally:
-        await stack.stop()
-
-
-async def _baseline(stack: Stack) -> None:
-    first = scores_updated([], 21_500, full=True)
-    await stack.publish(first)
-    await wait_for(lambda: stack.processed(first["event_id"]), what="исходный срез")
-
-
-async def test_hundred_transitions_fold_into_one_record_and_one_webhook(seeded: Any, webhook: WebhookServer) -> None:
+async def test_mass_change_is_one_message_per_user(seeded: Any, telegram: FakeTelegram) -> None:
+    """Сто клиентов разом ушли в высокий риск (новый снимок): одно сообщение, а не сто."""
     async with seeded.acquire() as conn:
         for cid in range(100, 200):
             await put_score(conn, cid, "medium", 1_000)
-    stack = Stack(seeded, make_config(webhook_url=webhook.url, bulk_threshold=20))
+    stack = Stack(seeded, make_config(telegram_bot_token="123:abc", telegram_api_url=telegram.url))
     await stack.start()
     try:
+        await _subscribe(seeded, "anna", {"events": {"big_customer_high": {"threshold": 50, "channels": ["telegram"]}}})
+        async with seeded.acquire() as conn:
+            await repo.link_chat(conn, "anna", 1001, None)
         await _baseline(stack)
-        # пересчёт после смены модели: сотня клиентов разом ушла в высокий риск
         async with seeded.acquire() as conn:
             for cid in range(100, 200):
-                await put_score(conn, cid, "high", 1_000 + cid * 10)
-        event = scores_updated(list(range(100, 200)), 400_000)
+                await put_score(conn, cid, "high", 60_000 + cid)
+        event = scores_updated(list(range(100, 200)), 100_000)
         await stack.publish(event)
-        await wait_for(lambda: stack.processed(event["event_id"]), what="пачка")
-
-        feed = await stack.feed()
-        assert [r["kind"] for r in feed] == ["bulk"]
-        assert feed[0]["customer_id"] is None
-        assert "в высоком риске 101 клиент (было 1)" in feed[0]["message"]
-        assert "Самые дорогие: #199 (€29,90), #198 (€29,80), #197 (€29,70)." in feed[0]["message"]
-
-        await wait_for(lambda: _true(len(webhook.requests) == 1), what="webhook")
-        body = webhook.requests[0]["body"]
-        assert [a["kind"] for a in body["alerts"]] == ["bulk"]
-        assert body["alerts"][0]["url"] == "https://churn.example/customers?level=high&sort=expected_loss&order=desc"
-        async with seeded.acquire() as conn:
-            assert await conn.fetchval("SELECT count(*) FROM alerts.deliveries") == 1
-            # состояние перебазировано: все сто запомнены как высокий риск
-            assert await conn.fetchval("SELECT count(*) FROM alerts.customer_state WHERE risk_level = 'high'") == 101
-
-        # следующий пересчёт без изменений — ни отложенных оповещений, ни новой доставки
-        again = scores_updated([], 400_000, full=True)
-        await stack.publish(again)
-        await wait_for(lambda: stack.processed(again["event_id"]), what="повторный пересчёт")
-        await asyncio.sleep(0.3)
-        assert len(await stack.feed()) == 1
-        assert len(webhook.requests) == 1
-    finally:
-        await stack.stop()
-
-
-async def test_snapshot_new_customers_only_in_summary(seeded: Any) -> None:
-    stack = Stack(seeded, make_config())
-    await stack.start()
-    try:
-        await _baseline(stack)
-        # новый снимок: три новых клиента сразу в высоком риске, порог (20) не превышен
-        async with seeded.acquire() as conn:
-            for cid in (501, 502, 503):
-                await put_score(conn, cid, "high", 5_000)
-        event = scores_updated([], 36_500, full=True)
-        await stack.publish(event)
-        await wait_for(lambda: stack.processed(event["event_id"]), what="снимок")
-        feed = await stack.feed()
-        assert [r["kind"] for r in feed] == ["bulk"]
-        assert feed[0]["message"].startswith("Загружены новые данные: в высоком риске 4 клиента (было 1)")
-    finally:
-        await stack.stop()
-
-
-async def test_single_new_customer_from_stream_is_individual(seeded: Any) -> None:
-    stack = Stack(seeded, make_config())
-    await stack.start()
-    try:
-        await _baseline(stack)
-        async with seeded.acquire() as conn:
-            await put_score(conn, 777, "high", 5_000)
-        event = scores_updated([777], 22_000)
-        await stack.publish(event)
-        await wait_for(lambda: stack.processed(event["event_id"]), what="событие")
-        feed = await stack.feed()
-        assert [(r["kind"], r["customer_id"]) for r in feed] == [("high_risk", 777)]
-        assert feed[0]["message"].startswith("Новый клиент #777 (user777@example.com) сразу в высоком риске")
+        await wait_for(lambda: _true(telegram.replies(1001)), what="сообщение")
+        await asyncio.sleep(0.5)
+        replies = telegram.replies(1001)
+        assert len(replies) == 1
+        assert "100 крупных клиентов перешли в высокий риск" in replies[0]
+        assert "#199" in replies[0] and "…и ещё 95" in replies[0]
+        # журнал тоже одной записью
+        assert [r["kind"] for r in await stack.feed()] == ["big_customer_high"]
     finally:
         await stack.stop()

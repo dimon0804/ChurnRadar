@@ -16,6 +16,7 @@ const ModelPage = lazy(() => import('@/pages/model'))
 const DataPage = lazy(() => import('@/pages/data'))
 const ModelQualityPage = lazy(() => import('@/pages/model-quality'))
 const MarketingPage = lazy(() => import('@/pages/marketing'))
+const NotificationsPage = lazy(() => import('@/pages/notifications'))
 
 function PageFallback() {
   return (
@@ -120,6 +121,14 @@ export const router = createBrowserRouter([
         element: (
           <Lazy>
             <ModelQualityPage />
+          </Lazy>
+        ),
+      },
+      {
+        path: 'notifications',
+        element: (
+          <Lazy>
+            <NotificationsPage />
           </Lazy>
         ),
       },

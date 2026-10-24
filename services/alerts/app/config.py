@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from svckit.mail import MailConfig
 
 from .events import SUBJECT_DLQ
 
@@ -46,13 +48,15 @@ class Config:
     publish_attempts: int = 3
     shutdown_grace_s: float = 20.0
 
-    # пороги
-    loss_jump_cents: int = 5_000  # ALERT_LOSS_JUMP_EUR, по умолчанию €50
-    total_loss_jump_pct: float = 10.0
+    # анти-спам: одно событие одного типа одному пользователю не чаще раза в N минут
     cooldown_s: float = 3600.0  # ALERT_COOLDOWN_MIN
-    max_items_in_message: int = 10
-    # больше стольких оповещений по клиентам за пересчёт — одна сводная запись вместо всех
-    bulk_threshold: int = 20
+    # повтор по одному и тому же крупному клиенту (переход туда-обратно) не чаще раза в N минут
+    customer_cooldown_s: float = 6 * 3600.0
+    # показатели базы пишем не чаще раза в N секунд, иначе история растёт с каждым пересчётом
+    snapshot_every_s: float = 60.0
+    snapshot_retention_days: int = 8
+    # как часто проверять дайджест и «данные без пересчёта»
+    scheduler_interval_s: float = 30.0
 
     # доставка
     public_url: str = "http://localhost:8080"
@@ -63,6 +67,10 @@ class Config:
     telegram_chat_id: str = ""
     telegram_api_url: str = "https://api.telegram.org"
     telegram_timeout_s: float = 10.0
+    # бот: long polling getUpdates ведёт одна реплика (advisory lock), код привязки живёт 10 минут
+    telegram_poll_timeout_s: int = 25
+    telegram_link_ttl_s: int = 600
+    mail: MailConfig = field(default_factory=MailConfig)
     delivery_interval_s: float = 2.0
     delivery_backoff_s: tuple[float, ...] = (5.0, 15.0, 60.0, 300.0, 900.0)
     delivery_max_attempts: int = 8
@@ -76,7 +84,12 @@ class Config:
 
     @property
     def telegram_enabled(self) -> bool:
+        """Общий чат команды: журнал событий уходит туда же, куда и раньше."""
         return bool(self.telegram_bot_token and self.telegram_chat_id)
+
+    @property
+    def bot_enabled(self) -> bool:
+        return bool(self.telegram_bot_token)
 
     def enabled_channels(self) -> list[str]:
         channels = []
@@ -107,11 +120,10 @@ class Config:
             dlq_subject=os.getenv("DLQ_SUBJECT", SUBJECT_DLQ),
             publish_attempts=max(1, int(os.getenv("PUBLISH_ATTEMPTS", "3"))),
             shutdown_grace_s=float(os.getenv("SHUTDOWN_GRACE_S", "20")),
-            loss_jump_cents=round(float(os.getenv("ALERT_LOSS_JUMP_EUR", "50")) * 100),
-            total_loss_jump_pct=float(os.getenv("ALERT_TOTAL_LOSS_JUMP_PCT", "10")),
             cooldown_s=float(os.getenv("ALERT_COOLDOWN_MIN", "60")) * 60,
-            max_items_in_message=max(1, int(os.getenv("ALERT_MAX_ITEMS_IN_MESSAGE", "10"))),
-            bulk_threshold=max(0, int(os.getenv("ALERTS_BULK_THRESHOLD", "20"))),
+            customer_cooldown_s=float(os.getenv("ALERT_CUSTOMER_COOLDOWN_MIN", "360")) * 60,
+            snapshot_every_s=float(os.getenv("ALERT_SNAPSHOT_EVERY_S", "60")),
+            scheduler_interval_s=float(os.getenv("ALERT_SCHEDULER_INTERVAL_S", "30")),
             public_url=(os.getenv("PUBLIC_URL") or "http://localhost:8080").rstrip("/"),
             webhook_url=_env_str("WEBHOOK_URL"),
             webhook_secret=_env_str("WEBHOOK_SECRET"),
@@ -120,6 +132,8 @@ class Config:
             telegram_chat_id=_env_str("TELEGRAM_CHAT_ID"),
             telegram_api_url=(os.getenv("TELEGRAM_API_URL") or "https://api.telegram.org").rstrip("/"),
             telegram_timeout_s=float(os.getenv("TELEGRAM_TIMEOUT_S", "10")),
+            telegram_poll_timeout_s=int(os.getenv("TELEGRAM_POLL_TIMEOUT_S", "25")),
+            mail=MailConfig.from_env(),
             delivery_interval_s=float(os.getenv("DELIVERY_INTERVAL_S", "2")),
             delivery_backoff_s=_env_floats("DELIVERY_BACKOFF_S", "5,15,60,300,900") or (5.0,),
             delivery_max_attempts=max(1, int(os.getenv("DELIVERY_MAX_ATTEMPTS", "8"))),

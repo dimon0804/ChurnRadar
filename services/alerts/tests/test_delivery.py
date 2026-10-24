@@ -7,10 +7,11 @@ from typing import Any
 
 import httpx
 import pytest
+from svckit.mail import MailConfig
 
 from app import delivery as delivery_mod
 from app import repository as repo
-from app.channels import DeliveryError, TelegramChannel, WebhookChannel, build_channels, sign
+from app.channels import DeliveryError, EmailChannel, TelegramApi, TelegramChannel, WebhookChannel, build_channels, sign
 from app.config import Config
 from app.delivery import Dispatcher, backoff_delay
 from app.metrics import DROPPED, FAILED, SENT
@@ -63,28 +64,41 @@ async def test_telegram_request_and_no_token_in_errors() -> None:
         return httpx.Response(200, json={"ok": True})
 
     async with client_for(handler) as client:
-        await TelegramChannel(client, "123:SECRET", "-100", api_url="http://tg/").send(
-            {"text": "x" * 5000}, batch_id="b"
+        channel = TelegramChannel(TelegramApi(client, "123:SECRET", api_url="http://tg/"), "-100")
+        await channel.send({"text": "x" * 5000}, batch_id="b")
+        # личный чат пользователя и кнопка-ссылка на карточку
+        await channel.send(
+            {"text": "<b>t</b>", "parse_mode": "HTML", "button": {"text": "Открыть", "url": "https://p.example/c/1"}},
+            batch_id="b",
+            recipient="555",
         )
     assert str(seen[0].url) == "http://tg/bot123:SECRET/sendMessage"
     body = json.loads(seen[0].content)
     assert body["chat_id"] == "-100" and len(body["text"]) == 4000
+    body = json.loads(seen[1].content)
+    assert body["chat_id"] == "555" and body["parse_mode"] == "HTML"
+    assert body["reply_markup"] == {"inline_keyboard": [[{"text": "Открыть", "url": "https://p.example/c/1"}]]}
 
     def broken(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError(f"cannot reach {request.url}", request=request)
 
     async with client_for(broken) as client:
         with pytest.raises(DeliveryError) as info:
-            await TelegramChannel(client, "123:SECRET", "-100", api_url="http://tg").send({"text": "x"}, batch_id="b")
+            await TelegramChannel(TelegramApi(client, "123:SECRET", api_url="http://tg"), "-100").send(
+                {"text": "x"}, batch_id="b"
+            )
     assert "SECRET" not in str(info.value)
 
 
 def test_channels_enabled_only_when_configured() -> None:
     client = httpx.AsyncClient()
     assert build_channels(Config(), client) == {}
-    assert set(build_channels(Config(telegram_bot_token="t"), client)) == set()  # без chat id канал выключен
-    both = build_channels(Config(webhook_url="http://h", telegram_bot_token="t", telegram_chat_id="1"), client)
-    assert set(both) == {"webhook", "telegram"}
+    # токен бота включает личные сообщения, chat id — ещё и общий чат команды
+    assert set(build_channels(Config(telegram_bot_token="t"), client)) == {"telegram"}
+    full = Config(
+        webhook_url="http://h", telegram_bot_token="t", telegram_chat_id="1", mail=MailConfig(host="smtp.local")
+    )
+    assert set(build_channels(full, client)) == {"webhook", "telegram", "email"}
 
 
 def test_backoff_delay() -> None:
@@ -98,7 +112,7 @@ class FakeChannel:
         self.errors = errors
         self.calls = 0
 
-    async def send(self, payload: dict[str, Any], *, batch_id: str) -> None:
+    async def send(self, payload: dict[str, Any], *, batch_id: str, recipient: str | None = None) -> None:
         self.calls += 1
         error = self.errors.pop(0) if self.errors else None
         if error is not None:
@@ -162,3 +176,14 @@ async def test_dispatcher_drops_disabled_channel(fake_repo: dict[str, Any]) -> N
     fake_repo["queue"] = [_delivery(channel="telegram")]
     await dispatcher.run_once()
     assert fake_repo["failed"] == [(1, None)]
+
+
+async def test_email_channel_errors() -> None:
+    with pytest.raises(DeliveryError) as info:
+        await EmailChannel(MailConfig()).send({"subject": "s", "text": "t"}, batch_id="b", recipient="a@b.c")
+    assert not info.value.retryable  # SMTP не настроен — повтор не поможет
+    with pytest.raises(DeliveryError) as info:
+        await EmailChannel(MailConfig(host="127.0.0.1", port=1, timeout_s=1)).send(
+            {"subject": "s", "text": "t"}, batch_id="b", recipient="a@b.c"
+        )
+    assert info.value.retryable  # сервер недоступен — попробуем ещё

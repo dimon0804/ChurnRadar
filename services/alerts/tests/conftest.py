@@ -73,6 +73,30 @@ async def db_pool() -> AsyncIterator[Any]:
         await pool.close()
 
 
+@pytest.fixture
+async def smtp() -> AsyncIterator[Any]:
+    from fakes import FakeSmtp
+
+    server = FakeSmtp()
+    await server.start()
+    try:
+        yield server
+    finally:
+        await server.stop()
+
+
+@pytest.fixture
+def telegram() -> Iterator[Any]:
+    from fakes import FakeTelegram
+
+    fake = FakeTelegram()
+    fake.start()
+    try:
+        yield fake
+    finally:
+        fake.stop()
+
+
 class WebhookServer:
     """Локальный приёмник webhook: копит тела запросов, код ответа можно менять на лету."""
 

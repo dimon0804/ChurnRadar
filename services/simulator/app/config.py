@@ -29,6 +29,9 @@ class Config:
     snapshot_reference: str
     ingest_timeout_s: float
     snapshot_gzip_level: int
+    events_timeout_s: float
+    events_retries: int
+    events_retry_backoff_s: float
 
     @classmethod
     def from_env(cls) -> Config:
@@ -50,4 +53,9 @@ class Config:
             snapshot_reference=os.getenv("SNAPSHOT_REFERENCE", "now").strip().lower(),
             ingest_timeout_s=float(os.getenv("INGEST_TIMEOUT_S", "600")),
             snapshot_gzip_level=int(os.getenv("SNAPSHOT_GZIP_LEVEL", "5")),
+            # пакет изменений несёт абсолютные значения строк, ingest делает upsert —
+            # повторная отправка того же пакета безопасна
+            events_timeout_s=float(os.getenv("INGEST_EVENTS_TIMEOUT_S", "30")),
+            events_retries=max(0, int(os.getenv("INGEST_EVENTS_RETRIES", "2"))),
+            events_retry_backoff_s=float(os.getenv("INGEST_EVENTS_RETRY_BACKOFF_S", "0.5")),
         )

@@ -92,6 +92,14 @@ class World:
                 left = self.rng.uniform(0.2, 5.0) * self.demo_day_seconds
                 self.deadlines[sid] = now + timedelta(seconds=left)
 
+    def unload(self) -> None:
+        """Сбросить мир: следующий шаг перечитает состояние из БД (или дождётся генерации)."""
+        self.accounts = {}
+        self.services = {}
+        self.account_ids = []
+        self.service_ids = []
+        self.deadlines = {}
+
     @property
     def loaded(self) -> bool:
         return bool(self.accounts)

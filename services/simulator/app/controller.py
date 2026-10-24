@@ -16,8 +16,8 @@ from svckit.logs import get_logger
 
 from .config import Config
 from .generator import generate
-from .metrics import BATCHES, CHANGES, GENERATE_SECONDS, RUNNING
-from .stream import World
+from .metrics import BATCHES, CHANGES, GENERATE_SECONDS, RUNNING, WORLD_RESETS
+from .stream import Batch, World
 from .timeutil import iso, utcnow_ms
 
 log = get_logger("simulator.controller")
@@ -25,6 +25,9 @@ log = get_logger("simulator.controller")
 SERVICE_HEADERS = {"X-User-Name": "simulator", "X-User-Roles": "admin", "X-User-Id": "simulator"}
 
 StateLoader = Callable[[World], Awaitable[None]]
+
+# ответы, после которых пакет имеет смысл отправить ещё раз
+RETRY_STATUSES = frozenset({429, 502, 503, 504})
 
 
 class IngestError(RuntimeError):
@@ -96,7 +99,13 @@ class Controller:
                 await asyncio.wait_for(self._wake.wait(), timeout=self.interval_ms / 1000)
 
     async def step(self) -> int:
-        """Один шаг потока: 1–N изменений одним пакетом в ingest. Возвращает число изменений."""
+        """Один шаг потока: 1–N изменений одним пакетом в ingest. Возвращает число изменений.
+
+        tick() меняет мир в памяти до отправки. Если пакет так и не принят, мир расходится
+        с БД (а при таймауте неизвестно, применил ли его ingest), поэтому мир сбрасывается
+        и следующий шаг перечитывает его из БД. Отправка идёт под замком, чтобы опоздавший
+        пакет не лёг поверх нового снимка из generate_and_load.
+        """
         async with self._lock:
             if not self.world.loaded and self.state_loader is not None:
                 await self.state_loader(self.world)
@@ -104,11 +113,42 @@ class Controller:
             if batch.empty:
                 return 0
             payload = batch.to_payload()
-        response = await self.client.post(
-            f"{self.config.ingest_url}/api/v1/source/events", json=payload, headers=SERVICE_HEADERS, timeout=30
-        )
-        if response.status_code >= 300:
-            raise IngestError(response.status_code, f"ingest ответил {response.status_code}: {response.text[:300]}")
+            try:
+                await self._post_events(payload)
+            except BaseException as exc:
+                # и отмена посреди отправки: дошёл ли пакет, неизвестно
+                self.world.unload()
+                WORLD_RESETS.inc()
+                log.warning("stream_batch_lost", error=repr(exc), changes=batch.kinds,
+                            reload=self.state_loader is not None)
+                raise
+        return self._account(batch, payload)
+
+    async def _post_events(self, payload: dict[str, Any]) -> None:
+        """POST пакета с повторами на сетевых ошибках, таймаутах и 429/502/503/504."""
+        url = f"{self.config.ingest_url}/api/v1/source/events"
+        attempts = self.config.events_retries + 1
+        for attempt in range(1, attempts + 1):
+            try:
+                response = await self.client.post(
+                    url, json=payload, headers=SERVICE_HEADERS, timeout=self.config.events_timeout_s
+                )
+            except httpx.TransportError as exc:
+                if attempt == attempts:
+                    raise IngestError(0, f"ingest недоступен: {exc!r}") from exc
+                log.info("stream_batch_retry", attempt=attempt, error=repr(exc))
+            else:
+                if response.status_code < 300:
+                    return
+                error = IngestError(
+                    response.status_code, f"ingest ответил {response.status_code}: {response.text[:300]}"
+                )
+                if response.status_code not in RETRY_STATUSES or attempt == attempts:
+                    raise error
+                log.info("stream_batch_retry", attempt=attempt, status=response.status_code)
+            await asyncio.sleep(self.config.events_retry_backoff_s * 2 ** (attempt - 1))
+
+    def _account(self, batch: Batch, payload: dict[str, Any]) -> int:
         changes = len(batch.kinds)
         self.events_emitted += changes
         self.last_error = None

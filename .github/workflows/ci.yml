@@ -193,6 +193,35 @@ jobs:
             python -m compileall -q .
           fi
 
+  test-core-integration:
+    name: Test core with Postgres and NATS
+    needs: discover
+    if: needs.discover.outputs.has_python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            services/*/requirements*.txt
+            libs/*/pyproject.toml
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          for lib in libs/*/; do pip install "$lib"; done
+          for f in libs/*/requirements-dev.txt services/{migrate,ingest,api,scoring,simulator,alerts}/requirements*.txt; do
+            if [ -f "$f" ]; then pip install -r "$f"; fi
+          done
+          pip install pytest pytest-asyncio
+      - name: Unit and integration tests against real Postgres and NATS
+        run: |
+          # скрипт сам поднимает Postgres и NATS (JetStream) в docker и гоняет каждый пакет отдельно
+          bash scripts/test-core.sh --integration 2>&1 | tee core-it.log
+          # ни одного пропуска: без БД и шины интеграционные тесты молча скипаются, джоба должна упасть
+          if grep -E '[0-9]+ skipped' core-it.log; then echo "Интеграционные тесты пропущены"; exit 1; fi
+
   test-auth-integration:
     name: Test auth with Postgres and Redis
     needs: discover

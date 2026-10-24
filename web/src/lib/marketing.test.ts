@@ -126,13 +126,13 @@ describe('inputs', () => {
 
 describe('retention', () => {
   it('says how much LTV grows if we keep high-risk customers', () => {
-    const text = s(retentionSentence(scenario(), 437_233))
-    expect(text).toBe('Если удержим клиентов высокого риска (4 клиента), LTV базы вырастет на €37 507 (+858 %).')
+    const text = s(retentionSentence(scenario()))
+    expect(text).toBe('Если удержим клиентов высокого риска (4 клиента), LTV базы вырастет на €37 507.')
   })
 
   it('names both levels and explains the target churn', () => {
     const both = scenario({ levels: ['high', 'medium'], customers: 6 })
-    expect(s(retentionSentence(both, 0))).toContain('клиентов высокого и среднего риска (6 клиентов)')
+    expect(s(retentionSentence(both))).toContain('клиентов высокого и среднего риска (6 клиентов)')
     expect(s(targetSentence(both))).toContain('к обычному оттоку по истории: 7,5 % в месяц')
     expect(s(targetSentence(both))).toContain('€2 045')
     expect(targetSentence(scenario({ target_source: 'low_risk' }))).toContain('к оттоку клиентов низкого риска')
@@ -140,9 +140,9 @@ describe('retention', () => {
 
   it('is honest when there is nothing to compare with or nobody to keep', () => {
     const none = scenario({ ltv_uplift: null, ltv_retained: null, saved_mrr: null, target_monthly_churn: null, target_source: 'none' })
-    expect(retentionSentence(none, 100)).toMatch(/^Не с чем сравнить/)
+    expect(retentionSentence(none)).toMatch(/^Не с чем сравнить/)
     expect(targetSentence(none)).toBe('')
-    expect(retentionSentence(scenario({ customers: 0 }), 100)).toMatch(/удерживать некого/)
+    expect(retentionSentence(scenario({ customers: 0 }))).toMatch(/удерживать некого/)
   })
 })
 

@@ -116,10 +116,10 @@ function KpiGrid({ m }: { m: Marketing }) {
   )
 }
 
-function ScenarioLine({ s, ltvTotal, main }: { s: RetentionScenario; ltvTotal: number; main?: boolean }) {
+function ScenarioLine({ s, main }: { s: RetentionScenario; main?: boolean }) {
   return (
     <div className={cn(main ? 'text-[17px] leading-7 font-medium' : 'text-sm leading-6 text-muted-foreground')}>
-      {retentionSentence(s, ltvTotal)}
+      {retentionSentence(s)}
       {s.ltv_uplift !== null && s.ltv_retained !== null && s.customers > 0 && (
         <span className={cn('block num', main ? 'mt-1 text-sm font-normal text-muted-foreground' : '')}>
           LTV этих клиентов: {eur(s.ltv_now)} сейчас → {eur(s.ltv_retained)}, если удержим.
@@ -145,8 +145,8 @@ function Retention({ m }: { m: Marketing }) {
       </CardHeader>
       <CardContent className="grid gap-5 lg:grid-cols-[1fr_auto]">
         <div className="space-y-3">
-          {main && <ScenarioLine s={main} ltvTotal={m.ltv_total} main />}
-          {main && second && second.customers > main.customers && <ScenarioLine s={second} ltvTotal={m.ltv_total} />}
+          {main && <ScenarioLine s={main} main />}
+          {main && second && second.customers > main.customers && <ScenarioLine s={second} />}
           {main && <p className="text-[13px] leading-5 text-subtle-foreground">{targetSentence(main)}</p>}
         </div>
         <dl className="grid min-w-56 grid-cols-2 gap-3 border-border lg:grid-cols-1 lg:border-l lg:pl-5">

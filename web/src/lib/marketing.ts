@@ -71,14 +71,13 @@ export function scenarioTitle(s: RetentionScenario): string {
   return `клиентов ${words.join(' и ')} риска`
 }
 
-/** «Если удержим клиентов высокого риска, LTV базы вырастет на €37 507». */
-export function retentionSentence(s: RetentionScenario, ltvTotal: number): string {
+/** «Если удержим клиентов высокого риска, LTV базы вырастет на €37 507». Без процента: на маленькой базе он выходит в сотни процентов и сбивает. */
+export function retentionSentence(s: RetentionScenario): string {
   if (s.customers === 0) return `Сейчас нет ${scenarioTitle(s)}, удерживать некого.`
   if (s.ltv_uplift === null || s.target_monthly_churn === null) {
     return `Не с чем сравнить: в истории нет ушедших клиентов и нет клиентов низкого риска, поэтому не знаем, каким станет отток ${scenarioTitle(s)} после удержания.`
   }
-  const growth = ltvTotal > 0 ? ` (+${formatShare(s.ltv_uplift / ltvTotal, 0)})` : ''
-  return `Если удержим ${scenarioTitle(s)} (${countLabel(s.customers, ['клиент', 'клиента', 'клиентов'])}), LTV базы вырастет на ${eur(s.ltv_uplift)}${growth}.`
+  return `Если удержим ${scenarioTitle(s)} (${countLabel(s.customers, ['клиент', 'клиента', 'клиентов'])}), LTV базы вырастет на ${eur(s.ltv_uplift)}.`
 }
 
 export function targetSentence(s: RetentionScenario): string {

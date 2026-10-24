@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { errorMessage } from '@/api/client'
 import { api, queryKeys } from '@/api/endpoints'
 import type { SnapshotAccepted, SourceSnapshot } from '@/api/types'
+import { MetricsHistory } from '@/components/charts/overview-charts'
 import { PageHeader } from '@/components/page-header'
 import { ErrorState } from '@/components/states'
 import { ConfirmDialog } from '@/components/ui/alert-dialog'
@@ -363,6 +364,7 @@ export default function DataPage() {
         <SnapshotCard />
         <SimulatorCard />
       </div>
+      <MetricsHistory className="mt-4" />
     </>
   )
 }

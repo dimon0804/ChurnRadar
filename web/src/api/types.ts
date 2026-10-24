@@ -59,6 +59,13 @@ export type CampaignRequest = Schemas['CampaignRequest']
 export type CampaignPreview = Schemas['CampaignPreview']
 export type Campaign = Schemas['Campaign']
 export type MailStats = Schemas['MailStats']
+export type RiskDistribution = Schemas['RiskDistribution']
+export type RiskScatter = Schemas['RiskScatter']
+export type ScatterPoint = RiskScatter['points'][number]
+export type ReasonDetail = Schemas['ReasonDetail']
+export type CustomerCharts = Schemas['CustomerCharts']
+export type SummaryHistory = Schemas['SummaryHistory']
+export type HistoryPoint = SummaryHistory['items'][number]
 
 export type AuthProviders =
   operations['authProviders']['responses']['200']['content']['application/json']

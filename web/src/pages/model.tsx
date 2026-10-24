@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
+import { FeatureLossChart, WhatIfLevelsChart } from '@/components/charts/model-charts'
 import { useSettingsPreview, WhatIfBar, WhatIfChanges } from '@/components/what-if'
 import { useChangeStamp, usePreviousDistinct } from '@/hooks/use-change-stamp'
 import { useNow } from '@/hooks/use-now'
@@ -658,7 +659,9 @@ export default function ModelPage() {
               </p>
             </div>
             <div className="space-y-4">
+              {whatIf && <WhatIfLevelsChart preview={preview.ready ? preview.data : undefined} />}
               {whatIf && <WhatIfChanges preview={preview.ready ? preview.data : undefined} />}
+              {!whatIf && <FeatureLossChart weights={current.weights} />}
               <ThresholdsCard s={current} onChange={(t) => change({ thresholds: t })} />
               <HorizonCard s={current} onChange={(d) => change({ horizon_days: d })} />
               <HistoryCard titles={titles} />

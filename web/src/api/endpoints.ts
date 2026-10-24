@@ -7,6 +7,7 @@ import type {
   ContactToday,
   CustomerActionState,
   CustomerActionUpdate,
+  CustomerCharts,
   CustomerDetail,
   CustomerPage,
   EmailDraft,
@@ -24,12 +25,16 @@ import type {
   ModelSettings,
   ModelSettingsPatch,
   ModelSettingsPreview,
+  ReasonDetail,
+  RiskDistribution,
+  RiskScatter,
   SettingsHistory,
   SimulatorCommand,
   SimulatorState,
   SnapshotAccepted,
   SourceSnapshot,
   Summary,
+  SummaryHistory,
   AuditList,
   ManagedUser,
   User,
@@ -67,6 +72,14 @@ export const api = {
     request<CustomerPage>('/api/v1/customers', { query, signal }),
   customer: (id: number, signal?: AbortSignal) => request<CustomerDetail>(`/api/v1/customers/${id}`, { signal }),
   summary: (signal?: AbortSignal) => request<Summary>('/api/v1/analytics/summary', { signal }),
+  distribution: (signal?: AbortSignal) => request<RiskDistribution>('/api/v1/analytics/distribution', { signal }),
+  scatter: (query: Record<string, string | number | undefined>, signal?: AbortSignal) =>
+    request<RiskScatter>('/api/v1/analytics/scatter', { query, signal }),
+  reason: (code: string, scope: 'main' | 'any', signal?: AbortSignal) =>
+    request<ReasonDetail>(`/api/v1/analytics/reasons/${encodeURIComponent(code)}`, { query: { scope }, signal }),
+  summaryHistory: (signal?: AbortSignal) => request<SummaryHistory>('/api/v1/analytics/history', { signal }),
+  customerCharts: (id: number, signal?: AbortSignal) =>
+    request<CustomerCharts>(`/api/v1/customers/${id}/charts`, { signal }),
   marketing: (signal?: AbortSignal) => request<Marketing>('/api/v1/analytics/marketing', { signal }),
   putMarketingSettings: (body: MarketingSettingsUpdate) =>
     request<MarketingSettings>('/api/v1/analytics/marketing/settings', { method: 'PUT', body }),
@@ -128,6 +141,8 @@ export const queryKeys = {
   // под префиксами customers/customer: после пересчёта они обновляются вместе со списком и карточкой
   contactToday: (marked: boolean) => ['customers', 'contact-today', { marked }] as const,
   customerAction: (id: number) => ['customer', id, 'action'] as const,
+  customerCharts: (id: number) => ['customer', id, 'charts'] as const,
+  scatter: (query: Record<string, unknown>) => ['customers', 'scatter', query] as const,
   // не под префиксом customer: пересчёт не должен перезаписывать текст, который сотрудник правит
   emailDraft: (id: number, template: string | null) => ['email-draft', id, template] as const,
   // письма меняют очередь и статистику; после пересчёта «помогло» тоже может измениться
@@ -138,6 +153,9 @@ export const queryKeys = {
   summary: ['summary'] as const,
   // под префиксом summary: после пересчёта обновляется вместе со сводкой
   marketing: ['summary', 'marketing'] as const,
+  distribution: ['summary', 'distribution'] as const,
+  summaryHistory: ['summary', 'history'] as const,
+  reason: (code: string, scope: string) => ['summary', 'reason', code, scope] as const,
   settings: ['settings'] as const,
   history: ['settings-history'] as const,
   modelQuality: ['model-quality'] as const,

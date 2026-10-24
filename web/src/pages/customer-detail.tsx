@@ -4,7 +4,8 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { isApiError } from '@/api/client'
 import { api, queryKeys } from '@/api/endpoints'
-import type { CustomerDetail, FeatureContribution, ServiceRisk, Transaction } from '@/api/types'
+import type { CustomerDetail, ServiceRisk, Transaction } from '@/api/types'
+import { CustomerChartsBlock, ScoreWaterfall } from '@/components/charts/customer-charts'
 import { CustomerActionPanel } from '@/components/customer-action'
 import { DataClockBadge, referenceOf, useDataClock } from '@/components/data-clock'
 import { RiskBadge, RISK_BAR, RISK_TEXT, riskLevelOf } from '@/components/risk'
@@ -36,6 +37,7 @@ import {
 } from '@/lib/labels'
 import { clockFromReference, clockFromServices } from '@/lib/data-clock'
 import { isChurned, shortReasonTitle } from '@/lib/reasons'
+import { reasonHref } from '@/lib/url-state'
 import { cn } from '@/lib/utils'
 import { useLive } from '@/providers/live'
 
@@ -146,7 +148,14 @@ function Reasons({ c, services }: { c: CustomerDetail; services: Map<number, Ser
               <li key={`${r.code}-${r.service_id ?? ''}-${i}`} className="flex items-start gap-3 rounded-lg border border-border bg-card px-3.5 py-2.5">
                 <span className={cn('mt-[7px] size-1.5 shrink-0 rounded-full', RISK_BAR[riskLevelOf(c.risk_level)])} aria-hidden />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm leading-6 font-medium">{shortReasonTitle(r, titles)}</p>
+                  <Link
+                    to={reasonHref(r.code)}
+                    data-reason={r.code}
+                    className="text-sm leading-6 font-medium underline-offset-2 outline-none hover:underline focus-visible:underline"
+                    title="Все клиенты с этой причиной"
+                  >
+                    {shortReasonTitle(r, titles)}
+                  </Link>
                   <p className="text-sm leading-6 text-muted-foreground">{r.title}</p>
                   {svc && <p className="truncate text-xs text-muted-foreground">Услуга: {svc.name}</p>}
                 </div>
@@ -157,54 +166,6 @@ function Reasons({ c, services }: { c: CustomerDetail; services: Map<number, Ser
             )
           })}
         </ul>
-      )}
-    </Section>
-  )
-}
-
-function Features({ features, level }: { features: FeatureContribution[]; level: ReturnType<typeof riskLevelOf> }) {
-  const [showAll, setShowAll] = useState(false)
-  const sorted = useMemo(() => [...features].sort((a, b) => b.contribution - a.contribution), [features])
-  const active = sorted.filter((f) => Math.abs(f.contribution) >= 0.05)
-  const idle = sorted.length - active.length
-  const list = showAll ? sorted : active
-  const max = Math.max(1, ...sorted.map((f) => Math.abs(f.contribution)))
-  if (sorted.length === 0) return null
-
-  return (
-    <Section
-      title="Из чего сложилась оценка"
-      aside={<span className="text-xs text-subtle-foreground">вклад в score, пунктов</span>}
-    >
-      {list.length === 0 && <p className="text-sm text-muted-foreground">Ни один признак не добавил риска.</p>}
-      <ul className="space-y-3">
-        {list.map((f) => (
-          <li key={f.code}>
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="min-w-0 truncate text-sm" title={f.explanation || f.title}>
-                {f.title}
-              </span>
-              <span className={cn('shrink-0 text-sm font-medium num', f.contribution < 0.05 && 'text-muted-foreground')}>
-                {formatPoints(f.contribution)}
-              </span>
-            </div>
-            <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-muted">
-              <div
-                className={cn('h-full rounded-full transition-[width] duration-500 ease-out', f.contribution > 0 ? RISK_BAR[level] : 'bg-risk-low-bar')}
-                style={{ width: `${(Math.abs(f.contribution) / max) * 100}%` }}
-              />
-            </div>
-          </li>
-        ))}
-      </ul>
-      {idle > 0 && (
-        <button
-          type="button"
-          onClick={() => setShowAll((v) => !v)}
-          className="mt-3 rounded text-[13px] font-medium text-link outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {showAll ? 'Скрыть признаки без вклада' : `Ещё ${countLabel(idle, ['признак', 'признака', 'признаков'])} без вклада`}
-        </button>
       )}
     </Section>
   )
@@ -584,8 +545,9 @@ export default function CustomerSheet() {
             <NextAction c={c} />
             <CustomerActionPanel id={c.id} email={c.email} atRisk={riskLevelOf(c.risk_level) !== 'unknown' && c.expected_loss > 0} />
             <Reasons c={c} services={services} />
-            {riskLevelOf(c.risk_level) !== 'unknown' && <Features features={c.features ?? []} level={riskLevelOf(c.risk_level)} />}
+            {riskLevelOf(c.risk_level) !== 'unknown' && <ScoreWaterfall c={c} />}
             <Money c={c} />
+            <CustomerChartsBlock c={c} />
             <MarketingStats c={c} />
             <Services services={c.services ?? []} />
             <Transactions txs={c.transactions ?? []} services={services} />

@@ -1,11 +1,13 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { createColumnHelper, flexRender, getCoreRowModel, useReactTable, type SortingState } from '@tanstack/react-table'
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsUpDown, Download, Mails, Search, Users, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsUpDown, Download, Mails, ScatterChart as ScatterIcon, Search, Table2, Users, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { Link, Outlet, useNavigate, useSearchParams } from 'react-router'
 import { api, queryKeys } from '@/api/endpoints'
 import type { CustomerPage, CustomerSort, CustomerSummary, RiskLevel } from '@/api/types'
 import { CampaignDialog } from '@/components/campaign-dialog'
+import { ReasonPanel } from '@/components/charts/reason-panel'
+import { RiskScatter } from '@/components/charts/risk-scatter'
 import { PageHeader, RecalcNote } from '@/components/page-header'
 import { RiskBadge, RiskGlyph, RISK_TEXT, ScoreBar } from '@/components/risk'
 import { EmptyState, ErrorState } from '@/components/states'
@@ -18,9 +20,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useDebouncedValue } from '@/hooks/use-debounced'
 import { countLabel, formatInt, formatMoney } from '@/lib/format'
 import { RISK_LABEL } from '@/lib/labels'
-import { isChurned, reasonAction, reasonTooltip, shortReasonTitle } from '@/lib/reasons'
+import { FEATURE_TITLE, isChurned, reasonAction, reasonTooltip, shortReasonTitle } from '@/lib/reasons'
 import { diffRows, scoreTrend } from '@/lib/recalc'
 import {
+  clearReason,
+  clearScoreRange,
   DEFAULT_CUSTOMERS_STATE,
   nextSort,
   PAGE_SIZES,
@@ -47,6 +51,8 @@ interface CellContext {
   /** Отмеченные галочкой — для рассылки «Написать выбранным». */
   selected?: ReadonlySet<number>
   onToggle?: (ids: number[], on: boolean) => void
+  /** Ссылка «клиенты с этой главной причиной» с сохранением остальных фильтров. */
+  reasonLink?: (code: string) => string
 }
 
 const columns = [
@@ -131,11 +137,27 @@ const columns = [
       const reason = c.row.original.reasons?.[0]
       const unknown = c.row.original.risk_level === 'unknown'
       if (!reason) return <span className="text-subtle-foreground">—</span>
-      const titles = (c.table.options.meta as CellContext | undefined)?.titles
+      const meta = c.table.options.meta as CellContext | undefined
+      const titles = meta?.titles
       const action = reasonAction(reason)
+      const label = shortReasonTitle(reason, titles)
       return (
         <div className="min-w-0" title={reasonTooltip(reason)}>
-          <p className={cn('truncate', unknown ? 'text-muted-foreground' : 'font-medium')}>{shortReasonTitle(reason, titles)}</p>
+          {meta?.reasonLink ? (
+            <Link
+              to={meta.reasonLink(reason.code)}
+              data-reason={reason.code}
+              aria-label={`${label}: показать всех клиентов с этой главной причиной`}
+              className={cn(
+                'block max-w-full truncate rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring',
+                unknown ? 'text-muted-foreground' : 'font-medium',
+              )}
+            >
+              {label}
+            </Link>
+          ) : (
+            <p className={cn('truncate', unknown ? 'text-muted-foreground' : 'font-medium')}>{label}</p>
+          )}
           {action && (
             <p className="truncate text-xs leading-5 text-muted-foreground">
               <span className="text-subtle-foreground" aria-hidden>
@@ -274,6 +296,55 @@ function LevelChips({
   )
 }
 
+/** Чип активного фильтра с кнопкой сброса: «Причина: Ждёт оплаты ×». */
+function FilterChip({ label, value, onClear, testId }: { label: string; value: string; onClear: () => void; testId: string }) {
+  return (
+    <span
+      className="inline-flex h-8 max-w-full items-center gap-1 rounded-full border border-foreground/70 bg-accent pr-1 pl-3 text-[13px]"
+      data-testid={testId}
+    >
+      <span className="text-muted-foreground">{label}:</span>
+      <span className="min-w-0 truncate font-medium">{value}</span>
+      <button
+        type="button"
+        onClick={onClear}
+        className="inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={`Сбросить фильтр «${label}: ${value}»`}
+      >
+        <X className="size-3.5" />
+      </button>
+    </span>
+  )
+}
+
+function ViewSwitch({ view, onChange }: { view: 'table' | 'chart'; onChange: (v: 'table' | 'chart') => void }) {
+  return (
+    <div className="inline-flex shrink-0 rounded-md border border-border p-0.5" role="group" aria-label="Вид списка">
+      {(
+        [
+          ['table', 'Таблица', Table2],
+          ['chart', 'График', ScatterIcon],
+        ] as const
+      ).map(([key, text, Icon]) => (
+        <button
+          key={key}
+          type="button"
+          aria-pressed={view === key}
+          onClick={() => onChange(key)}
+          data-testid={`customers-view-${key}`}
+          className={cn(
+            'inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            view === key ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          <Icon className="size-3.5" aria-hidden />
+          <span className="max-sm:sr-only">{text}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function SkeletonRows({ count }: { count: number }) {
   return (
     <>
@@ -374,10 +445,21 @@ export default function CustomersPage() {
     enableSortingRemoval: false,
     getCoreRowModel: getCoreRowModel(),
     getRowId: (row) => String(row.id),
-    meta: { titles, trend: flash.trend, selected, onToggle: toggleSelected } satisfies CellContext,
+    meta: {
+      titles,
+      trend: flash.trend,
+      selected,
+      onToggle: toggleSelected,
+      reasonLink: (code: string) => `/customers?${serializeCustomersState({ ...state, reason: code, reasonScope: 'main', page: 1 }).toString()}`,
+    } satisfies CellContext,
   })
 
-  const filtered = state.levels.length > 0 || state.search.trim() !== ''
+  const filtered =
+    state.levels.length > 0 || state.search.trim() !== '' || Boolean(state.reason) || state.scoreMin !== undefined || state.scoreMax !== undefined
+  const view = state.view ?? 'table'
+  const reasonTitle = state.reason ? (titles.get(state.reason) ?? FEATURE_TITLE[state.reason] ?? state.reason) : ''
+  const scoreText =
+    state.scoreMin !== undefined || state.scoreMax !== undefined ? `${state.scoreMin ?? 0}–${state.scoreMax ?? 100}` : ''
   const detailSuffix = qs ? `?${qs}` : ''
 
   const openRow = (id: number) => navigate(`/customers/${id}${detailSuffix}`)
@@ -408,7 +490,7 @@ export default function CustomersPage() {
           onToggle={(l) => update(toggleLevel(state, l))}
           onClear={() => update({ ...state, levels: [], page: 1 })}
         />
-        <div className="flex w-full items-center gap-2 sm:w-auto">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
           <div className="relative w-full sm:w-72">
             <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-subtle-foreground" />
             <Input
@@ -431,6 +513,7 @@ export default function CustomersPage() {
               </button>
             )}
           </div>
+          <ViewSwitch view={view} onChange={(v) => update({ ...state, view: v === 'chart' ? 'chart' : undefined }, true)} />
           <Button asChild variant="outline" className="shrink-0">
             <a
               href={exportUrlFromState(state)}
@@ -444,6 +527,28 @@ export default function CustomersPage() {
           </Button>
         </div>
       </div>
+
+      {(state.reason || scoreText) && (
+        <div className="mb-3 flex flex-wrap items-center gap-2" aria-label="Активные фильтры">
+          {state.reason && (
+            <FilterChip
+              testId="chip-reason"
+              label={state.reasonScope === 'main' ? 'Главная причина' : 'Причина'}
+              value={reasonTitle}
+              onClear={() => update(clearReason(state))}
+            />
+          )}
+          {scoreText && <FilterChip testId="chip-score" label="Риск" value={scoreText} onClear={() => update(clearScoreRange(state))} />}
+        </div>
+      )}
+      {state.reason && (
+        <ReasonPanel
+          code={state.reason}
+          scope={state.reasonScope ?? 'any'}
+          onScopeChange={(scope) => update({ ...state, reasonScope: scope === 'main' ? 'main' : undefined, page: 1 })}
+          detailSuffix={detailSuffix}
+        />
+      )}
 
       {selected.size > 0 && (
         <div
@@ -474,7 +579,9 @@ export default function CustomersPage() {
             <div className="h-full w-1/3 animate-[loading-bar_1s_ease-in-out_infinite] bg-ring/70" />
           </div>
         )}
-        {customers.isError && !data ? (
+        {view === 'chart' ? (
+          <RiskScatter state={state} detailSuffix={detailSuffix} />
+        ) : customers.isError && !data ? (
           <ErrorState error={customers.error} onRetry={() => void customers.refetch()} />
         ) : (
           <>

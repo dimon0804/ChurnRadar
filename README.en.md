@@ -27,6 +27,7 @@ evaluate the project.
 
 - [Quick start](#quick-start)
 - [What to look at in the panel](#what-to-look-at-in-the-panel)
+- [Charts and reasons](#charts-and-reasons)
 - [How it works](#how-it-works)
 - [Notifications](#notifications)
 - [Users and SSO](#users-and-sso)
@@ -217,6 +218,40 @@ replicas.
 ![Grafana: platform dashboard](docs/img/screens/grafana-platform.png)
 
 </details>
+
+## Charts and reasons
+
+The numbers in the panel are backed by charts, and almost everything on them is clickable.
+
+- **Overview.** The risk-score distribution in 10-point buckets (bars are split by level, a
+  click opens the customers in that range), money by reason, the share of monthly revenue by
+  risk level, and "how the numbers changed": expected loss and high-risk customers after every
+  rescoring. With the simulator on, the line moves as you watch.
+- **Reasons are clickable** everywhere: in the top reasons, in the customer table (the main
+  reason), in the customer card and on the marketing page. A click opens the customer list
+  filtered by that reason, with a "Причина: …" chip to reset it and a reason panel: what it
+  means in plain words, how many customers and how much money, how its contribution to the
+  score is spread, what usually helps, and a "write to everyone with this reason" button (the
+  same background mailing as for the contact queue).
+- **Customers.** A "table / chart" switch: on the chart each dot is a customer, risk on the
+  horizontal axis, expected loss on the vertical one, dot size is monthly revenue. A dot opens
+  the card.
+- **Customer card.** How the reasons add up to the score (waterfall), how long the balance
+  will last (daily balance against the auto-renewal schedule and the moment money runs out),
+  payments by month. There is no per-customer score history in the database, so we only show
+  the score at the moments emails were sent, if any.
+- **Marketing.** MRR by risk segment (what stays and what will likely leave), LTV by segment,
+  revenue by payment period, and the funnel "all → paying → at risk → high risk".
+- **Model.** Each feature's share of the total expected loss, and in "what if" mode the
+  before/after counts by level.
+
+Every chart has a "Таблица" (table) button with the same numbers and a text description for
+screen readers. Aggregates are computed in Postgres (`/api/v1/analytics/distribution`,
+`…/scatter`, `…/reasons/{code}`, `…/history`, `/api/v1/customers/{id}/charts`), whole customer
+lists never go to the browser: the customer chart shows at most the 400 most expensive dots.
+scoring writes the summary history to `scoring.summary_history`: a point after every full
+rescoring and no more often than every 10 seconds after incremental ones, at most 500 points,
+with the older half thinned out.
 
 ## How it works
 
@@ -804,7 +839,7 @@ types are generated from it. Main resources:
 | Method and path | What it does |
 |---|---|
 | `POST /api/v1/auth/login` | password login, sets the `cr_session` cookie |
-| `GET /api/v1/customers` | ranking with sorting, level filter, search and pagination |
+| `GET /api/v1/customers` | ranking with sorting, level filter, search and pagination; `reason` and `reason_scope=main\|any` keep customers with a reason, `score_min`/`score_max` set a score range |
 | `GET /api/v1/customers/{id}` | card: reasons, score breakdown, money, recommendations, services |
 | `GET /api/v1/customers/export.csv` | the same ranking as an Excel-friendly file; `worklist=true` exports only the contact queue |
 | `GET /api/v1/contact-today` | who to contact today: at-risk customers by expected loss, highest first |
@@ -814,6 +849,9 @@ types are generated from it. Main resources:
 | `GET/PUT /api/v1/mail/templates` | email templates, only admins can edit |
 | `GET /api/v1/mail/stats` | how many emails were sent and how many customers they helped |
 | `GET /api/v1/analytics/summary` | base summary, actual and forecast chart, top reasons |
+| `GET /api/v1/analytics/distribution`, `…/scatter`, `…/history` | chart data: score distribution and revenue by level, risk × loss dots, summary history |
+| `GET /api/v1/analytics/reasons/{code}` | everything about a reason: customers, money, score contribution, what to do |
+| `GET /api/v1/customers/{id}/charts` | card charts: balance against renewals, payments by month, score at email moments |
 | `GET /api/v1/analytics/marketing` | marketing metrics: MRR, ARPU, churn, LTV, risk segments, retention scenarios |
 | `GET/PUT /api/v1/analytics/marketing/settings` | margin and customer acquisition cost (CAC); PUT is admin only |
 | `GET/PATCH /api/v1/model/settings` | weights, thresholds and horizon (PATCH changes only the fields you send); next to it `POST …/reset` and `GET …/history` |

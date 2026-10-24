@@ -42,6 +42,7 @@
 
   --chart-fact: #2a78d6;
   --chart-forecast: #eb6834;
+  --chart-risk: #7048c8;
   --chart-grid: #e7e6e0;
   --chart-axis: #807f78;
   --chart-forecast-zone: rgba(235, 104, 52, 0.06);
@@ -89,6 +90,7 @@
 
   --chart-fact: #3987e5;
   --chart-forecast: #f07a45;
+  --chart-risk: #a88bf2;
   --chart-grid: #2a2a27;
   --chart-axis: #8f8e87;
   --chart-forecast-zone: rgba(240, 122, 69, 0.07);
@@ -138,6 +140,7 @@
 
   --color-chart-fact: var(--chart-fact);
   --color-chart-forecast: var(--chart-forecast);
+  --color-chart-risk: var(--chart-risk);
 
   --radius-sm: 6px;
   --radius-md: 8px;

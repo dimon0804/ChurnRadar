@@ -182,7 +182,27 @@ class _OrderedStream:
             return taken
 
 
-async def iter_source_chunks(conn: asyncpg.Connection, chunk_size: int) -> AsyncIterator[SourceData]:
+@dataclass(frozen=True, slots=True)
+class SourceRows:
+    """Часть исходных данных кортежами — так её отдаём в процессы пересчёта.
+
+    Кортежи из чисел и строк pickle сериализует на C, а датаклассы со slots — через
+    __getstate__ с dataclasses.fields() на каждый объект: на 100k клиентов это секунды
+    процессора в главном процессе, который и так читает из БД и пишет COPY.
+    """
+
+    accounts: list[tuple[Any, ...]]
+    services: list[tuple[Any, ...]]
+    transactions: list[tuple[Any, ...]]
+
+    def to_data(self) -> SourceData:
+        return SourceData(_accounts(self.accounts), _services(self.services), _transactions(self.transactions))
+
+    def service_objects(self) -> list[Service]:
+        return _services(self.services)
+
+
+async def iter_source_chunks(conn: asyncpg.Connection, chunk_size: int) -> AsyncIterator[SourceRows]:
     """Все исходные данные частями по chunk_size аккаунтов за один проход по каждой таблице.
 
     Должен вызываться внутри транзакции (курсоры), лучше REPEATABLE READ — тогда все части
@@ -200,11 +220,28 @@ async def iter_source_chunks(conn: asyncpg.Connection, chunk_size: int) -> Async
     )
     while rows := await accounts.fetch(chunk_size):
         last = rows[-1][0]
-        yield SourceData(
-            _accounts(rows),
-            _services(await services.take_until(last)),
-            _transactions(await transactions.take_until(last)),
+        # в транзакциях последним идёт owner_id для разбиения на части; в Transaction он не нужен
+        yield SourceRows(
+            [tuple(r) for r in rows],
+            [tuple(r) for r in await services.take_until(last)],
+            [tuple(r)[:7] for r in await transactions.take_until(last)],
         )
+
+
+# Порядок как у TRUNCATE в ingest.replace_snapshot (status_history, затем transactions, services,
+# accounts): при обратном порядке ожидания замкнулись бы во взаимоблокировку.
+_SOURCE_TABLES = "source.status_history, source.transactions, source.services, source.accounts"
+
+
+async def lock_source(conn: asyncpg.Connection) -> None:
+    """Первая команда транзакции REPEATABLE READ, до любого SELECT.
+
+    TRUNCATE в ingest не MVCC-безопасен: снимок, взятый до его коммита, видит таблицы пустыми.
+    LOCK TABLE снимок не берёт, поэтому ждёт коммита замены, и первый SELECT уже видит новые
+    данные. ACCESS SHARE не мешает читателям и потоку изменений (ROW EXCLUSIVE), а TRUNCATE
+    дождётся конца нашей транзакции — как и без этой строки, когда блокировку брал первый SELECT.
+    """
+    await conn.execute(f"LOCK TABLE {_SOURCE_TABLES} IN ACCESS SHARE MODE")
 
 
 async def load_status_history(conn: asyncpg.Connection, as_of: datetime, days: int = 31) -> list[StatusChange]:

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copyreg
 import dataclasses
+import functools
 import gc
 import multiprocessing
+import operator
 import time
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
@@ -16,7 +19,8 @@ from typing import Any
 
 import asyncpg
 import riskcore
-from riskcore import CustomerResult
+from riskcore import CustomerResult, ServiceOutcome, Signal
+from riskcore.scoring import FeatureHit, FeatureTotal
 from riskcore.types import Service, Settings
 from svckit.logs import get_logger
 
@@ -24,6 +28,23 @@ from . import repository as repo
 from .metrics import CUSTOMERS, DURATION, RUNS
 
 log = get_logger("scoring.engine")
+
+
+def _reduce_by_fields(cls: type, values: operator.attrgetter, obj: Any) -> tuple[type, tuple[Any, ...]]:
+    return cls, values(obj)
+
+
+def _fast_pickle(*classes: type) -> None:
+    """Результаты из процессов пересчёта — сотни тысяч датаклассов со slots. Стандартный pickle
+    для них зовёт dataclasses.fields() на каждый объект и в главном процессе отнимает секунды
+    на 100k клиентов. Конструктор с кортежем полей (attrgetter на C) — в разы дешевле.
+    Регистрация на импорте модуля: процессы spawn импортируют его ради _score_chunk."""
+    for cls in classes:
+        names = [f.name for f in dataclasses.fields(cls)]
+        copyreg.pickle(cls, functools.partial(_reduce_by_fields, cls, operator.attrgetter(*names)))
+
+
+_fast_pickle(CustomerResult, ServiceOutcome, FeatureHit, FeatureTotal, Signal, Service)
 
 
 def merged_settings(version: int, data: dict[str, Any]) -> Settings:
@@ -227,9 +248,15 @@ class Scorer:
         один снимок source.*), части считаются параллельно (процессы или поток), второе
         соединение в одной транзакции удаляет старые строки и пишет новые через COPY.
         Память ограничена несколькими частями в работе и облегчёнными результатами для сводки.
+
+        load_s, score_s и write_s — время ожидания этапов на одном цикле событий: они
+        перекрываются и включают простой главного процесса без CPU. cpu_main_s в логе —
+        процессорное время главного процесса: если оно близко к duration, упираемся в CPU
+        (лимит контейнера, SCORING_WORKERS), а не в Postgres.
         """
         timings = {"load_s": 0.0, "score_s": 0.0, "write_s": 0.0}
         t0 = time.perf_counter()
+        cpu0 = time.process_time()
         self._cache = None  # не держим два набора результатов в памяти одновременно
         scored_at = now_ms()
         slim: dict[int, Any] = {}
@@ -253,7 +280,7 @@ class Scorer:
                     future = loop.run_in_executor(
                         executor, _score_chunk, data, settings, as_of, version, scored_at
                     )
-                    await queue.put((future, data.services, len(data.transactions)))
+                    await queue.put((future, data.service_objects(), len(data.transactions)))
                     started = time.perf_counter()
             except Exception as exc:
                 await queue.put(exc)  # потребитель пробросит ошибку
@@ -279,6 +306,9 @@ class Scorer:
 
         async with self._pool.acquire() as writer:  # noqa: SIM117
             async with conn.transaction(isolation="repeatable_read"), writer.transaction():
+                await repo.lock_source(conn)
+                # опорное время ingest меняет вместе со снимком — берём его из того же снимка, что и данные
+                as_of, _ = await repo.resolve_as_of(conn)
                 history = await repo.load_status_history(conn, as_of)
                 await repo.replace_all_scores_begin(writer)
                 producer = asyncio.create_task(produce())
@@ -316,6 +346,7 @@ class Scorer:
             customers=len(slim),
             chunks=chunks,
             duration_ms=round(duration_ms, 1),
+            cpu_main_s=round(time.process_time() - cpu0, 1),
             **counts,
             **{k: round(v, 3) for k, v in timings.items()},
         )
@@ -406,7 +437,7 @@ class Scorer:
 
 
 def _score_chunk(
-    chunk: repo.SourceData, settings: Any, as_of: datetime, version: int, scored_at: datetime
+    rows: repo.SourceRows, settings: Any, as_of: datetime, version: int, scored_at: datetime
 ) -> tuple[list[Any], list[tuple[Any, ...]]]:
     """Считает часть клиентов: облегчённые результаты для сводки и строки для COPY.
 
@@ -416,6 +447,7 @@ def _score_chunk(
     gc_was_enabled = gc.isenabled()
     gc.disable()
     try:
+        chunk = rows.to_data()
         results = riskcore.score_customers(chunk.accounts, chunk.services, chunk.transactions, settings, as_of)
         records = _records(results, version, scored_at)
         return [_slim(r) for r in results], records

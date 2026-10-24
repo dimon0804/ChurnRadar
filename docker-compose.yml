@@ -257,7 +257,8 @@ services:
     configs:
       - source: metrics_token
         target: /run/secrets/metrics_token
-    read_only: true
+    # read_only несовместим с configs.content: compose пишет файл в контейнер при старте
+    cap_drop: [ALL]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
       interval: 10s

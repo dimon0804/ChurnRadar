@@ -121,7 +121,7 @@ async def run(dsn: str, dirs: list[str], connect_timeout_s: float = 60.0) -> lis
 
 
 def main() -> int:
-    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(message)s", stream=sys.stdout)
+    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper(), format="%(message)s", stream=sys.stdout)
     dsn = os.getenv("DATABASE_URL", "postgresql://churn:churn@postgres:5432/churn")
     dirs = os.getenv("MIGRATIONS_DIRS", DEFAULT_DIRS).split(",")
     timeout = float(os.getenv("MIGRATE_CONNECT_TIMEOUT_S", "60"))

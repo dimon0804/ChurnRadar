@@ -322,6 +322,7 @@ jobs:
             ingest:.:services/ingest/Dockerfile \
             simulator:.:services/simulator/Dockerfile \
             scoring:.:services/scoring/Dockerfile \
+            alerts:.:services/alerts/Dockerfile \
             migrate:.:services/migrate/Dockerfile; do
             IFS=: read -r name context dockerfile <<<"$spec"
             echo "::group::churn-radar-$name:dev"

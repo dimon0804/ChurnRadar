@@ -110,6 +110,17 @@ spec:
           responseForwarding:
             flushInterval: 1ms
     {{- end }}
+    {{- if .Values.alerts.enabled }}
+    - kind: Rule
+      match: {{ printf "%sPathPrefix(`/api/v1/alerts`)" $hostPrefix | quote }}
+      priority: 150
+      middlewares:
+        - name: {{ $fullname }}-strip-user-headers
+        - name: {{ $fullname }}-forward-auth
+      services:
+        - name: {{ include "cr.componentName" (dict "root" . "component" "alerts") }}
+          port: 8000
+    {{- end }}
     - kind: Rule
       match: {{ printf "%sPathPrefix(`/api/v1/source`)" $hostPrefix | quote }}
       priority: 150

@@ -242,6 +242,37 @@ services:
       resources:
         limits: {cpus: "1", memory: 2G}
 
+  # оповещения: отдельный потребитель churn.scores.updated, остальные сервисы о нём не знают
+  alerts:
+    <<: [*restart, *app-hardening]
+    image: churn-radar-alerts:dev
+    build: {context: ., dockerfile: services/alerts/Dockerfile}
+    environment:
+      <<: *app-env
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      ALERT_LOSS_JUMP_EUR: ${ALERT_LOSS_JUMP_EUR:-50}
+      ALERT_TOTAL_LOSS_JUMP_PCT: ${ALERT_TOTAL_LOSS_JUMP_PCT:-10}
+      ALERT_COOLDOWN_MIN: ${ALERT_COOLDOWN_MIN:-60}
+      # пусто — канал выключен, лента в панели работает всегда
+      WEBHOOK_URL: ${ALERTS_WEBHOOK_URL:-}
+      WEBHOOK_SECRET: ${ALERTS_WEBHOOK_SECRET:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=2).status == 200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+    stop_grace_period: 30s
+    depends_on:
+      core-migrate: {condition: service_completed_successfully}
+      nats-init: {condition: service_completed_successfully}
+    deploy:
+      replicas: ${ALERTS_REPLICAS:-2}
+      resources:
+        limits: {cpus: "0.5", memory: 192M}
+
   # ---------------------------------------------------------------- observability
   prometheus:
     <<: *restart

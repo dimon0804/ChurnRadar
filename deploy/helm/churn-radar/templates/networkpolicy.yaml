@@ -87,6 +87,23 @@ spec:
     {{- with $np.extraAppEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+{{- if and .Values.alerts.enabled $np.alertsEgress }}
+---
+# alerts ходит наружу: Telegram Bot API и внешний webhook (правила — networkPolicy.alertsEgress)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-alerts-egress
+  labels:
+    {{- include "cr.metaLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cr.selectorLabels" (dict "root" . "component" "alerts") | nindent 6 }}
+  policyTypes: ["Egress"]
+  egress:
+    {{- toYaml $np.alertsEgress | nindent 4 }}
+{{- end }}
 {{- if .Values.gateway.enabled }}
 ---
 # Шлюз Traefik -> сервисы, опубликованные наружу (включая ForwardAuth в auth)

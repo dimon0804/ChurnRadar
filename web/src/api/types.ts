@@ -81,3 +81,20 @@ export type AuditList = operations['userAudit']['responses']['200']['content']['
 export type CustomersQuery =NonNullable<operations['listCustomers']['parameters']['query']>
 export type CustomerSort = NonNullable<CustomersQuery['sort']>
 export type SortOrder = NonNullable<CustomersQuery['order']>
+
+// интеграции: API-токены, журнал действий, еженедельный отчёт
+export type ApiToken = Schemas['ApiToken']
+export type ApiTokenRole = ApiToken['role']
+export type ApiTokenStatus = ApiToken['status']
+export type ApiTokenCreate = Schemas['ApiTokenCreate']
+export type ApiTokenList = operations['listApiTokens']['responses']['200']['content']['application/json']
+export type ApiTokenCreated = operations['createApiToken']['responses']['201']['content']['application/json']
+export type AuditEvent = Schemas['AuditEvent']
+export type AuditPage = Schemas['AuditPage']
+export type AuditActorType = AuditEvent['actor_type']
+export type AuditService = AuditEvent['service']
+export type AuditQuery = NonNullable<operations['listAudit']['parameters']['query']>
+export type ReportSchedule = Schemas['ReportSchedule']
+export type ReportScheduleUpdate = Schemas['ReportScheduleUpdate']
+export type WeeklyReportSent =
+  operations['sendWeeklyReport']['responses']['200']['content']['application/json']

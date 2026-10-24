@@ -42,7 +42,18 @@ import type {
   UserCreated,
   UserList,
   UserUpdate,
+  ApiTokenCreate,
+  ApiTokenCreated,
+  ApiTokenList,
+  AuditPage,
+  AuditQuery,
+  ReportSchedule,
+  ReportScheduleUpdate,
+  WeeklyReportSent,
 } from './types'
+
+/** PDF скачивает сам браузер по обычной ссылке, cookie сессии уходит вместе с запросом. */
+export const WEEKLY_REPORT_PDF_URL = '/api/v1/reports/weekly?format=pdf'
 
 export const api = {
   providers: () => request<AuthProviders>('/api/v1/auth/providers', { allowUnauthorized: true }),
@@ -129,6 +140,23 @@ export const api = {
   simulator: (signal?: AbortSignal) => request<SimulatorState>('/api/v1/simulator', { signal }),
   putSimulator: (body: SimulatorCommand) =>
     request<SimulatorState>('/api/v1/simulator', { method: 'PUT', body }),
+
+  apiTokens: (signal?: AbortSignal) => request<ApiTokenList>('/api/v1/auth/tokens', { signal }),
+  createApiToken: (body: ApiTokenCreate) =>
+    request<ApiTokenCreated>('/api/v1/auth/tokens', { method: 'POST', body }),
+  revokeApiToken: (id: string) =>
+    request<void>(`/api/v1/auth/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  audit: (query: AuditQuery, signal?: AbortSignal) => request<AuditPage>('/api/v1/audit', { query, signal }),
+
+  reportSchedule: (signal?: AbortSignal) => request<ReportSchedule>('/api/v1/reports/schedule', { signal }),
+  putReportSchedule: (body: ReportScheduleUpdate) =>
+    request<ReportSchedule>('/api/v1/reports/schedule', { method: 'PUT', body }),
+  sendWeeklyReport: (recipients?: string[]) =>
+    request<WeeklyReportSent>('/api/v1/reports/weekly/send', {
+      method: 'POST',
+      body: recipients ? { recipients } : {},
+    }),
 }
 
 export const queryKeys = {
@@ -164,4 +192,8 @@ export const queryKeys = {
   users: ['users'] as const,
   userList: (q: string) => ['users', 'list', q] as const,
   userAudit: ['users', 'audit'] as const,
+  apiTokens: ['api-tokens'] as const,
+  audit: ['audit'] as const,
+  auditPage: (query: AuditQuery) => ['audit', query] as const,
+  reportSchedule: ['report-schedule'] as const,
 }

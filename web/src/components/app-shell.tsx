@@ -10,6 +10,8 @@ import {
   Megaphone,
   Menu,
   Moon,
+  Plug,
+  ScrollText,
   ShieldCheck,
   SlidersHorizontal,
   Sun,
@@ -67,6 +69,8 @@ const NAV: NavItem[] = [
   { to: '/playbooks', label: 'Сценарии', icon: <Workflow /> },
   { to: '/data', label: 'Данные', icon: <Database />, adminOnly: true },
   { to: '/users', label: 'Пользователи', icon: <UserCog />, adminOnly: true },
+  { to: '/integrations', label: 'Интеграции', icon: <Plug />, adminOnly: true },
+  { to: '/audit', label: 'Журнал действий', icon: <ScrollText />, adminOnly: true },
 ]
 
 export function Logo({ className }: { className?: string }) {

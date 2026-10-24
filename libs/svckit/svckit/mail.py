@@ -49,6 +49,13 @@ class MailConfig:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class Attachment:
+    filename: str
+    content: bytes
+    content_type: str = "application/octet-stream"
+
+
 @dataclass(slots=True)
 class Mail:
     to: str
@@ -57,6 +64,7 @@ class Mail:
     html: str | None = None
     reply_to: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
+    attachments: list[Attachment] = field(default_factory=list)
 
 
 def build_message(config: MailConfig, mail: Mail) -> EmailMessage:
@@ -72,6 +80,14 @@ def build_message(config: MailConfig, mail: Mail) -> EmailMessage:
     msg.set_content(mail.text)
     if mail.html:
         msg.add_alternative(mail.html, subtype="html")
+    for item in mail.attachments:
+        maintype, _, subtype = item.content_type.partition("/")
+        msg.add_attachment(
+            item.content,
+            maintype=maintype or "application",
+            subtype=subtype or "octet-stream",
+            filename=item.filename,
+        )
     return msg
 
 

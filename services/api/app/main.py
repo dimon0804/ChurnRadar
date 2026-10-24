@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
-from typing import Annotated, Any
+from datetime import UTC, date, datetime
+from typing import Annotated, Any, Literal
 
 import httpx
 import structlog
 from fastapi import Body, Depends, FastAPI, Path, Query, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+from svckit.audit import AuditMiddleware
 from svckit.auth import User, make_current_user, make_require_admin, make_require_role
 from svckit.bus import EventBus
 from svckit.db import create_pool, db_ready, get_pool
@@ -22,6 +24,7 @@ from svckit.outbox import OutboxRelay
 
 from app import (
     actions,
+    audit_log,
     charts,
     mail_templates,
     mailer,
@@ -32,6 +35,9 @@ from app import (
     playbooks,
     preview,
     queries,
+    report_pdf,
+    report_schedule,
+    reports,
 )
 from app.config import settings
 from app.docs import router as docs_router
@@ -51,6 +57,26 @@ Pool = Annotated[Any, Depends(get_pool)]
 ReasonCode = Annotated[str | None, Query(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
 ReasonScope = Annotated[charts.ReasonScope, Query()]
 ScoreBound = Annotated[float | None, Query(ge=0, le=100)]
+
+
+# фильтры журнала действий: на уровне модуля, иначе FastAPI не увидит аннотации (from __future__)
+def audit_filters(
+    q: Annotated[str | None, Query(max_length=200)] = None,
+    actor: Annotated[str | None, Query(max_length=160)] = None,
+    action: Annotated[str | None, Query(max_length=80)] = None,
+    actor_type: Literal["user", "token", "system", "anonymous"] | None = None,
+    object_type: Annotated[str | None, Query(max_length=40)] = None,
+    service: Literal["auth", "api", "ingest", "alerts"] | None = None,
+    success: bool | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict[str, Any]:
+    return {
+        "q": q, "actor": actor, "action": action, "actor_type": actor_type, "object_type": object_type,
+        "service": service, "success": success, "date_from": date_from, "date_to": date_to,
+    }
+
+AuditFilters = Annotated[dict[str, Any], Depends(audit_filters)]
 
 
 def kick_relay(request: Request) -> None:
@@ -91,8 +117,13 @@ async def lifespan(app: FastAPI):
     )
     if settings.playbooks_enabled:
         app.state.playbook_runner.start()
+    app.state.report_scheduler = report_schedule.ReportScheduler(
+        app.state.pool, app.state.summary_cache, app.state.mail_config
+    )
+    app.state.report_scheduler.start()
     log.info("api_started")
     yield
+    await app.state.report_scheduler.stop()
     await app.state.playbook_runner.stop()
     await app.state.mail_worker.stop()
     await app.state.scoring_http.aclose()
@@ -121,6 +152,8 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
     app.state.summary_cache = queries.SummaryCache(settings.summary_cache_ttl_s)
     app.state.mail_config = MailConfig.from_env()
     install_error_handlers(app)
+    # журнал действий: внутри RequestIdMiddleware, чтобы в запись попал request_id
+    app.add_middleware(AuditMiddleware, service="api", rules=audit_log.API_RULES, errors=metrics.audit_errors)
     app.add_middleware(HttpMetricsMiddleware, histogram=metrics.http_duration)
     app.add_middleware(RequestIdMiddleware)
     app.include_router(docs_router)
@@ -395,6 +428,76 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
             raise ApiError(
                 503, "model_quality_unavailable", "Результаты проверки модели не найдены в сборке api"
             ) from exc
+
+    # --- журнал действий (только admin) ----------------------------------------------------
+    @app.get("/api/v1/audit", tags=["audit"])
+    async def list_audit(
+        _: AdminUser,
+        pool: Pool,
+        filters: AuditFilters,
+        page: Annotated[int, Query(ge=1, le=100_000)] = 1,
+        page_size: Annotated[int, Query(ge=1, le=200)] = 50,
+    ) -> dict[str, Any]:
+        return await audit_log.list_events(pool, filters, page, page_size)
+
+    @app.get("/api/v1/audit/export.csv", tags=["audit"])
+    async def export_audit(_: AdminUser, pool: Pool, filters: AuditFilters) -> Response:
+        name = audit_log.export_filename(datetime.now(UTC))
+        return Response(
+            await audit_log.export_csv(pool, filters),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"},
+        )
+
+    # --- еженедельный отчёт ---------------------------------------------------------------
+    @app.get("/api/v1/reports/weekly", tags=["reports"])
+    async def weekly_report(
+        request: Request, _: CurrentUser, pool: Pool, format: Literal["pdf", "html", "json"] = "pdf"
+    ) -> Response:
+        report = await reports.collect(pool, request.app.state.summary_cache)
+        if format == "json":
+            return JSONResponse(report, headers={"Cache-Control": "no-store"})
+        if format == "html":
+            return HTMLResponse(reports.render_html(report), headers={"Cache-Control": "no-store"})
+        pdf = await asyncio.to_thread(report_pdf.render_pdf, report)
+        return Response(
+            pdf,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{reports.filename(report, "pdf")}"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @app.get("/api/v1/reports/schedule", tags=["reports"])
+    async def get_report_schedule(_: AdminUser, pool: Pool) -> dict[str, Any]:
+        return await report_schedule.get_schedule(pool)
+
+    @app.put("/api/v1/reports/schedule", tags=["reports"])
+    async def put_report_schedule(
+        user: AdminUser, pool: Pool, update: Annotated[report_schedule.ScheduleUpdate, Body()]
+    ) -> dict[str, Any]:
+        return await report_schedule.put_schedule(pool, update, user.name)
+
+    @app.post("/api/v1/reports/weekly/send", tags=["reports"])
+    async def send_weekly_report(
+        request: Request, _: AdminUser, pool: Pool,
+        body: Annotated[report_schedule.SendRequest | None, Body()] = None,
+    ) -> dict[str, Any]:
+        recipients = body.recipients if body and body.recipients is not None else None
+        if recipients is None:
+            recipients = (await report_schedule.get_schedule(pool))["recipients"]
+        if not recipients:
+            raise ApiError(422, "no_recipients", "Не указаны получатели: добавьте их в расписание отчёта")
+        config: MailConfig = request.app.state.mail_config
+        if not config.enabled:
+            raise ApiError(503, "mail_disabled", "Почта не настроена (SMTP_HOST)")
+        try:
+            sent = await report_schedule.send_report(pool, request.app.state.summary_cache, config, recipients)
+        except OSError as exc:
+            log.warning("weekly_report_send_failed", error=str(exc))
+            raise ApiError(502, "smtp_error", "Почтовый сервер не принял письмо") from exc
+        return {"sent_to": sent}
 
     # --- simulator (прокси) ------------------------------------------------------------
     async def proxy_simulator(request: Request, method: str, body: dict[str, Any] | None) -> JSONResponse:

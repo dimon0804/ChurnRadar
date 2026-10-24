@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any
 
 from prometheus_client import CollectorRegistry, Counter, Gauge
+from svckit.audit import make_counter
 from svckit.metrics import http_duration_histogram
 from svckit.outbox import OutboxMetrics
 
@@ -22,6 +23,9 @@ registry = CollectorRegistry(auto_describe=True)
 
 # отправка churn.settings.changed из scoring.outbox
 outbox = OutboxMetrics.create(registry)
+
+# записи журнала действий (audit.events), которые не удалось сохранить
+audit_errors = make_counter(registry)
 
 customers_by_level = Gauge(
     "churn_customers_by_risk_level", "Клиенты по уровню риска", ["level"], registry=registry

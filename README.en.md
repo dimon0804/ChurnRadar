@@ -32,6 +32,8 @@ evaluate the project.
 - [Data sources (connectors)](#data-sources-connectors)
 - [Notifications](#notifications)
 - [Users and SSO](#users-and-sso)
+- [Integrations](#integrations)
+- [Audit log and the management report](#audit-log-and-the-management-report)
 - [Risk model](#risk-model)
 - [Quality check](#quality-check)
 - [Retention playbooks](#retention-playbooks)
@@ -695,6 +697,99 @@ client, SAML metadata, the client secret via `sso.existingSecret`, egress to the
 `sso.egress` (NetworkPolicy). The chart does not install Authentik itself: it is a separate
 system that a company usually already runs. See [docs/deploy.md](docs/deploy.md#sso-в-kubernetes).
 
+## Integrations
+
+ChurnRadar does not have to be a separate window: Aéza's billing, CRM, helpdesk and BI can read
+from it and write into it machine-to-machine, without a browser. Everything the panel does is
+available through the same API ([`contracts/openapi.yaml`](contracts/openapi.yaml), Swagger at
+http://localhost:8080/api/v1/docs).
+
+### API tokens
+
+An administrator issues a token on the "Integrations" page: a name (say `aeza-billing`), a role,
+an expiry, optionally the IPs and subnets it may be used from, and its own per-minute limit. The
+token is shown once; the database keeps only its SHA-256. The list shows who created a token and
+when, when and from which address it was last used; revocation takes effect immediately.
+
+```bash
+TOKEN=cr_...   # shown once on creation
+
+# customers at risk
+curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/customers?level=high&sort=expected_loss"
+# customer card: reasons, money, recommendations
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/customers/42
+# marketing metrics for BI
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/analytics/marketing
+# mark the customer as handled (CRM after a call)
+curl -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"status":"resolved","note":"called, renewed"}' http://localhost:8080/api/v1/customers/42/action
+# weekly report as PDF
+curl -H "Authorization: Bearer $TOKEN" -o weekly.pdf http://localhost:8080/api/v1/reports/weekly
+```
+
+How it works. The token is checked by the same gateway ForwardAuth as sessions (`auth`,
+`/internal/verify`): it looks up `Authorization: Bearer cr_…`, checks expiry, IP and the limit,
+and passes `X-User-Name: token:<name>`, the token role and `X-Auth-Method: token` to the services.
+A token has exactly the rights of its role (`admin`, `marketer`, `analyst`). Tokens need no CSRF
+check, they carry no cookie. Revoked, expired or unknown — `401`, foreign IP — `403`, over the
+limit — `429` with `Retry-After` (a per-token counter in Redis, `API_TOKEN_RATE_LIMIT_PER_MIN=600`
+by default). Tokens cannot manage tokens or users: only an administrator's panel session can.
+
+Behind nginx (production) Traefik trusts its `X-Real-IP` ([deploy/traefik/traefik.yml](deploy/traefik/traefik.yml)),
+otherwise every request would look as if it came from the docker gateway.
+
+### Data: push and pull
+
+- **Push.** Billing sends data itself: a full snapshot via `PUT /api/v1/source/snapshot` (the case
+  `data.json` format, gzip allowed, up to 50 MB) or real-time change batches via
+  `POST /api/v1/source/events`. Needs an `admin` token. Rescoring starts on its own, the panel and
+  subscribers get the update over SSE.
+- **Pull.** CRM and BI fetch ready scores: the ranking (`/customers`, `/customers/export.csv`),
+  customer cards, "contact today", the summary and marketing metrics. The `analyst` role is enough.
+
+### Staff sign-in through your SSO
+
+Aéza staff need no separate ChurnRadar passwords. The panel speaks OIDC and SAML 2.0
+([see above](#users-and-sso)), and Authentik fits well between the panel and corporate accounts:
+it federates with LDAP or Active Directory (users and groups are synced, the directory checks the
+password), with Google Workspace and Microsoft Entra ID through OAuth/SAML sources. Directory
+groups become panel roles through `SSO_ADMIN_GROUPS` and `SSO_ANALYST_GROUPS`; disable a leaver in
+the directory and they can no longer sign in. If Aéza already runs Keycloak or Entra ID, the panel
+connects to them directly, without Authentik.
+
+### Notifications to other systems
+
+ChurnRadar reports critical events outward on its own: a JSON webhook signed with HMAC-SHA256 in
+the `X-ChurnRadar-Signature` header (`ALERTS_WEBHOOK_URL`, `ALERTS_WEBHOOK_SECRET`; the `text`
+field works for Slack and Mattermost), a team Telegram chat and personal e-mail notifications
+([Notifications](#notifications)). A helpdesk ticket or a CRM task appears without a human.
+
+## Audit log and the management report
+
+**Audit log.** Everything that changes the system lands in one log (`audit.events`): sign-in,
+sign-out and failed attempts, users and API tokens, model settings, data uploads, e-mails and
+campaigns, margin and CAC, notification settings, reports. Each entry has who (login or
+`token:<name>`), what, when, from which IP, the request_id (it finds the request in every
+service's logs) and the object; the request body is stored without passwords and tokens. Access
+denials (`403`) are recorded too. The "Audit log" page (admin only) filters by action, actor,
+dates and failures, and exports CSV.
+
+Every service writes to the log itself, into the same database as its data, with no queue in
+between: as long as the database is up, an entry is not lost. Changing requests are recorded by a
+shared middleware ([`libs/svckit/svckit/audit.py`](libs/svckit/svckit/audit.py)) using
+"method + path → action" rules, so a new endpoint without a rule still shows up as `http.post`.
+A failed write increments `audit_write_errors_total`. The former auth logs (`auth.audit_log`,
+`auth.login_events`) were moved here by migration `012`.
+
+**Weekly report.** The "Download report" button on the overview returns a PDF: expected loss and
+its weekly change, customers at risk, MRR, ARPU, LTV and churn (the same numbers as
+`/analytics/marketing`), four-week dynamics and the forecast as charts, top customers at risk,
+main reasons and what was done: e-mails, campaigns, marks and how many customers it helped. There
+is an HTML version (`?format=html`). The PDF is built on the server with reportlab, pure Python,
+no browser inside the image. On the "Integrations" page an administrator schedules delivery: weekday,
+time, time zone, recipients. The e-mail carries a summary in the body and the PDF attached (on the
+demo stand it lands in Mailpit, http://localhost:8025).
+
 ## Risk model
 
 The model lives in the [`libs/riskcore`](libs/riskcore) library: plain Python with no
@@ -1044,6 +1139,10 @@ types are generated from it. Main resources:
 | `GET/PUT /api/v1/simulator` | extended dataset generation and the demo stream |
 | `GET/PUT /api/v1/alerts/preferences` | my notification settings; also `POST …/test`, `GET …/notifications`, `POST …/telegram/link`, and `…/preferences/users` for admins |
 | `GET /api/v1/alerts` | journal of critical events (alerts service) |
+| `GET/POST /api/v1/auth/tokens`, `DELETE …/{id}` | integration API tokens: issue (shown once) and revoke, admin only |
+| `GET /api/v1/audit`, `GET /api/v1/audit/export.csv` | the unified audit log with filters and export, admin only |
+| `GET /api/v1/reports/weekly` | weekly report: PDF, `?format=html` or `json` |
+| `GET/PUT /api/v1/reports/schedule`, `POST /api/v1/reports/weekly/send` | scheduled report delivery and "send now", admin only |
 
 State-changing requests with a cookie session must carry an `Origin` header from the same site.
 Bus events are described with JSON Schema in [`contracts/events/`](contracts/events/); the "who
@@ -1146,6 +1245,7 @@ change something, copy it to `.env`.
 | `GRAFANA_PORT`, `PROMETHEUS_PORT` | `3000`, `9090` | observability ports |
 | `OIDC_*`, `SAML_*`, `SSO_*` | see `.env.example` | sign-in through an IdP over OIDC and SAML, groups for roles |
 | `AUTHENTIK_*`, `SSO_DEMO_*` | see `.env.example` | Authentik in the `sso` profile and its demo users' passwords |
+| `API_TOKEN_RATE_LIMIT_PER_MIN` | `600` | requests per minute per API token unless the token has its own limit |
 
 Default passwords and tokens are for the demo only. Set your own for any other deployment.
 

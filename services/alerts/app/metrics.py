@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from prometheus_client import Counter, Gauge
+from svckit.audit import make_counter
 from svckit.metrics import http_duration_histogram
 
 # channel: feed | webhook | telegram | email
@@ -24,6 +25,8 @@ RETRIES = Counter("alerts_retries_total", "События, возвращённ�
 DEAD_LETTERS = Counter("alerts_dead_letters_total", "События, ушедшие в DLQ")
 LAST_EVENT = Gauge("alerts_last_event_timestamp_seconds", "Время последнего обработанного события")
 HTTP_DURATION = http_duration_histogram()
+# записи журнала действий (audit.events), которые не удалось сохранить
+AUDIT_ERRORS = make_counter()
 
 for _channel in ("feed", "webhook", "telegram", "email"):
     SENT.labels(channel=_channel)

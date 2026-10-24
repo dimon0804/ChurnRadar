@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import permissions
+from . import audit, permissions
 from .accounts import SsoDenied, clean_email, sso_sign_in
 from .config import Settings, get_settings
 from .observability import LOGINS, VERIFY, RequestContextMiddleware, request_id_var, setup_logging
@@ -35,6 +35,8 @@ from .sessions import (
     SessionStore,
     now,
 )
+from .tokens import MemoryTokenRepo, PostgresTokenRepo, TokenDenied, TokenRepo, TokenService, looks_like_token
+from .tokens_api import register_token_routes
 from .users import PostgresUserRepo, UserRepo
 from .users_api import register_user_routes
 
@@ -76,6 +78,7 @@ class State:
     saml_requests: OidcStateStore
     saml_replay: ReplayGuard
     saml: SamlClient
+    tokens: TokenService
 
 
 class EmailCache:
@@ -132,6 +135,7 @@ def create_app(
     repo: UserRepo | None = None,
     redis: Redis | None = None,
     http: httpx.AsyncClient | None = None,
+    tokens_repo: TokenRepo | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     setup_logging(settings.log_level)
@@ -148,6 +152,10 @@ def create_app(
             state.repo = PostgresUserRepo(pool)
         else:
             state.repo = repo
+        token_repo = tokens_repo or (PostgresTokenRepo(pool) if pool is not None else MemoryTokenRepo())
+        state.tokens = TokenService(
+            token_repo, state.redis, rate_limit_per_min=settings.api_token_rate_limit_per_min
+        )
         state.http = http or httpx.AsyncClient()
         state.sessions = SessionStore(state.redis, settings.session_ttl_seconds)
         state.limiter = LoginRateLimiter(state.redis, settings.login_max_attempts, settings.login_window_seconds)
@@ -169,6 +177,7 @@ def create_app(
             await pool.close()
 
     app = FastAPI(title="ChurnRadar auth", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app.add_middleware(audit.AuditContextMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.state.ctx = state
     app.state.emails = emails
@@ -245,6 +254,14 @@ def create_app(
         hasher=hasher,
         api_error=ApiError,
     )
+    register_token_routes(
+        app,
+        ctx=ctx,
+        current_session=current_session,
+        extract_token=extract_token,
+        same_origin=same_origin,
+        api_error=ApiError,
+    )
 
     # ---- public auth API -------------------------------------------------------------
 
@@ -308,6 +325,7 @@ def create_app(
         if kind == "cookie" and not same_origin(request):
             raise ApiError(403, "csrf_rejected", "Запрос пришёл с чужого сайта")
         await st.sessions.delete(token)
+        await st.repo.add_audit(session.username, "auth.logout", session.username, {"method": session.auth_method})
         response = Response(status_code=204)
         response.delete_cookie(settings.cookie_name, path="/")
         return response
@@ -470,6 +488,8 @@ def create_app(
         path = urlsplit(uri).path
 
         token, kind = extract_token(request)
+        if kind == "bearer" and looks_like_token(token):
+            return await verify_api_token(st, request, token, method, path)
         session = await st.sessions.get(token) if token else None
         if session is None:
             VERIFY.labels("unauthenticated").inc()
@@ -499,6 +519,32 @@ def create_app(
                 "X-User-Roles": ",".join(session.roles),
                 "X-User-Email": await emails.get(st.repo, session.user_id),
                 "X-Auth-Method": session.auth_method,
+            },
+        )
+
+    async def verify_api_token(st: State, request: Request, token: str, method: str, path: str) -> Response:
+        """Машинный доступ по API-токену: без CSRF (cookie нет), роль — из токена."""
+        ip = audit.request_ip(request.headers, request.client.host if request.client else None)
+        try:
+            found = await st.tokens.authenticate(token, ip)
+        except TokenDenied as exc:
+            VERIFY.labels(f"token_{exc.code}").inc()
+            log.warning("api token rejected", extra={"fields": {"reason": exc.code, "ip": ip, "path": path}})
+            return error_response(exc.status, exc.code, exc.message, exc.headers)
+        # права токена — права его роли, по той же таблице, что для сотрудников
+        ok, need = permissions.allowed([found.role], method, path)
+        if not ok:
+            VERIFY.labels("forbidden").inc()
+            return error_response(403, "forbidden", permissions.ROLE_FORBIDDEN_MESSAGES[need])
+        VERIFY.labels("ok_token").inc()
+        return Response(
+            status_code=200,
+            headers={
+                "X-User-Id": f"token:{found.id}",
+                "X-User-Name": found.header_name,
+                "X-User-Roles": found.role,
+                "X-User-Email": "",
+                "X-Auth-Method": "token",
             },
         )
 

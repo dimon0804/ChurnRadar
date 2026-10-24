@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
+from svckit.audit import make_counter
 from svckit.metrics import http_duration_histogram
 from svckit.outbox import OutboxMetrics
 
 registry = CollectorRegistry(auto_describe=True)
+
+# записи журнала действий (audit.events), которые не удалось сохранить
+audit_errors = make_counter(registry)
 
 snapshots_total = Counter(
     "ingest_snapshots_total", "Принятые снимки исходных данных", ["kind"], registry=registry

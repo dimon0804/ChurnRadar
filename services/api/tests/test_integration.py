@@ -54,7 +54,7 @@ async def reset_database(url: str) -> None:
     conn = await asyncpg.connect(url)
     try:
         await conn.execute(
-            "DROP SCHEMA IF EXISTS source CASCADE; DROP SCHEMA IF EXISTS scoring CASCADE;"
+            "DROP SCHEMA IF EXISTS source CASCADE; DROP SCHEMA IF EXISTS scoring CASCADE; DROP SCHEMA IF EXISTS audit CASCADE;"
             "DROP TABLE IF EXISTS public.schema_migrations;"
         )
     finally:
@@ -470,3 +470,69 @@ async def test_contact_today_marks_and_export(client):
     assert [h["status"] for h in cleared.json()["history"]] == ["cleared", "resolved"]
     again = await client.delete("/api/v1/customers/1/action", headers=MARKETER)
     assert [h["status"] for h in again.json()["history"]] == ["cleared", "resolved"]  # повторное снятие журнал не засоряет
+
+
+async def test_every_change_lands_in_audit_log_with_actor_ip_and_request_id(client):
+    token = {"X-User-Id": "token:1", "X-User-Name": "token:aeza-crm", "X-User-Roles": "admin",
+             "X-Auth-Method": "token", "X-Real-Ip": "203.0.113.5"}
+    ok = await client.put("/api/v1/analytics/marketing/settings", json={"margin": 0.4, "cac": 2_000}, headers=token)
+    assert ok.status_code == 200
+    denied = await client.put("/api/v1/analytics/marketing/settings", json={"margin": 0.5}, headers=ANALYST)
+    assert denied.status_code == 403
+    await client.post("/api/v1/model/settings/preview", json={}, headers=ADMIN)  # предпросмотр не журналируем
+
+    page = (await client.get("/api/v1/audit", params={"action": "marketing"}, headers=ADMIN)).json()
+    assert page["total"] == 2
+    latest, first = page["items"]
+    assert (first["actor"], first["actor_type"], first["actor_role"]) == ("token:aeza-crm", "token", "admin")
+    assert first["action"] == "marketing.settings.update" and first["success"] is True
+    assert first["ip"] == "203.0.113.5" and first["request_id"]
+    assert first["details"]["request"] == {"margin": 0.4, "cac": 2_000}
+    assert first["action_title"] == "Изменены маржа и CAC"
+    assert (latest["actor"], latest["success"]) == ("analyst", False)
+    assert {"code": "marketing.settings.update", "title": "Изменены маржа и CAC"} in page["actions"]
+
+    only_tokens = (await client.get("/api/v1/audit", params={"actor_type": "token"}, headers=ADMIN)).json()
+    assert [i["actor"] for i in only_tokens["items"]] == ["token:aeza-crm"]
+    all_events = (await client.get("/api/v1/audit", headers=ADMIN)).json()
+    assert "model.settings.preview" not in {i["action"] for i in all_events["items"]}
+
+    csv_resp = await client.get("/api/v1/audit/export.csv", params={"actor_type": "token"}, headers=ADMIN)
+    assert csv_resp.status_code == 200 and "churnradar-audit-" in csv_resp.headers["content-disposition"]
+    text = csv_resp.content.decode("utf-8-sig")
+    assert text.splitlines()[0].startswith("Время (UTC);Сервис;Кто")
+    assert "token:aeza-crm" in text and "203.0.113.5" in text and len(text.splitlines()) == 2
+
+
+async def test_weekly_report_from_database(client):
+    import io
+
+    from pypdf import PdfReader
+
+    await insert_scores(DB_URL)
+    data = {"customers_total": 7, "by_level": {"high": 2, "medium": 1, "low": 1, "unknown": 2},
+            "services_total": 7, "services_at_risk": 3, "expected_loss": 950_000, "exposure": 950_000,
+            "monthly_revenue_total": 7000, "revenue_at_risk_share": 0.5, "horizon_days": 30,
+            "money_explanation": "x",
+            "top_reasons": [{"code": "prolong_wait", "title": "Услуга ждёт оплаты", "customers": 3,
+                             "expected_loss": 9_500}],
+            "timeline": []}
+    await _sql("INSERT INTO scoring.summary (id, data, model_version, scored_at) VALUES (1, $1::jsonb, 3, $2)",
+               json.dumps(data), SCORED_AT)
+    await _sql("DELETE FROM alerts.metric_snapshots")
+    await _sql(
+        "INSERT INTO alerts.metric_snapshots (at, expected_loss, high_count, risk_share, customers) "
+        "VALUES (now() - interval '8 days', 800000, 1, 0.4, 7), (now(), 950000, 2, 0.5, 7)"
+    )
+
+    report = (await client.get("/api/v1/reports/weekly", params={"format": "json"}, headers=ANALYST)).json()
+    assert report["kpi"]["expected_loss"] == 950_000 and report["kpi"]["high"] == 2
+    assert report["kpi"]["expected_loss_change"] == pytest.approx(950_000 / 800_000 - 1)
+    # топ под риском: high и medium по убыванию потери
+    assert [c["id"] for c in report["customers"]] == [1, 4, 7, 3]
+    assert report["reasons"][0]["title"] == "Услуга ждёт оплаты"
+
+    pdf = await client.get("/api/v1/reports/weekly", headers=ANALYST)
+    assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF-")
+    text = "\n".join(p.extract_text() for p in PdfReader(io.BytesIO(pdf.content)).pages)
+    assert "€9 500" in text and "anna@example.test" in text and "18,8%" in text

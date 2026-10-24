@@ -70,6 +70,22 @@ def test_build_message_has_both_parts_and_headers():
     assert {p.get_content_type() for p in msg.iter_parts()} == {"text/plain", "text/html"}
 
 
+def test_build_message_with_attachment():
+    from svckit.mail import Attachment
+
+    cfg = MailConfig(host="x", from_addr="team@example.test")
+    pdf = b"%PDF-1.4 test"
+    msg = build_message(
+        cfg,
+        Mail(to="a@example.test", subject="Отчёт", text="во вложении", html="<p>во вложении</p>",
+             attachments=[Attachment("weekly.pdf", pdf, "application/pdf")]),
+    )
+    files = [p for p in msg.iter_attachments()]
+    assert [(f.get_filename(), f.get_content_type(), f.get_content()) for f in files] == [
+        ("weekly.pdf", "application/pdf", pdf)
+    ]
+
+
 async def test_send_without_host_is_disabled():
     with pytest.raises(MailDisabled):
         await send_mail(MailConfig(), Mail(to="a@example.test", subject="s", text="t"))

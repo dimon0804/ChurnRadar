@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
-import { ArrowRight, Info, ListChecks } from 'lucide-react'
+import { ArrowRight, FileDown, Info, ListChecks } from 'lucide-react'
 import { Link } from 'react-router'
-import { api, queryKeys } from '@/api/endpoints'
+import { api, queryKeys, WEEKLY_REPORT_PDF_URL } from '@/api/endpoints'
 import type { RiskLevel, Summary } from '@/api/types'
 import { AnimatedNumber } from '@/components/animated-number'
 import { ContactTodayCard } from '@/components/contact-today'
@@ -12,6 +12,7 @@ import { KpiCard, KpiSkeleton } from '@/components/kpi-card'
 import { PageHeader, RecalcNote } from '@/components/page-header'
 import { RISK_BAR, RiskGlyph, RISK_TEXT } from '@/components/risk'
 import { EmptyState, ErrorState } from '@/components/states'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { countLabel, formatInt, formatMoney, formatShare, plural } from '@/lib/format'
@@ -256,6 +257,14 @@ export default function OverviewPage() {
               <RecalcNote scoredAt={s.scored_at} modelVersion={s.model_version} />
             </div>
           )
+        }
+        actions={
+          <Button asChild variant="outline" size="sm">
+            <a href={WEEKLY_REPORT_PDF_URL} download title="PDF для руководства: цифры за неделю, прогноз и клиенты под риском">
+              <FileDown />
+              Скачать отчёт
+            </a>
+          </Button>
         }
       />
       {summary.isPending ? (

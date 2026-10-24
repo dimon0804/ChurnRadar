@@ -25,6 +25,9 @@ class Settings(BaseSettings):
 
     metrics_token: str = "churn-metrics-demo-token"
 
+    # API-токены интеграций: запросов в минуту на токен, если у токена не задан свой лимит
+    api_token_rate_limit_per_min: int = 600
+
     login_max_attempts: int = 5
     login_window_seconds: int = 60
 

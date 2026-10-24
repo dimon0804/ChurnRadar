@@ -14,7 +14,25 @@
 | Миграции | Job на каждую запись `migrations:` (хук `pre-install,pre-upgrade`) |
 | Шлюз | Traefik `IngressRoute` + `Middleware` (ForwardAuth в auth) |
 | Безопасность | NetworkPolicy (default deny), securityContext (UID 10001, read-only FS, drop ALL, seccomp) |
-| Мониторинг | ServiceMonitor (`serviceMonitor.enabled`, нужен prometheus-operator) |
+| Мониторинг | ServiceMonitor (`serviceMonitor.enabled`, нужен prometheus-operator; у `web` выключен — nginx не отдаёт `/metrics`) |
+| Бэкап | CronJob `pg_dump` в отдельный PVC (`backup.enabled`, `schedule`, `retention`), своя NetworkPolicy к Postgres |
+
+Стратегия выката задаётся на сервис (`<app>.strategy`): по умолчанию RollingUpdate без
+простоя, у `simulator` и `ingest` — Recreate, чтобы два генератора или два посева не работали
+одновременно. `priorityClassName` можно задать глобально (`global.priorityClassName`) или
+для отдельного компонента. Неверные значения отсекает `values.schema.json` ещё до установки.
+
+PVC бэкапа создаётся хуком один раз и не удаляется при `helm uninstall`: дампы не должны
+пропадать вместе с релизом. Хук нужен ещё и потому, что `helm --wait` ждёт привязки всех PVC
+релиза, а при `WaitForFirstConsumer` том привяжется только при первом запуске CronJob.
+
+Бэкап вручную и восстановление:
+
+```bash
+kubectl -n churn-radar create job --from=cronjob/churn-radar-backup backup-manual
+# дамп лежит в PVC churn-radar-backup, формат custom:
+pg_restore --clean --if-exists -d "$DATABASE_URL" churn-radar-<время>.dump
+```
 
 Маршруты шлюза совпадают с compose: публичные `/api/v1/auth/login`, `/api/v1/auth/providers`,
 `/api/v1/auth/oidc/*`, `/login`, `/assets/*`, `/favicon.svg`; остальное идёт через
@@ -36,7 +54,7 @@ bash deploy/kind/down.sh
 
 ## Production-кластер
 
-Требования: Traefik v3 с CRD `traefik.io/v1alpha1`, metrics-server (для HPA),
+Требования: Kubernetes 1.30+ (в чарте `preStop.sleep`), Traefik v3 с CRD `traefik.io/v1alpha1`, metrics-server (для HPA),
 CNI с поддержкой NetworkPolicy, StorageClass по умолчанию.
 
 ```bash
@@ -71,5 +89,9 @@ migrations:
 ## Проверка чарта
 
 ```bash
-bash deploy/helm/lint.sh   # helm lint + helm template | kubeconform -strict
+bash deploy/helm/lint.sh   # helm lint + helm template | kubeconform -strict, проверка схемы
+bash deploy/kind/smoke.sh  # после make k8s-up: вход через шлюз и клиенты в сводке
 ```
+
+В CI job `helm-kind` ставит чарт в однонодовый kind (`deploy/kind/cluster-ci.yaml`) тем же
+`up.sh`, затем `helm test`, `smoke.sh` и ручной запуск бэкапа.

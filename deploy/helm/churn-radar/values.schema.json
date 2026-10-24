@@ -134,6 +134,7 @@
         "existingSecret": { "type": "string" },
         "metricsToken": { "type": "string" },
         "adminPassword": { "type": "string" },
+        "marketerPassword": { "type": "string" },
         "analystPassword": { "type": "string" },
         "alerts": {
           "type": "object",
@@ -261,8 +262,9 @@
       "type": "object",
       "properties": {
         "adminGroups": { "type": "string" },
+        "marketerGroups": { "type": "string" },
         "analystGroups": { "type": "string" },
-        "defaultRole": { "type": "string", "enum": ["", "admin", "analyst"] },
+        "defaultRole": { "type": "string", "enum": ["", "admin", "marketer", "analyst"] },
         "existingSecret": { "type": "string" },
         "oidc": {
           "type": "object",

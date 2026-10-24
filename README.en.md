@@ -839,11 +839,11 @@ test that recomputes the 10-customer case base by hand.
 | Gross Revenue Churn (forecast) | the same weighted by customer MRR: which share of MRR leaves in a month |
 | Retention | `1 − churn` |
 | Customer churn (actual) | customers who left ÷ customer-months observed. Left means all services deleted or blocked; the date comes from status history, otherwise end of the paid period + 5 days |
-| Expected lifetime | `1 ÷ monthly churn`, capped at 60 months: near-zero churn would make it infinite |
+| Expected lifetime | `1 ÷ monthly churn`, capped at 36 months: near-zero churn would make it infinite, and a 30-day forecast says nothing about year four |
 | LTV (forecast) | `ARPU × margin ÷ monthly customer churn`. Per customer: their MRR × margin × their lifetime |
 | LTV (actual) | sum of performed transactions: what the customer has already paid for services |
 | LTV at risk | sum of LTV of high and medium risk customers |
-| What retention gives | if we keep the high-risk customers, their churn returns to the historical actual churn (or to the low-risk churn if nobody has left). LTV uplift = MRR × (lifetime at that churn − lifetime now) |
+| What retention gives | revenue uplift over 12 months, not lifetime LTV. A retained high-risk customer gets the churn of low-risk customers (or the average forecast churn of the base if there are none). Revenue of a customer over 12 months at churn `c`: `MRR × (1 − (1 − c)^12) ÷ c`; uplift = revenue at the target churn − revenue at the current one. Margin is not applied: this is revenue |
 | CAC, LTV/CAC, Payback | acquisition cost is not in the data, an administrator enters it. `LTV ÷ CAC` and `CAC ÷ (ARPU × margin)` months to pay back; without CAC the page honestly says "enter CAC" |
 | Revenue concentration | share of MRR held by the top 10% of paying customers (at least one) |
 | Average payment | performed payments ÷ their count (free zero-amount orders excluded) |
@@ -857,8 +857,10 @@ when serving, so changing them does not trigger a model recalculation. The same 
 `churn_revenue_churn_rate`) and to the "Marketing" row of the Grafana "Отток" dashboard.
 
 On the case data the model sees risk for almost every paying customer, so the forecast churn is
-high (about 65% of customers a month) and LTV is small. The actual historical churn is about
-7.5% a month, which is exactly what the "What retention gives" block shows.
+high (about 65% of customers a month) and LTV is small. The historical churn is not used in the
+"What retention gives" block: on a short data window it is close to zero and would promise a
+retained customer years of revenue. The target is more modest: a retained customer leaves as rarely
+as low-risk customers do, and the effect is counted for one year only.
 
 ## Adding a new feature
 

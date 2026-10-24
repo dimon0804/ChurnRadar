@@ -28,10 +28,12 @@ log = structlog.get_logger()
 MAX_CAMPAIGN = 5000
 STALE_SENDING = timedelta(minutes=10)
 
-_CUSTOMER_SQL = (
-    "SELECT customer_id, email, risk_level, risk_score, expected_loss, balance, reasons, detail "
-    "FROM scoring.customer_scores WHERE customer_id = ANY($1::bigint[])"
+_CUSTOMER_COLUMNS = (
+    "customer_id, email, risk_level, risk_score, expected_loss, balance, bonus_balance, bonus_state, reasons, detail"
 )
+_CUSTOMER_SQL = f"SELECT {_CUSTOMER_COLUMNS} FROM scoring.customer_scores WHERE customer_id = ANY($1::bigint[])"
+# Пример для предпросмотра шаблона ищем среди клиентов с наибольшей потерей.
+PREVIEW_CANDIDATES = 500
 _NOW_SQL = "SELECT now() AS now, COALESCE((SELECT reference_time FROM source.clock WHERE id = 1), now()) AS ref"
 
 
@@ -49,7 +51,10 @@ class EmailSend(BaseModel):
 
 class CampaignRequest(BaseModel):
     """Кому писать: выбранным (customer_ids), всей очереди (worklist) или всем с причиной риска
-    (reason, reason_scope как у фильтра списка клиентов). Ровно что-то одно."""
+    (reason, reason_scope как у фильтра списка клиентов). Ровно что-то одно.
+
+    levels — какие уровни риска очереди брать в рассылку; по умолчанию высокий и средний.
+    """
 
     model_config = ConfigDict(extra="forbid")
     customer_ids: list[int] | None = Field(
@@ -58,6 +63,7 @@ class CampaignRequest(BaseModel):
     worklist: bool = False
     reason: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,63}$")
     reason_scope: Literal["main", "any"] = "any"
+    levels: list[Literal["high", "medium", "low"]] | None = Field(default=None, min_length=1, max_length=3)
     template_code: str | None = Field(default=None, max_length=64)
     skip_days: int = Field(default=7, ge=0, le=90)
 
@@ -65,7 +71,13 @@ class CampaignRequest(BaseModel):
     def _who(self) -> CampaignRequest:
         if sum((bool(self.customer_ids), self.worklist, bool(self.reason))) != 1:
             raise ValueError("Укажите customer_ids, worklist=true или reason (что-то одно)")
+        if self.levels is not None and not self.worklist:
+            raise ValueError("Уровни риска (levels) выбираются только для рассылки по очереди (worklist=true)")
         return self
+
+    @property
+    def queue_levels(self) -> list[str]:
+        return list(dict.fromkeys(self.levels or actions.DEFAULT_CAMPAIGN_LEVELS))
 
 
 def reply_to_for(user_email: str | None, configured: str, config: MailConfig) -> str:
@@ -109,8 +121,16 @@ def _compose(
     code: str | None,
     ref: datetime,
     company: str,
+    *,
+    strict: bool = False,
 ) -> tuple[str, str, str]:
-    """(код шаблона, тема, текст) для клиента."""
+    """(код шаблона, тема, текст) для клиента.
+
+    strict — шаблон, выбранный для всех (рассылка), не навязываем клиенту без такой причины:
+    ему уходит письмо по его настоящей причине.
+    """
+    if code is not None and strict and not mail_templates.applicable(code, customer):
+        code = None
     if code is None:
         code = mail_templates.choose_template(
             customer.get("reasons") or [], customer["risk_level"], set(templates)
@@ -149,9 +169,8 @@ async def draft(
             )
         templates = await mail_templates.load_all(conn)
         last = await _last_sent(conn, customer_id)
-    code, subject, text = _compose(
-        customer, templates, body.template_code, clock["ref"], config.from_name
-    )
+        company = await mail_templates.company(conn)
+    code, subject, text = _compose(customer, templates, body.template_code, clock["ref"], company)
     return {
         "customer_id": customer_id,
         "to": customer["email"],
@@ -286,7 +305,7 @@ async def send_one(
         # сотрудник мог оставить подстановки в тексте — дозаполняем их
         code = body.template_code
         values = mail_templates.context(
-            customer, code or mail_templates.GENERAL, clock["ref"], config.from_name
+            customer, code or mail_templates.GENERAL, clock["ref"], await mail_templates.company(conn)
         )
         subject = mail_templates.render(body.subject.strip(), values)
         text = mail_templates.render(body.text.strip(), values)
@@ -343,7 +362,7 @@ async def _recipients(
 ) -> tuple[list[int], int]:
     """(id получателей по порядку, сколько id не нашлось)."""
     if req.worklist:
-        return await actions.queue_ids(conn, MAX_CAMPAIGN), 0
+        return await actions.queue_ids(conn, MAX_CAMPAIGN, req.queue_levels), 0
     if req.reason:
         # самые дорогие первыми: если клиентов больше MAX_CAMPAIGN, напишем тем, кто важнее
         where, args = where_clause([], None, reason=req.reason, reason_scope=req.reason_scope)
@@ -375,11 +394,10 @@ async def _recent(conn: asyncpg.Connection, ids: list[int], skip_days: int) -> s
     return {r["customer_id"] for r in rows}
 
 
-async def _plan(
-    conn: asyncpg.Connection, req: CampaignRequest, company: str
-) -> dict[str, Any]:
+async def _plan(conn: asyncpg.Connection, req: CampaignRequest) -> dict[str, Any]:
     _check_template(req.template_code)
     clock = await conn.fetchrow(_NOW_SQL)
+    company = await mail_templates.company(conn)
     ids, missing = await _recipients(conn, req)
     recent = await _recent(conn, ids, req.skip_days)
     customers = await _customers(conn, ids)
@@ -396,9 +414,7 @@ async def _plan(
             send.append(
                 (
                     customer,
-                    *_compose(
-                        customer, templates, req.template_code, clock["ref"], company
-                    ),
+                    *_compose(customer, templates, req.template_code, clock["ref"], company, strict=True),
                 )
             )
     return {"send": send, "skipped": skipped, "missing": missing}
@@ -436,8 +452,61 @@ async def preview_campaign(
     pool: asyncpg.Pool, req: CampaignRequest, config: MailConfig
 ) -> dict[str, Any]:
     async with pool.acquire() as conn:
-        plan = await _plan(conn, req, config.from_name)
+        plan = await _plan(conn, req)
     return {**_plan_summary(plan), "enabled": config.enabled}
+
+
+async def _preview_customer(
+    conn: asyncpg.Connection, code: str, customer_id: int | None
+) -> dict[str, Any] | None:
+    """Клиент для предпросмотра шаблона: указанный, иначе тот, кому этот шаблон и уйдёт
+    (его выбирает главная причина), иначе любой, кому шаблон подходит по причинам."""
+    if customer_id is not None:
+        return (await _customers(conn, [customer_id])).get(customer_id)
+    rows = await conn.fetch(
+        f"SELECT {_CUSTOMER_COLUMNS} FROM scoring.customer_scores "
+        "ORDER BY expected_loss DESC, customer_id ASC LIMIT $1",
+        PREVIEW_CANDIDATES,
+    )
+    customers = [dict(r) for r in rows]
+    codes = set(mail_templates.BY_CODE)
+    for customer in customers:
+        if mail_templates.choose_template(customer.get("reasons") or [], customer["risk_level"], codes) == code:
+            return customer
+    return next((c for c in customers if mail_templates.applicable(code, c)), None)
+
+
+async def preview_template(
+    pool: asyncpg.Pool, code: str, draft: mail_templates.TemplatePreview
+) -> dict[str, Any]:
+    """Шаблон из редактора на данных настоящего клиента — те же подстановки, что при отправке."""
+    _check_template(code)
+    unknown = mail_templates.unknown_placeholders(draft.subject + draft.body)
+    if unknown:
+        mail_templates.validate(mail_templates.TemplatePatch(subject=draft.subject, body=draft.body))
+    async with pool.acquire() as conn:
+        clock = await conn.fetchrow(_NOW_SQL)
+        company = await mail_templates.company(conn)
+        customer = await _preview_customer(conn, code, draft.customer_id)
+    if customer is None:
+        if draft.customer_id is not None:
+            raise ApiError(404, "not_found", f"Клиент {draft.customer_id} не найден или ещё не оценён")
+        values = {**mail_templates.FALLBACK, "company": company}
+        return {
+            "customer_id": None,
+            "to": None,
+            "applicable": False,
+            "subject": mail_templates.render(draft.subject, values),
+            "text": mail_templates.render(draft.body, values),
+        }
+    values = mail_templates.context(customer, code, clock["ref"], company)
+    return {
+        "customer_id": customer["customer_id"],
+        "to": customer["email"],
+        "applicable": mail_templates.applicable(code, customer),
+        "subject": mail_templates.render(draft.subject, values),
+        "text": mail_templates.render(draft.body, values),
+    }
 
 
 _CAMPAIGN_SQL = """
@@ -477,7 +546,7 @@ async def create_campaign(
 ) -> dict[str, Any]:
     _check_enabled(config)
     async with pool.acquire() as conn, conn.transaction():
-        plan = await _plan(conn, req, config.from_name)
+        plan = await _plan(conn, req)
         if not plan["send"]:
             raise ApiError(
                 422,

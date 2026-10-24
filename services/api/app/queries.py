@@ -26,10 +26,36 @@ SORT_COLUMNS: dict[str, str] = {
     "expected_loss": "expected_loss",
 }
 
+# Главная причина риска и самое выгодное действие — два разных понятия, и считаются они
+# в одном месте для всех экранов (обзор, список клиентов, карточка, CSV):
+#   • главная причина риска — причина с наибольшим вкладом в score (reasons[0]);
+#   • самое выгодное действие — действие с наибольшим денежным эффектом (next_action).
+MAIN_REASON_SQL = "COALESCE(NULLIF(reasons -> 0 ->> 'label', ''), reasons -> 0 ->> 'title')"
+MAIN_REASON_CODE_SQL = "reasons -> 0 ->> 'code'"
+NEXT_ACTION_SQL = "COALESCE(detail -> 'next_action', detail -> 'recommendations' -> 0)"
+
+# Срочно — до ближайшего срока по риску не больше URGENT_DAYS дней, при любом уровне риска.
+# Срок берём из оценки: удаление услуги в «Ожидает оплаты» (окончание + 5 дней), окончание
+# услуги с выключенным автопродлением, момент, когда кончатся деньги на автопродления.
+URGENT_DAYS = 2
+_SERVICES = "(CASE WHEN jsonb_typeof(detail -> 'services') = 'array' THEN detail -> 'services' ELSE '[]'::jsonb END)"
+DEADLINE_SQL = (
+    "(SELECT min(d) FROM ("
+    "SELECT CASE"
+    " WHEN s ->> 'status' = 'prolong_wait' THEN (s ->> 'days_to_expiry')::float8 + 5"
+    " WHEN s -> 'reasons' @> '[{\"code\": \"autoprolong_off_expiring\"}]' THEN (s ->> 'days_to_expiry')::float8"
+    f" END AS d FROM jsonb_array_elements({_SERVICES}) s"
+    " UNION ALL SELECT (detail -> 'money' ->> 'balance_coverage_days')::float8"
+    f" WHERE EXISTS (SELECT 1 FROM jsonb_array_elements({_SERVICES}) s"
+    " WHERE s -> 'reasons' @> '[{\"code\": \"insufficient_funds\"}]')"
+    ") deadlines)"
+)
+URGENT_SQL = f"COALESCE({DEADLINE_SQL} <= {URGENT_DAYS}, false)"
+
 SUMMARY_COLUMNS = (
     "customer_id, email, balance, bonus_balance, bonus_state, withdraw_balance, total_replenished, "
     "risk_score, risk_level, loyalty, reasons, services_total, services_at_risk, monthly_revenue, "
-    "expected_loss, exposure"
+    f"expected_loss, exposure, {NEXT_ACTION_SQL} AS next_action, {DEADLINE_SQL} AS deadline_days"
 )
 BIGINT_MAX = 9_223_372_036_854_775_807
 
@@ -128,6 +154,12 @@ def where_clause(
     return (" WHERE " + " AND ".join(conditions)) if conditions else "", args
 
 
+def deadline_fields(deadline: float | None) -> dict[str, Any]:
+    """deadline_days и флаг urgent для API: срочность не зависит от уровня риска."""
+    days = None if deadline is None else round(max(float(deadline), 0.0), 2)
+    return {"deadline_days": days, "urgent": days is not None and days <= URGENT_DAYS}
+
+
 def summary_item(row: asyncpg.Record) -> dict[str, Any]:
     return {
         "id": row["customer_id"],
@@ -146,6 +178,8 @@ def summary_item(row: asyncpg.Record) -> dict[str, Any]:
         "monthly_revenue": row["monthly_revenue"],
         "expected_loss": row["expected_loss"],
         "exposure": row["exposure"],
+        "next_action": _get(row, "next_action"),
+        **deadline_fields(_get(row, "deadline_days")),
     }
 
 
@@ -228,6 +262,7 @@ async def get_customer(pool: asyncpg.Pool, customer_id: int) -> dict[str, Any]:
         raise ApiError(404, "not_found", f"Клиент {customer_id} не найден или ещё не оценён")
     detail = row["detail"] or {}
     out = summary_item(row)
+    out["next_action"] = out["next_action"] or detail.get("next_action")
     out.update(
         {
             "services": detail.get("services", []),
@@ -235,7 +270,6 @@ async def get_customer(pool: asyncpg.Pool, customer_id: int) -> dict[str, Any]:
             "transactions": detail.get("transactions", []),
             "money": detail.get("money") or _default_money(row),
             "recommendations": detail.get("recommendations", []),
-            "next_action": detail.get("next_action"),
             "marketing": marketing.customer_block(detail.get("marketing"), _get(row, "margin")),
             "scored_at": iso_z(row["scored_at"]),
             "model_version": row["model_version"],

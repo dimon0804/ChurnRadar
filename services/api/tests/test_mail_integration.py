@@ -222,18 +222,24 @@ async def test_campaign_in_background_with_dedup_and_stats(env):
         and preview["sample"]["template_code"] == "prolong_wait"
     )
 
+    # по умолчанию «всем в очереди» — только высокий и средний риск: 1, 4, 3 (низкий 5 — нет)
     queue = (
         await client.post(
             "/api/v1/mail/campaigns/preview", json={"worklist": True}, headers=MARKETER
         )
     ).json()
-    assert queue["to_send"] == 4 and queue["templates"] == [
-        {"code": "prolong_wait", "count": 4}
-    ]  # 1, 4, 3, 5
+    assert queue["to_send"] == 3 and queue["templates"] == [
+        {"code": "prolong_wait", "count": 3}
+    ]
+    counts = (await client.get("/api/v1/contact-today", headers=MARKETER)).json()
+    assert counts["queue_by_level"] == {"high": 2, "medium": 1, "low": 1}
+    everyone = {"worklist": True, "levels": ["high", "medium", "low"]}
+    queue = (
+        await client.post("/api/v1/mail/campaigns/preview", json=everyone, headers=MARKETER)
+    ).json()
+    assert queue["to_send"] == 4  # 1, 4, 3, 5 — уровни выбраны явно
 
-    created = await client.post(
-        "/api/v1/mail/campaigns", json={"worklist": True}, headers=MARKETER
-    )
+    created = await client.post("/api/v1/mail/campaigns", json=everyone, headers=MARKETER)
     assert created.status_code == 202, created.text
     done = await _wait_done(client, created.json()["id"])
     assert (
@@ -292,3 +298,67 @@ async def test_campaign_in_background_with_dedup_and_stats(env):
         "churn_emails_sent 6.0" in metrics.text
         and "churn_emails_helped 2.0" in metrics.text
     )
+
+
+async def test_company_setting_and_template_preview_on_real_customer(env):
+    """Превью шаблона — на настоящем клиенте и той же функцией, что отправка; подпись — из настроек."""
+    client, _, _ = env
+    settings_body = (await client.get("/api/v1/mail/settings", headers=ANALYST)).json()
+    assert settings_body["company"] == "ChurnRadar"
+    denied = await client.put("/api/v1/mail/settings", json={"company": "Хостинг Плюс"}, headers=ANALYST)
+    assert denied.status_code == 403
+    empty = await client.put("/api/v1/mail/settings", json={"company": "   "}, headers=ADMIN)
+    assert empty.status_code == 422
+    saved = await client.put("/api/v1/mail/settings", json={"company": " Хостинг Плюс "}, headers=ADMIN)
+    assert saved.status_code == 200 and saved.json()["company"] == "Хостинг Плюс"
+
+    draft = {"subject": "{{service}} ждёт оплаты", "body": "Баланс {{balance}}\n\nкоманда {{company}}"}
+    preview = (
+        await client.post("/api/v1/mail/templates/prolong_wait/preview", json=draft, headers=ANALYST)
+    ).json()
+    # у клиента 1 наибольшая потеря и главная причина «ждёт оплаты» — ему этот шаблон и уйдёт
+    assert preview["customer_id"] == 1 and preview["to"] == "anna@example.test"
+    assert preview["applicable"] is True
+    assert preview["subject"] == "service-1 ждёт оплаты"
+    assert preview["text"] == "Баланс €5,00\n\nкоманда Хостинг Плюс"
+
+    # черновик письма из карточки — те же подстановки
+    letter = (await client.post("/api/v1/customers/1/email/draft", json={}, headers=ANALYST)).json()
+    assert letter["text"].endswith("команда Хостинг Плюс")
+
+    # причины «не хватит денег» нет ни у кого — пример не выдумываем
+    nobody = (
+        await client.post("/api/v1/mail/templates/insufficient_funds/preview", json=draft, headers=ANALYST)
+    ).json()
+    assert nobody["customer_id"] is None and nobody["applicable"] is False
+
+    chosen = (
+        await client.post(
+            "/api/v1/mail/templates/insufficient_funds/preview", json={**draft, "customer_id": 3}, headers=ANALYST
+        )
+    ).json()
+    assert chosen["customer_id"] == 3 and chosen["applicable"] is False
+    bad = await client.post(
+        "/api/v1/mail/templates/general/preview", json={**draft, "body": "{{nope}}"}, headers=ANALYST
+    )
+    assert bad.status_code == 422
+
+
+async def test_urgent_customer_goes_first_in_queue(env):
+    """Срочно — срок не дальше двух дней при любом уровне: такой клиент поднимается наверх очереди."""
+    client, _, _ = env
+    services = '[{"id": 30, "name": "service-3", "status": "prolong_wait", "days_to_expiry": -4.0, "reasons": []}]'
+    await _sql(
+        "UPDATE scoring.customer_scores SET detail = jsonb_set(detail, '{services}', $1::jsonb) WHERE customer_id = 3",
+        services,
+    )
+    queue = (await client.get("/api/v1/contact-today", headers=ANALYST)).json()
+    first = queue["items"][0]
+    assert first["id"] == 3 and first["risk_level"] == "medium"
+    assert first["urgent"] is True and first["deadline_days"] == 1.0
+    assert queue["urgent_total"] == 1
+    assert all(item["urgent"] is False for item in queue["items"][1:])
+
+    page = (await client.get("/api/v1/customers?level=medium", headers=ANALYST)).json()
+    row = next(i for i in page["items"] if i["id"] == 3)
+    assert row["urgent"] is True and row["next_action"]["code"] == "prolong_wait"

@@ -205,6 +205,7 @@ def empty_summary(horizon_days: int, model_version: int) -> dict[str, Any]:
         "money_explanation": "Расчёт ещё не выполнялся: данные появятся после первой оценки клиентов.",
         "top_reasons": [],
         "timeline": [],
+        "deleted_services": {"total": 0, "last_date": None, "last_estimated": False},
         "scored_at": None,
         "model_version": model_version,
     }

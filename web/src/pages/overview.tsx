@@ -320,12 +320,12 @@ export default function OverviewPage() {
               <CardHeader>
                 <CardTitle>Отток услуг: факт и прогноз</CardTitle>
                 <CardDescription>
-                  Сколько услуг ушло по дням и сколько непродлений ожидаем в ближайшие {s.horizon_days}{' '}
-                  {plural(s.horizon_days, ['день', 'дня', 'дней'])}
+                  Сколько услуг ушло по дням, сколько непродлений ожидаем в ближайшие {s.horizon_days}{' '}
+                  {plural(s.horizon_days, ['день', 'дня', 'дней'])} и сколько услуг остаётся под риском
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <ChurnChart timeline={s.timeline ?? []} horizonDays={s.horizon_days} />
+                <ChurnChart timeline={s.timeline ?? []} horizonDays={s.horizon_days} deletedServices={s.deleted_services} />
               </CardContent>
             </Card>
             <LevelDistribution s={s} />

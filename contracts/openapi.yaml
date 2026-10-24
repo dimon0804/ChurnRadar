@@ -722,7 +722,8 @@ components:
         date: { type: string, format: date }
         kind: { type: string, enum: [fact, forecast] }
         deletions: { type: [integer, 'null'], description: 'Факт: удалённые услуги за день' }
-        at_risk_services: { type: [integer, 'null'], description: 'Услуги под риском (high+medium) на дату' }
+        estimated_deletions: { type: [integer, 'null'], description: 'Факт: сколько из deletions датированы оценкой (услуга пришла в снимке уже удалённой, дата = окончание оплаты + 5 дней)' }
+        at_risk_services: { type: [integer, 'null'], description: 'Услуги под риском (high+medium) на дату. В зоне факта известно только на день снимка, в прочие дни null' }
         expected_nonrenewals: { type: [number, 'null'], description: 'Прогноз: ожидаемое число непродлений за день' }
         expected_loss: { type: [integer, 'null'], description: 'Прогноз: ожидаемая потеря за день, евроценты' }
 
@@ -779,6 +780,14 @@ components:
         timeline:
           type: array
           items: { $ref: '#/components/schemas/TimelinePoint' }
+        deleted_services:
+          type: object
+          description: 'Удалённые услуги в снимке, в том числе удалённые раньше окна факта в timeline'
+          required: [total, last_date, last_estimated]
+          properties:
+            total: { type: integer, description: 'Сколько услуг в статусе deleted' }
+            last_date: { type: [string, 'null'], format: date, description: 'Дата последнего удаления; null, если удалённых нет' }
+            last_estimated: { type: boolean, description: 'Дата последнего удаления — оценка по окончанию оплаты, а не замеченная смена статуса' }
         scored_at: { type: [string, 'null'], format: date-time }
         model_version: { type: integer }
 

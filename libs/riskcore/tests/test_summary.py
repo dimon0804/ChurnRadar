@@ -61,8 +61,56 @@ def test_fact_counts_deletions_by_day(portfolio):
     fact = {p["date"]: p for p in summary["timeline"] if p["kind"] == "fact"}
     three_days_ago = (AS_OF.date() - timedelta(days=3)).isoformat()
     assert fact[three_days_ago]["deletions"] == 2
+    assert fact[three_days_ago]["estimated_deletions"] == 1
     assert sum(p["deletions"] for p in fact.values()) == 2
-    assert all(p["at_risk_services"] is None and p["expected_nonrenewals"] is None for p in fact.values())
+    assert sum(p["estimated_deletions"] for p in fact.values()) == 1
+    assert all(p["expected_nonrenewals"] is None for p in fact.values())
+
+
+def test_at_risk_is_known_in_fact_only_for_snapshot_day(portfolio):
+    _, _, summary = portfolio
+    fact = [p for p in summary["timeline"] if p["kind"] == "fact"]
+    assert all(p["at_risk_services"] is None for p in fact[:-1])
+    assert fact[-1]["date"] == AS_OF.date().isoformat()
+    assert fact[-1]["at_risk_services"] == summary["services_at_risk"]
+
+
+def test_deleted_services_take_date_from_history(portfolio):
+    _, _, summary = portfolio
+    # услуга 7 удалена, дата из истории (оценочная запись ingest), а не из expires_at
+    assert summary["deleted_services"] == {
+        "total": 1,
+        "last_date": (AS_OF - timedelta(days=3)).date().isoformat(),
+        "last_estimated": True,
+    }
+
+
+def test_deleted_services_before_fact_window_are_still_counted():
+    # как в данных кейса: удалённые услуги есть, но все удалены раньше окна факта
+    accounts = [make_account(id=1)]
+    services = [
+        make_service(id=1, owner_id=1, status="deleted", expires_in_days=-36),
+        make_service(id=2, owner_id=1, status="deleted", expires_in_days=-200),
+        make_service(id=3, owner_id=1),
+    ]
+    settings = default_settings()
+    results = score_customers(accounts, services, [], settings, AS_OF)
+    summary = build_summary(results, services, [], settings, AS_OF)
+    assert sum(p["deletions"] for p in summary["timeline"] if p["kind"] == "fact") == 0
+    assert summary["deleted_services"] == {
+        "total": 2,
+        "last_date": (AS_OF - timedelta(days=36) + PROLONG_WAIT_GRACE).date().isoformat(),
+        "last_estimated": True,
+    }
+
+
+def test_deleted_services_empty():
+    accounts = [make_account(id=1)]
+    services = [make_service(id=1, owner_id=1)]
+    settings = default_settings()
+    results = score_customers(accounts, services, [], settings, AS_OF)
+    summary = build_summary(results, services, iter([]), settings, AS_OF)
+    assert summary["deleted_services"] == {"total": 0, "last_date": None, "last_estimated": False}
 
 
 def test_forecast_sums_to_probabilities_inside_horizon(portfolio):

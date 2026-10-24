@@ -8,7 +8,8 @@ from uuid import uuid4
 
 import asyncpg
 
-VALID_ROLES = ("admin", "analyst")
+# порядок — от старшей роли к младшей
+VALID_ROLES = ("admin", "marketer", "analyst")
 SSO_PROVIDERS = ("oidc", "saml")
 # 'sso' — заведён админом «только для SSO», ещё ни разу не входил
 PROVIDERS = ("password", "oidc", "saml", "sso")
@@ -42,7 +43,7 @@ class UserRecord:
 
     @property
     def role(self) -> str:
-        return "admin" if "admin" in self.roles else "analyst"
+        return next((r for r in VALID_ROLES if r in self.roles), "analyst")
 
     def public(self) -> dict:
         return {

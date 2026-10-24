@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from svckit.errors import ApiError
 
 from app import actions
-from tests.conftest import ANALYST, NOW, FakeConn, FakePool
+from tests.conftest import ANALYST, MARKETER, NOW, FakeConn, FakePool
 
 
 def _row(**over: Any) -> dict[str, Any]:
@@ -323,11 +323,11 @@ async def test_export_csv_worklist_and_validation(client, app):
 
 async def test_put_action_validation_before_db(client):
     bad = await client.put(
-        "/api/v1/customers/1/action", json={"status": "snoozed"}, headers=ANALYST
+        "/api/v1/customers/1/action", json={"status": "snoozed"}, headers=MARKETER
     )
     assert bad.status_code == 422 and bad.json()["error"]["code"] == "validation_error"
     bad_id = await client.put(
-        "/api/v1/customers/abc/action", json={"status": "resolved"}, headers=ANALYST
+        "/api/v1/customers/abc/action", json={"status": "resolved"}, headers=MARKETER
     )
     assert bad_id.status_code == 422
 
@@ -379,7 +379,7 @@ async def test_analyst_can_mark_resolved(client, app):
     )
     app.state.pool = pool
     resp = await client.put(
-        "/api/v1/customers/10/action", json={"status": "resolved"}, headers=ANALYST
+        "/api/v1/customers/10/action", json={"status": "resolved"}, headers=MARKETER
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -390,8 +390,8 @@ async def test_analyst_can_mark_resolved(client, app):
     )
     upsert, log_insert = pool.conn.executed
     assert "ON CONFLICT (customer_id) DO UPDATE" in upsert[0]
-    assert upsert[1] == (10, "resolved", None, None, 600, "high", "analyst")
-    assert "customer_actions_log" in log_insert[0] and log_insert[1][-1] == "analyst"
+    assert upsert[1] == (10, "resolved", None, None, 600, "high", "marketer")
+    assert "customer_actions_log" in log_insert[0] and log_insert[1][-1] == "marketer"
 
 
 async def test_mark_unknown_customer_is_404(client, app):
@@ -404,7 +404,7 @@ async def test_mark_unknown_customer_is_404(client, app):
     )
     app.state.pool = pool
     resp = await client.put(
-        "/api/v1/customers/999/action", json={"status": "resolved"}, headers=ANALYST
+        "/api/v1/customers/999/action", json={"status": "resolved"}, headers=MARKETER
     )
     assert resp.status_code == 404
     assert pool.conn.executed == []

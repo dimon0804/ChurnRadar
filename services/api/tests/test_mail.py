@@ -11,7 +11,7 @@ from svckit.mail import MailConfig
 
 from app import mail_templates as mt
 from app import mailer
-from tests.conftest import ADMIN, ANALYST
+from tests.conftest import ADMIN, ANALYST, MARKETER
 
 REF = datetime(2026, 10, 19, 15, tzinfo=UTC)
 
@@ -199,7 +199,7 @@ async def test_templates_admin_only(client):
 async def test_send_without_smtp_is_503(client, app):
     app.state.mail_config = MailConfig()
     resp = await client.post(
-        "/api/v1/customers/1/email", json={"subject": "s", "text": "t"}, headers=ANALYST
+        "/api/v1/customers/1/email", json={"subject": "s", "text": "t"}, headers=MARKETER
     )
     assert resp.status_code == 503 and resp.json()["error"]["code"] == "mail_disabled"
     resp = await client.post(
@@ -213,6 +213,6 @@ async def test_unknown_template_is_422(client, app):
     resp = await client.post(
         "/api/v1/customers/1/email",
         json={"template_code": "nope", "subject": "s", "text": "t"},
-        headers=ANALYST,
+        headers=MARKETER,
     )
     assert resp.status_code == 422

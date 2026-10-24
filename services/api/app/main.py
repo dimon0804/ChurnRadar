@@ -10,7 +10,7 @@ import httpx
 import structlog
 from fastapi import Body, Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response
-from svckit.auth import User, make_current_user, make_require_admin
+from svckit.auth import User, make_current_user, make_require_admin, make_require_role
 from svckit.bus import EventBus
 from svckit.db import create_pool, db_ready, get_pool
 from svckit.errors import ApiError, RequestIdMiddleware, install_error_handlers
@@ -32,6 +32,8 @@ FORWARDED_HEADERS = ("x-user-id", "x-user-name", "x-user-roles", "x-request-id")
 current_user = make_current_user(settings)
 CurrentUser = Annotated[User, Depends(current_user)]
 AdminUser = Annotated[User, Depends(make_require_admin(current_user))]
+# работа с клиентами (письма, рассылки, отметки) — маркетолог и админ; аналитик только смотрит
+MarketerUser = Annotated[User, Depends(make_require_role(current_user, "marketer"))]
 Pool = Annotated[Any, Depends(get_pool)]
 
 
@@ -159,14 +161,14 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
 
     @app.put("/api/v1/customers/{customer_id}/action", tags=["actions"])
     async def put_customer_action(
-        customer_id: int, user: CurrentUser, pool: Pool, update: Annotated[actions.ActionUpdate, Body()]
+        customer_id: int, user: MarketerUser, pool: Pool, update: Annotated[actions.ActionUpdate, Body()]
     ) -> dict[str, Any]:
         state = await actions.set_action(pool, customer_id, update, user.name, settings.mail_followup_days)
         log.info("customer_action_set", customer_id=customer_id, status=update.status, user=user.name)
         return state
 
     @app.delete("/api/v1/customers/{customer_id}/action", tags=["actions"])
-    async def delete_customer_action(customer_id: int, user: CurrentUser, pool: Pool) -> dict[str, Any]:
+    async def delete_customer_action(customer_id: int, user: MarketerUser, pool: Pool) -> dict[str, Any]:
         state = await actions.clear_action(pool, customer_id, user.name)
         log.info("customer_action_cleared", customer_id=customer_id, user=user.name)
         return state
@@ -195,14 +197,14 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
 
     @app.post("/api/v1/customers/{customer_id}/email/draft", tags=["mail"])
     async def draft_customer_email(
-        request: Request, customer_id: int, _: CurrentUser, pool: Pool,
+        request: Request, customer_id: int, _: MarketerUser, pool: Pool,
         body: Annotated[mailer.EmailDraft, Body()],
     ) -> dict[str, Any]:
         return await mailer.draft(pool, customer_id, body, mail_config(request), reply_to(request))
 
     @app.post("/api/v1/customers/{customer_id}/email", tags=["mail"])
     async def send_customer_email(
-        request: Request, customer_id: int, user: CurrentUser, pool: Pool,
+        request: Request, customer_id: int, user: MarketerUser, pool: Pool,
         body: Annotated[mailer.EmailSend, Body()],
     ) -> dict[str, Any]:
         return await mailer.send_one(
@@ -211,13 +213,13 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
 
     @app.post("/api/v1/mail/campaigns/preview", tags=["mail"])
     async def preview_mail_campaign(
-        request: Request, _: CurrentUser, pool: Pool, body: Annotated[mailer.CampaignRequest, Body()]
+        request: Request, _: MarketerUser, pool: Pool, body: Annotated[mailer.CampaignRequest, Body()]
     ) -> dict[str, Any]:
         return await mailer.preview_campaign(pool, body, mail_config(request))
 
     @app.post("/api/v1/mail/campaigns", tags=["mail"], status_code=202)
     async def create_mail_campaign(
-        request: Request, user: CurrentUser, pool: Pool, body: Annotated[mailer.CampaignRequest, Body()]
+        request: Request, user: MarketerUser, pool: Pool, body: Annotated[mailer.CampaignRequest, Body()]
     ) -> dict[str, Any]:
         campaign = await mailer.create_campaign(pool, body, mail_config(request), reply_to(request), user.name)
         worker: mailer.MailWorker | None = getattr(request.app.state, "mail_worker", None)

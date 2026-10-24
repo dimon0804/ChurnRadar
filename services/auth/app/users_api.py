@@ -37,7 +37,7 @@ class UserCreate(BaseModel):
     username: str = Field(min_length=1, max_length=128)
     display_name: str = Field(default="", max_length=128)
     email: str | None = Field(default=None, max_length=254)
-    role: Literal["admin", "analyst"] = "analyst"
+    role: Literal["admin", "marketer", "analyst"] = "analyst"
     # пусто и sso_only=false — сгенерируем временный пароль и покажем один раз
     password: str | None = Field(default=None, max_length=256)
     sso_only: bool = False
@@ -59,7 +59,7 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=128)
     email: str | None = Field(default=None, max_length=254)
-    role: Literal["admin", "analyst"] | None = None
+    role: Literal["admin", "marketer", "analyst"] | None = None
     status: Literal["active", "blocked"] | None = None
 
     @field_validator("email")
@@ -201,7 +201,7 @@ def register_user_routes(
         if body.role and body.role != user.role:
             if user.id == session.user_id:
                 raise fail(400, "self_change", "Свою роль поменять нельзя: попросите другого администратора")
-            if body.role == "analyst":
+            if body.role != "admin":
                 await guard_last_admin(st, user)
             changes["roles"] = [body.role]
             changes["role_override"] = True

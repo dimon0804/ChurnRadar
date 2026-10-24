@@ -15,6 +15,14 @@ from .errors import ApiError
 UNAUTHORIZED_MESSAGE = "Требуется вход в систему"
 FORBIDDEN_MESSAGE = "Недостаточно прав: действие доступно только администратору"
 
+# Роли вложены: маркетолог может всё, что аналитик, администратор — всё, что маркетолог.
+ROLE_RANK = {"analyst": 1, "marketer": 2, "admin": 3}
+ROLE_FORBIDDEN_MESSAGES = {
+    "admin": FORBIDDEN_MESSAGE,
+    "marketer": "Недостаточно прав: действие доступно маркетологу и администратору",
+    "analyst": "Недостаточно прав для этого действия",
+}
+
 
 class AuthSettings(Protocol):
     """Откуда брать настройки; читаются на каждом запросе, поэтому их можно менять на лету (в тестах)."""
@@ -38,6 +46,13 @@ class User:
     @property
     def is_admin(self) -> bool:
         return "admin" in self.roles
+
+    @property
+    def rank(self) -> int:
+        return max((ROLE_RANK.get(r, 0) for r in self.roles), default=0)
+
+    def has_role(self, minimum: str) -> bool:
+        return self.rank >= ROLE_RANK[minimum]
 
 
 def parse_roles(raw: str | None, *, lower: bool = True) -> frozenset[str]:
@@ -74,12 +89,23 @@ def make_current_user(
     return current_user
 
 
+def make_require_role(
+    current_user: Callable[[Request], User], minimum: str, *, message: str | None = None
+) -> Callable[[User], User]:
+    """Зависимость: пользователь с ролью не ниже `minimum` (analyst < marketer < admin), иначе 403."""
+    if minimum not in ROLE_RANK:
+        raise ValueError(f"unknown role {minimum!r}")
+    text = message or ROLE_FORBIDDEN_MESSAGES[minimum]
+
+    def require_role(user: Annotated[User, Depends(current_user)]) -> User:
+        if not user.has_role(minimum):
+            raise ApiError(403, "forbidden", text)
+        return user
+
+    return require_role
+
+
 def make_require_admin(
     current_user: Callable[[Request], User], *, message: str = FORBIDDEN_MESSAGE
 ) -> Callable[[User], User]:
-    def require_admin(user: Annotated[User, Depends(current_user)]) -> User:
-        if not user.is_admin:
-            raise ApiError(403, "forbidden", message)
-        return user
-
-    return require_admin
+    return make_require_role(current_user, "admin", message=message)

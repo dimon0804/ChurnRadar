@@ -12,6 +12,7 @@ from app.main import create_app
 
 ADMIN = {"X-User-Id": "1", "X-User-Name": "admin", "X-User-Roles": "admin"}
 ANALYST = {"X-User-Id": "2", "X-User-Name": "analyst", "X-User-Roles": "analyst"}
+MARKETER = {"X-User-Id": "3", "X-User-Name": "marketer", "X-User-Roles": "marketer"}
 
 FAKE_FEATURES = [
     ("prolong_wait", 85.0, "service"),

@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 from prometheus_client import CollectorRegistry, Counter
 
-from svckit.auth import User, make_current_user, make_require_admin, parse_roles
+from svckit.auth import User, make_current_user, make_require_admin, make_require_role, parse_roles
 from svckit.errors import ApiError, RequestIdMiddleware, install_error_handlers
 from svckit.metrics import (
     HttpMetricsMiddleware,
@@ -153,3 +153,41 @@ def test_api_error_str():
     exc = ApiError(400, "bad_request", "Плохо")
     assert str(exc) == "Плохо"
     assert exc.status_code == 400 and exc.status == 400
+
+
+@pytest.mark.parametrize(
+    ("roles", "minimum", "allowed"),
+    [
+        ("analyst", "analyst", True),
+        ("analyst", "marketer", False),
+        ("analyst", "admin", False),
+        ("marketer", "analyst", True),
+        ("marketer", "marketer", True),
+        ("marketer", "admin", False),
+        ("admin", "marketer", True),
+        ("admin", "admin", True),
+        ("analyst,marketer", "marketer", True),
+        ("", "analyst", False),
+        ("guest", "analyst", False),
+    ],
+)
+async def test_require_role_hierarchy(roles, minimum, allowed):
+    current_user = make_current_user(Settings())
+    app = FastAPI()
+    install_error_handlers(app)
+    guard = make_require_role(current_user, minimum)
+
+    @app.post("/x")
+    async def act(user: Annotated[User, Depends(guard)]) -> dict[str, str]:
+        return {"name": user.name}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.post("/x", headers={"X-User-Name": "u", "X-User-Roles": roles})
+    assert resp.status_code == (200 if allowed else 403)
+    if not allowed:
+        assert resp.json()["error"]["code"] == "forbidden"
+
+
+def test_require_role_rejects_unknown_role():
+    with pytest.raises(ValueError):
+        make_require_role(make_current_user(Settings()), "boss")

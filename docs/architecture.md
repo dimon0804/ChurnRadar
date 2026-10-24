@@ -18,7 +18,7 @@
   api    ──► NATS JetStream  churn.settings.changed ──► scoring
   scoring ─► NATS JetStream  churn.scores.updated  ──► notifier (M реплик) ──SSE──► браузеры
                                                    ├─► api (сброс кэша)
-                                                   └─► alerts (K реплик) ──► лента, webhook, Telegram
+                                                   └─► alerts (K реплик) ──► панель, почта, Telegram-бот
 
   PostgreSQL 16: схемы source, scoring, alerts, auth · Redis: сессии, лимиты, кэш
   Prometheus ◄── /metrics всех сервисов и экспортёров · Grafana · Keycloak (OIDC, профиль oidc)
@@ -58,19 +58,27 @@ subject'а, поэтому получает все события и разда�
 
 ### alerts
 
-Python, FastAPI и nats-py, как scoring. Оповещения о росте риска оттока: свой durable
-consumer `alerts` на `churn.scores.updated`, свой subject DLQ `churn.dlq.alerts`, своя схема
-`alerts` в PostgreSQL. Ни один существующий сервис ради него не менялся: scoring публикует
+Python, FastAPI и nats-py, как scoring. Персональные уведомления о критических событиях: свой
+durable consumer `alerts` на `churn.scores.updated`, свой subject DLQ `churn.dlq.alerts`, своя
+схема `alerts` в PostgreSQL. Ни один существующий сервис ради него не менялся: scoring публикует
 событие для всех, alerts просто ещё один подписчик.
 
-На каждую пачку событий сервис под `pg_advisory_xact_lock` сравнивает `scoring.customer_scores`
-(только чтение) с `alerts.customer_state` одним запросом и решает, кому слать: переход в
-высокий риск, рост ожидаемой потери клиента больше порога, рост общей потери больше порога в
-процентах. В той же транзакции пишет ленту `alerts.feed`, очередь `alerts.deliveries` и
-отметку `alerts.processed_events`, поэтому повтор события ничего не задваивает. Внешние каналы
-(webhook, Telegram) разбирает фоновый цикл: берёт доставки через `FOR UPDATE SKIP LOCKED` с
-арендой, при ошибке откладывает по backoff, после последней попытки помечает `failed`. Лента
-для панели — `GET /api/v1/alerts` за ForwardAuth, как остальные API.
+На каждую пачку событий сервис под `pg_advisory_xact_lock` читает показатели базы из
+`scoring.summary` и одним запросом находит клиентов, перешедших в высокий риск
+(`scoring.customer_scores` против `alerts.customer_state`). Дальше — проверка по порогам каждого
+подписчика (`alerts.user_prefs`: события, пороги, каналы, тихие часы, сводка) и общего журнала
+по порогам по умолчанию. Рост «за период» считается от истории `alerts.metric_snapshots`, анти-спам
+— по `alerts.user_event_state`. В той же транзакции пишутся личная лента `alerts.notifications`,
+журнал `alerts.feed`, очередь `alerts.deliveries` (почта, Telegram, webhook) и отметка
+`alerts.processed_events`, поэтому повтор события ничего не задваивает. Очередь разбирает фоновый
+цикл: `FOR UPDATE SKIP LOCKED` с арендой, backoff, после последней попытки — `failed`.
+
+Раз в 30 секунд тот же процесс под тем же lock проверяет «данные без пересчёта» и рассылает
+ежедневные сводки (день занимается атомарным UPDATE, поэтому сводка уходит один раз). Telegram-бот
+работает на long polling: `getUpdates` ведёт одна реплика, которая держит сессионный
+`pg_try_advisory_lock`; привязка чата — одноразовый код в `alerts.telegram_codes` (10 минут),
+смещение — в `alerts.telegram_state`. HTTP: `/api/v1/alerts/*` за ForwardAuth, как остальные API;
+чужие настройки видит и сбрасывает только роль admin.
 
 ### web
 
@@ -101,8 +109,8 @@ Query; события SSE инвалидируют нужные запросы, 
 - `api` масштабируется HPA по CPU, ответы кэшируются и сбрасываются по `scores.updated`.
 - `notifier` — каждая реплика независима, нагрузка распределяется балансировщиком по
   соединениям.
-- `alerts` — реплики делят события через свой durable consumer, состояние клиентов меняется
-  под advisory lock, доставки во внешние каналы разбираются через `SKIP LOCKED`.
+- `alerts` — реплики делят события через свой durable consumer, проверка идёт под advisory lock,
+  доставки во внешние каналы разбираются через `SKIP LOCKED`, опрос Telegram ведёт одна реплика.
 - Новый потребитель событий подключается без правок в остальных: свой durable consumer на
   нужный subject, своя схема в базе. Так добавлен alerts.
 

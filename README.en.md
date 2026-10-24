@@ -28,7 +28,7 @@ evaluate the project.
 - [Quick start](#quick-start)
 - [What to look at in the panel](#what-to-look-at-in-the-panel)
 - [How it works](#how-it-works)
-- [Alerts](#alerts)
+- [Notifications](#notifications)
 - [Risk model](#risk-model)
 - [Quality check](#quality-check)
 - [Adding a new feature](#adding-a-new-feature)
@@ -214,7 +214,7 @@ flowchart TB
         ingest["ingest<br/>snapshots and change stream"]
         scoring["scoring x2<br/>riskcore: score, reasons, money"]
         simulator["simulator<br/>extended data and live stream"]
-        alerts["alerts x2<br/>alerts: feed, webhook, Telegram"]
+        alerts["alerts x2<br/>notifications: panel, email, Telegram bot"]
     end
 
     subgraph data["Storage"]
@@ -280,10 +280,10 @@ How data gets from the source to the screen:
 4. `notifier` pushes the event to browsers over SSE (`/api/v1/stream`), and `api` uses the same
    event to drop its summary cache. The panel refetches what it needs and updates without a
    page reload.
-5. `alerts` listens to the same `churn.scores.updated` with its own durable consumer and
-   compares the new scores with what it remembers about each customer. When someone moves into
-   high risk or their expected loss grows noticeably, a record appears in the alert feed and a
-   message goes to a webhook or Telegram (see [Alerts](#alerts)).
+5. `alerts` listens to the same `churn.scores.updated` with its own durable consumer and checks
+   critical events against each user's thresholds: expected loss grew, a big customer moved into
+   high risk, the share of revenue at risk crossed a line. Whoever cares gets a notification in
+   the panel, by email or in Telegram (see [Notifications](#notifications)).
 
 `notifier` replicas know nothing about each other: each one listens to all events and keeps a
 ring buffer of 200 for `Last-Event-ID`. If a replica dies, the browser reconnects to another one
@@ -300,69 +300,90 @@ create a duplicate in JetStream. Details (in Russian) are in [docs/architecture.
 Each service, the threat model and failure handling are described in
 [docs/architecture.md](docs/architecture.md). Event schemas: [contracts/events/](contracts/events/).
 
-## Alerts
+## Notifications
 
-Nobody watches a dashboard all day, so ChurnRadar speaks up on its own. The panel header has a
-bell with the number of new alerts; clicking it opens the feed, and every record links to the
-customer card. The same alerts go to a webhook (JSON POST) and to Telegram when those are
-configured.
+Nobody watches a dashboard all day, so ChurnRadar speaks up on its own. But only about what
+matters: a message for every customer who drifts into high risk stops being read within a week.
+So the service reports critical events for the whole base, and every panel user sets their own
+thresholds and channels on the «Уведомления» (Notifications) page: the bell in the header →
+«Настроить», or the profile menu.
 
-Alerts come from a separate service, [`services/alerts`](services/alerts). Not a single line of
-`scoring`, `api`, `ingest` or `notifier` changed for it: it is one more consumer of the
-`churn.scores.updated` event that scoring already publishes. What was added is its own `alerts`
-schema (migration `db/core/004_alerts.sql`), the `/api/v1/alerts` route in the gateway and the
-bell in the panel. The next consumer (a CRM, a mailing tool, a ticket system) plugs in the same way.
-
-When it fires:
-
-| What happened | Default threshold |
+| Event | Default threshold |
 |---|---|
-| A customer moved into high risk (or a new customer starts there) | — |
-| A customer's expected loss grew by more than X € | `ALERT_LOSS_JUMP_EUR=50` |
-| Total expected loss grew by more than Y % | `ALERT_TOTAL_LOSS_JUMP_PCT=10` |
+| Expected loss across the base grew by more than X % over a period (1 h, 6 h, a day, 3 days, a week) | 10 % per day |
+| A big customer moved into high risk: expected loss on them is above N € | €500 |
+| Share of revenue at risk crossed Y % upwards | 40 % |
+| High-risk customers grew by more than Z over a period | 10 per day |
+| Data arrived but no recalculation for more than T minutes (off by default) | 15 min |
+| Daily digest at a chosen time (off by default) | 09:00 |
 
-Growth is measured from the lowest value since the previous alert, so a slow drift is caught
-too, not only a jump within one recalculation. One customer gets at most one alert per
-`ALERT_COOLDOWN_MIN` minutes (60), and everything found in one recalculation goes out as a single
-message. On the very first start the service only remembers the current state and sends
-nothing; otherwise it would report everyone who has long been in high risk.
+For each event a user turns it on or off and picks a threshold and channels: in the panel (the
+bell), email, Telegram. Quiet hours with a time zone hold email and Telegram until they end; the
+panel shows everything right away. «Отправить тестовое уведомление» checks every channel and says
+plainly what did not arrive and why. Every threshold has a preview of the resulting message. A new
+user starts with four events on and only in the panel: no emails or messages until they decide.
+An admin sees who set up what and can reset anyone's settings.
 
-Mass changes are folded. If one recalculation produces more than `ALERTS_BULK_THRESHOLD` (20)
-customer alerts, or a full recalculation brings new customers (meaning a snapshot was loaded),
-the feed and the channels get a single summary: how many customers are in high risk now and
-before, how the expected loss moved, and the most expensive ones, linked to the high-risk list
-sorted by expected loss. The state of every folded customer is updated, so no delayed alerts
-follow. A single new customer from the change stream still gets its own record.
+Anti-spam is per user: the same event comes at most once an hour (`ALERT_COOLDOWN_MIN`), and
+growth is measured from the previous notification, not from the start of the period again.
+However many big customers move into high risk in one recalculation (say, after a snapshot
+load), it is one notification listing the most expensive ones. A customer flipping back and
+forth shows up again no sooner than in 6 hours.
+
+**Telegram bot.** Long polling, no public URL needed. Linking goes through a one-time link
+`https://t.me/<bot>?start=<code>` from the settings (the code lives 10 minutes); unlinking is a
+button in the settings or `/stop`. Commands: `/top` (five customers with the largest expected
+loss), `/customer <id>` (card with reasons), `/summary` (state of the base), `/mute <hours>`.
+The bot shows data only to linked chats. Notifications carry an «Открыть в панели» button when
+the panel is reachable from outside (Telegram rejects localhost links, then the link goes into the
+text). With two alerts replicas exactly one polls `getUpdates`, the one holding
+`pg_try_advisory_lock`; if it dies, another one takes over within seconds, the offset is stored in
+the database. Without `TELEGRAM_BOT_TOKEN` the bot is off and the settings page says so.
+
+**Email.** HTML plus a plain-text version, in Russian, with a link to the right page and to the
+notification settings, sent through the shared `svckit.mail`. On the demo stack Mailpit catches
+every email: http://localhost:8025.
+
+**Journal.** A shared event feed on the notifications page, built with default thresholds
+regardless of personal settings. The webhook (`ALERTS_WEBHOOK_URL`, HMAC signature, `text` field
+for Slack and Mattermost) and the team Telegram chat (`TELEGRAM_CHAT_ID`) still get it.
+
+The service, [`services/alerts`](services/alerts), is one more consumer of the
+`churn.scores.updated` event that scoring already publishes. Not a single line of `scoring`,
+`api`, `ingest` or `notifier` changed for it. It has its own `alerts` schema (migrations
+`db/core/004`–`006`), the `/api/v1/alerts/*` route in the gateway and a page in the panel.
 
 How delivery works:
 
-- The service keeps its state in the `alerts` schema and only reads `scoring.*`. The comparison
-  is one SQL query, so only customers whose numbers changed reach Python.
-- The feed and the delivery queue (`alerts.deliveries`) are written in the same transaction as
-  the "event processed" mark. A repeated event creates no duplicates, and a dead webhook does
-  not lose an alert: a background loop retries with 5/15/60/300/900 s pauses and marks the
-  delivery failed after 8 attempts. A 4xx answer (except 408 and 429) is not retried.
-- Replicas split events through a JetStream durable consumer, customer state changes under
-  `pg_advisory_xact_lock`, deliveries are claimed with `FOR UPDATE SKIP LOCKED` and a 60 s
-  lease. If a replica dies mid-send, another one picks the delivery up a minute later.
-- An event that keeps failing goes to `churn.dlq.alerts` after 10 attempts, as with scoring.
-- The webhook gets `X-ChurnRadar-Batch-Id` (to drop repeats) and, with `ALERTS_WEBHOOK_SECRET`
-  set, `X-ChurnRadar-Signature: sha256=<HMAC of the body>`. The body has a `text` field, so Slack
-  and Mattermost accept it as is.
-- The Telegram token never reaches the logs: httpx logs request URLs and the Bot API URL
-  contains the token, so that logger is muted.
+- The service only reads `scoring.*`. Who moved into high risk is one SQL query; base metrics
+  after each recalculation go to `alerts.metric_snapshots`, and growth over a period is measured
+  against them.
+- An event is checked against every subscriber's thresholds. The personal feed, the email and
+  message queue (`alerts.deliveries`) and the "event processed" mark are written in one
+  transaction, so a repeated event creates no duplicates. A background loop sends with
+  5/15/60/300/900 s retries; after 8 attempts a delivery is marked failed, 4xx answers (except 408
+  and 429) are not retried.
+- Replicas split events through a JetStream durable consumer, checks run under
+  `pg_advisory_xact_lock`, deliveries are claimed with `FOR UPDATE SKIP LOCKED` and a 60 s lease.
+  The daily digest goes out exactly once: the day is claimed with an atomic UPDATE.
+- An event that keeps failing goes to `churn.dlq.alerts` after 10 attempts.
+- The Telegram token never reaches the logs: httpx logs request URLs and the Bot API URL contains
+  the token, so that logger is muted.
 
-To turn the channels on in Compose, set the variables in `.env` and restart the service:
+To turn the channels on in Compose, set the variables in `.env` and restart alerts:
 
 ```bash
-ALERTS_WEBHOOK_URL=https://hooks.example.com/churn
 TELEGRAM_BOT_TOKEN=123456:ABC...   # a bot from @BotFather
-TELEGRAM_CHAT_ID=-1001234567890    # a chat the bot was added to
+SMTP_HOST=smtp.example.com          # defaults to mailpit:1025, the demo inbox
+SMTP_PORT=587
+SMTP_SECURITY=starttls
+SMTP_USERNAME=... SMTP_PASSWORD=...
 ```
 
-In Helm the same goes to `secrets.alerts` (rendered into a separate Secret) or to a ready-made
-Secret via `secrets.alerts.existingSecret`. Outbound HTTPS for alerts is opened by its own
-NetworkPolicy (`networkPolicy.alertsEgress`).
+In Helm the bot token and the SMTP password go to `secrets.alerts` (a separate Secret) or to a
+ready Secret via `secrets.alerts.existingSecret`; the rest goes to `alerts.env` (`SMTP_HOST` and
+so on). Outbound HTTPS and SMTP (587, 465) are opened by a dedicated NetworkPolicy
+(`networkPolicy.alertsEgress`).
 
 ## Risk model
 
@@ -548,8 +569,9 @@ scenario can be replayed on a running stack: `bash scripts/chaos.sh` (or `nats`,
 | `notifier` loses NATS | After reconnecting the panel receives `resync` and reloads everything | notifier Go tests, web test |
 | `ingest` rejects a simulator batch | The simulator reloads its world from the database instead of drifting | simulator tests |
 | A stuck Postgres query | Server-side `statement_timeout` and `idle_in_transaction_session_timeout` | svckit integration test |
-| Webhook or Telegram does not answer | The alert is already in the feed; the delivery waits in `alerts.deliveries` and is retried with backoff; metric `alerts_failed_total`, alert `AlertsDeliveryFailing` | alerts integration tests (webhook answers 503 then recovers; unreachable address) |
-| `scores.updated` delivered to alerts twice | Idempotent by `event_id`: no second feed record and no second webhook call | alerts integration test |
+| Email, Telegram or the webhook does not answer | The notification is already in the panel; the delivery waits in `alerts.deliveries` and is retried with backoff; metric `alerts_failed_total`, alert `AlertsDeliveryFailing` | alerts integration tests (webhook answers 503 then recovers; unreachable address) |
+| `scores.updated` delivered to alerts twice | Idempotent by `event_id`: no second notification, email or journal record | alerts integration test |
+| The alerts replica polling Telegram dies | The advisory lock is released and another replica resumes polling from the same offset | bot integration test (two replicas, leader change) |
 
 Anything stuck shows up in Grafana on the «Outbox: в очереди» panel, and alerts fire:
 `OutboxStuck`, `ScoringLagHigh`, `ScoringStale`, `ServiceDown`, `HighErrorRate`, `AlertsDeliveryFailing`.
@@ -615,7 +637,8 @@ types are generated from it. Main resources:
 | `POST /api/v1/source/events` | a batch of real-time changes |
 | `GET /api/v1/stream` | live updates (SSE) |
 | `GET/PUT /api/v1/simulator` | extended dataset generation and the demo stream |
-| `GET /api/v1/alerts` | alert feed with pagination (alerts service) |
+| `GET/PUT /api/v1/alerts/preferences` | my notification settings; also `POST …/test`, `GET …/notifications`, `POST …/telegram/link`, and `…/preferences/users` for admins |
+| `GET /api/v1/alerts` | journal of critical events (alerts service) |
 
 State-changing requests with a cookie session must carry an `Origin` header from the same site.
 Bus events are described with JSON Schema in [`contracts/events/`](contracts/events/); the "who
@@ -693,9 +716,10 @@ change something, copy it to `.env`.
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | `churn` | database |
 | `COOKIE_SECURE` | `false` | turn on behind HTTPS |
 | `API_REPLICAS`, `SCORING_REPLICAS`, `NOTIFIER_REPLICAS`, `ALERTS_REPLICAS` | `2` | replica counts |
-| `ALERT_LOSS_JUMP_EUR`, `ALERT_TOTAL_LOSS_JUMP_PCT`, `ALERT_COOLDOWN_MIN`, `ALERTS_BULK_THRESHOLD` | `50`, `10`, `60`, `20` | alert thresholds, anti-spam window, folding of mass changes |
-| `ALERTS_WEBHOOK_URL`, `ALERTS_WEBHOOK_SECRET` | empty | alert webhook and its signing key |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | empty | Telegram for alerts; without them the channel is off |
+| `ALERT_COOLDOWN_MIN` | `60` | anti-spam: the same event reaches a user at most once per N minutes; thresholds are set by each user in the panel |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` | `mailpit`, `1025`, `none` | email for notifications; on the demo stack Mailpit catches it (http://localhost:8025) |
+| `ALERTS_WEBHOOK_URL`, `ALERTS_WEBHOOK_SECRET` | empty | journal webhook and its signing key |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | empty | Telegram bot token (no token, no bot) and the team chat for the journal |
 | `SEED_REFERENCE_TIME` | `2026-10-19T15:00:00Z` | the moment the case sample is scored at on first start |
 | `GRAFANA_PORT`, `PROMETHEUS_PORT` | `3000`, `9090` | observability ports |
 | `OIDC_*`, `KEYCLOAK_*` | see `.env.example` | Keycloak login (`oidc` profile) |

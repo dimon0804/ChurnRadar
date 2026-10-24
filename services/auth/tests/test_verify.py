@@ -100,3 +100,15 @@ async def test_probes_and_metrics(client):
     await login(client)
     body = (await client.get("/metrics")).text
     assert 'auth_logins_total{method="password",result="success"}' in body
+
+
+
+async def test_verify_passes_user_email(client):
+    client._transport.app.state.emails.ttl_s = 0  # без кэша, чтобы сразу видеть новую почту
+    await login(client)
+    resp = await client.get("/internal/verify", headers=forwarded())
+    assert resp.headers["x-user-email"] == ""
+    patched = await client.patch("/api/v1/auth/me", json={"email": "admin@example.com"}, headers={"Origin": ORIGIN})
+    assert patched.status_code == 200, patched.text
+    resp = await client.get("/internal/verify", headers=forwarded())
+    assert resp.headers["x-user-email"] == "admin@example.com"

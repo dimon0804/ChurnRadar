@@ -14,7 +14,7 @@ docker compose up -d --wait
 | http://localhost:8080 | панель, API, Swagger (`/api/v1/docs`) | `admin` / `admin` (админ), `analyst` / `analyst` (просмотр) |
 | http://localhost:3000 | Grafana | `admin` / `admin` |
 | http://localhost:9090 | Prometheus | — |
-| http://localhost:8081 | Keycloak (профиль `oidc`) | `admin` / `admin` в консоли |
+| http://localhost:9000 | Authentik (профиль `sso`) | `akadmin` / `authentik` в админке |
 
 Пароли по умолчанию только для демо: перед любым другим запуском задайте свои в `.env`
 (образец — `.env.example`).
@@ -22,13 +22,15 @@ docker compose up -d --wait
 ### Профили и варианты
 
 ```bash
-docker compose --profile oidc up -d --wait     # + Keycloak, кнопка «Войти через SSO»
+docker compose --profile sso up -d --wait      # + Authentik, кнопки входа по OIDC и SAML
 HTTP_PORT=18080 docker compose up -d --wait     # если 8080 занят
 docker compose down -v                          # остановить и стереть данные
 ```
 
-В realm Keycloak заведены пользователи `marketer` / `marketer` (роль analyst) и
-`admin` / `admin` (роль admin). Вход по паролю работает и без Keycloak.
+Blueprint Authentik заводит пользователей `marketer` / `marketer` (группа `churn-analysts`,
+роль analyst), `admin` / `admin` (группа `churn-admins`, роль admin) и `outsider` / `outsider`
+без групп (панель его не пускает). Вход по паролю работает и без Authentik. Первый старт
+Authentik занимает минуту-две, памяти он берёт около 800 МБ на сервер и воркер вместе.
 
 Пока сервисы ядра не влиты в ветку, стенд поднимается с заменителем:
 
@@ -70,6 +72,39 @@ make k8s-down
 Чарт `deploy/helm/churn-radar` подходит и для настоящего кластера: образы берутся из
 `ghcr.io/dimon0804/churn-radar-*`, внешние PostgreSQL/Redis/NATS подключаются через values,
 секреты передаются через `existingSecret`. Все параметры с комментариями в `deploy/helm/churn-radar/values.yaml`.
+
+### SSO в Kubernetes
+
+IdP чарт не ставит: Authentik (или Keycloak, Entra ID, Okta) — отдельная система, обычно она у
+компании уже есть. Для Authentik есть официальный чарт `authentik/authentik`, а blueprint из
+`deploy/authentik/blueprints/` подходит и для него (смонтируйте его в `/blueprints/churn-radar`
+и задайте переменные `CHURN_RADAR_*`, как в `docker-compose.yml`).
+
+Панель подключается блоком `sso`:
+
+```yaml
+sso:
+  existingSecret: churn-radar-sso        # ключ OIDC_CLIENT_SECRET
+  oidc:
+    enabled: true
+    issuer: https://auth.company.ru/application/o/churn-radar/
+    internalIssuer: http://authentik-server.authentik.svc:9000/application/o/churn-radar/  # необязательно
+    scopes: openid profile email churn-radar
+  saml:
+    enabled: true
+    idpMetadataUrl: http://authentik-server.authentik.svc:9000/application/saml/churn-radar-saml/metadata/
+    idpPublicUrl: https://auth.company.ru
+  egress:                                # NetworkPolicy auth -> IdP внутри кластера
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: authentik}
+      ports:
+        - {port: 9000, protocol: TCP}
+```
+
+`auth.env.PUBLIC_URL` должен совпадать с адресом панели: из него собираются redirect URI для
+OIDC, ACS и entityID для SAML. По умолчанию `sso.egress` разрешает HTTPS наружу (кроме
+приватных сетей) — этого хватает для облачного IdP.
 
 ## CI/CD
 

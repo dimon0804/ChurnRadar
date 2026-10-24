@@ -257,6 +257,41 @@
         "securityHeaders": { "type": "boolean" }
       }
     },
+    "sso": {
+      "type": "object",
+      "properties": {
+        "adminGroups": { "type": "string" },
+        "analystGroups": { "type": "string" },
+        "defaultRole": { "type": "string", "enum": ["", "admin", "analyst"] },
+        "existingSecret": { "type": "string" },
+        "oidc": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "displayName": { "type": "string" },
+            "issuer": { "type": "string" },
+            "internalIssuer": { "type": "string" },
+            "clientId": { "type": "string" },
+            "clientSecret": { "type": "string" },
+            "scopes": { "type": "string" }
+          }
+        },
+        "saml": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "displayName": { "type": "string" },
+            "idpMetadataUrl": { "type": "string" },
+            "idpMetadataXml": { "type": "string" },
+            "idpPublicUrl": { "type": "string" },
+            "spEntityId": { "type": "string" },
+            "rolesAttribute": { "type": "string" },
+            "groupsAttribute": { "type": "string" }
+          }
+        },
+        "egress": { "type": "array" }
+      }
+    },
     "networkPolicy": {
       "type": "object",
       "properties": {

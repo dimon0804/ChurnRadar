@@ -24,5 +24,8 @@ data:
   {{- range $k, $v := $app.env }}
   {{ $k }}: {{ $v | quote }}
   {{- end }}
+  {{- if eq $key "auth" }}
+  {{- include "cr.ssoEnv" $ | nindent 2 }}
+  {{- end }}
 {{- end }}
 {{- end }}

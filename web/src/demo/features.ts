@@ -63,7 +63,7 @@ export const FEATURES: Feature[] = [
   {
     id: 'auth',
     title: 'Вход по логину и паролю',
-    detail: 'Роли администратор и аналитик. Вход через Keycloak (OIDC) проверен на стенде, включается профилем oidc.',
+    detail: 'Роли администратор и аналитик. SSO через Authentik по OIDC и SAML, роль из группы; включается профилем sso.',
     target: { kind: 'step', step: 'roles' },
   },
   {

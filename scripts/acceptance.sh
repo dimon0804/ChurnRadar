@@ -16,7 +16,7 @@ cleanup() {
   local code=$?
   if [[ "${KEEP:-0}" != "1" ]]; then
     log "Останавливаю стенд"
-    (cd "$WORKDIR/repo" && docker compose -p "$PROJECT" $COMPOSE_FILES --profile oidc down -v --remove-orphans) >/dev/null 2>&1 || true
+    (cd "$WORKDIR/repo" && docker compose -p "$PROJECT" $COMPOSE_FILES --profile sso down -v --remove-orphans) >/dev/null 2>&1 || true
     rm -rf "$WORKDIR"
   fi
   if [[ $code -eq 0 ]]; then log "Приёмка пройдена"; else log "Приёмка НЕ пройдена (код $code)"; fi

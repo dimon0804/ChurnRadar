@@ -146,11 +146,21 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
       ANALYST_USERNAME: ${ANALYST_USERNAME:-analyst}
       ANALYST_PASSWORD: ${ANALYST_PASSWORD:-analyst}
+      # SSO: кнопки на /login появляются, только когда IdP отвечает (профиль sso поднимает Authentik)
       OIDC_ENABLED: ${OIDC_ENABLED:-true}
-      OIDC_PUBLIC_ISSUER: ${OIDC_PUBLIC_ISSUER:-http://localhost:8081/realms/churn-radar}
-      OIDC_INTERNAL_ISSUER: ${OIDC_INTERNAL_ISSUER:-http://keycloak:8080/realms/churn-radar}
+      OIDC_PUBLIC_ISSUER: ${OIDC_PUBLIC_ISSUER:-http://localhost:9000/application/o/churn-radar/}
+      OIDC_INTERNAL_ISSUER: ${OIDC_INTERNAL_ISSUER:-http://authentik-server:9000/application/o/churn-radar/}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-churn-radar}
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-churn-radar-demo-secret}
+      OIDC_SCOPES: ${OIDC_SCOPES:-openid profile email churn-radar}
+      OIDC_DISPLAY_NAME: ${OIDC_DISPLAY_NAME:-Войти через Authentik (OIDC)}
+      SAML_ENABLED: ${SAML_ENABLED:-true}
+      SAML_IDP_METADATA_URL: ${SAML_IDP_METADATA_URL:-http://authentik-server:9000/application/saml/churn-radar-saml/metadata/}
+      SAML_IDP_PUBLIC_URL: ${SAML_IDP_PUBLIC_URL:-http://localhost:9000}
+      SAML_DISPLAY_NAME: ${SAML_DISPLAY_NAME:-Войти через Authentik (SAML)}
+      SSO_ADMIN_GROUPS: ${SSO_ADMIN_GROUPS:-churn-admins}
+      SSO_ANALYST_GROUPS: ${SSO_ANALYST_GROUPS:-churn-analysts}
+      SSO_DEFAULT_ROLE: ${SSO_DEFAULT_ROLE:-}
     depends_on:
       migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
@@ -403,37 +413,90 @@ services:
       resources:
         limits: {cpus: "0.25", memory: 64M}
 
-  # ---------------------------------------------------------------- OIDC (docker compose --profile oidc up -d)
-  keycloak:
+  # ---------------------------------------------------------------- SSO (docker compose --profile sso up -d)
+  # Authentik — IdP для входа через OIDC и SAML. У него своя маленькая БД, данных панели он не видит.
+  # С версии 2025.10 Authentik обходится без Redis: кэш и очередь задач живут в Postgres.
+  # Группы, пользователи и провайдеры создаёт blueprint deploy/authentik/blueprints/churn-radar.yaml.
+  authentik-postgres:
     <<: *restart
-    profiles: [oidc]
-    image: quay.io/keycloak/keycloak:26.2.4
-    command: ["start-dev", "--import-realm", "--http-port=8080"]
+    profiles: [sso]
+    image: postgres:16-alpine
     environment:
-      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
-      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
-      KC_HOSTNAME: ${OIDC_PUBLIC_BASE:-http://localhost:8081}
-      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
-      KC_HEALTH_ENABLED: "true"
-      KC_HTTP_ENABLED: "true"
-    ports:
-      - "${KEYCLOAK_PORT:-8081}:8080"
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_DB_PASSWORD:-authentik-demo-db}
     volumes:
-      - ./deploy/keycloak/realm.json:/opt/keycloak/data/import/churn-radar-realm.json:ro
+      - authentikdb:/var/lib/postgresql/data
     healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          exec 3<>/dev/tcp/127.0.0.1/9000 &&
-          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
-          grep -q '"UP"' <&3
+      test: ["CMD-SHELL", "pg_isready -U authentik -d authentik"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits: {cpus: "1", memory: 256M}
+
+  authentik-server:
+    <<: *restart
+    profiles: [sso]
+    image: ghcr.io/goauthentik/server:2026.8.5
+    command: server
+    environment: &authentik-env
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:-churn-radar-demo-authentik-secret-key-change-me-0123456789}
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgres
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_DB_PASSWORD:-authentik-demo-db}
+      # учётка akadmin для админки Authentik, создаётся при первом запуске
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_ADMIN_PASSWORD:-authentik}
+      AUTHENTIK_BOOTSTRAP_EMAIL: ${AUTHENTIK_ADMIN_EMAIL:-akadmin@churn-radar.local}
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+      AUTHENTIK_LOG_LEVEL: ${AUTHENTIK_LOG_LEVEL:-warning}
+      AUTHENTIK_WEB__WORKERS: "1"
+      # для blueprint'а: адрес панели, клиент OIDC, пароли демо-пользователей
+      CHURN_RADAR_PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      CHURN_RADAR_OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-churn-radar}
+      CHURN_RADAR_OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-churn-radar-demo-secret}
+      CHURN_RADAR_SSO_ADMIN_PASSWORD: ${SSO_DEMO_ADMIN_PASSWORD:-admin}
+      CHURN_RADAR_SSO_MARKETER_PASSWORD: ${SSO_DEMO_MARKETER_PASSWORD:-marketer}
+      CHURN_RADAR_SSO_OUTSIDER_PASSWORD: ${SSO_DEMO_OUTSIDER_PASSWORD:-outsider}
+    ports:
+      - "${AUTHENTIK_PORT:-9000}:9000"
+    volumes:
+      - ./deploy/authentik/blueprints:/blueprints/churn-radar:ro
+    healthcheck:
+      test: ["CMD", "ak", "healthcheck"]
       interval: 10s
       timeout: 5s
       retries: 30
-      start_period: 30s
+      start_period: 60s
+    depends_on:
+      authentik-postgres: {condition: service_healthy}
     deploy:
       resources:
         limits: {cpus: "2", memory: 1G}
+
+  authentik-worker:
+    <<: *restart
+    profiles: [sso]
+    image: ghcr.io/goauthentik/server:2026.8.5
+    command: worker
+    environment: *authentik-env
+    volumes:
+      - ./deploy/authentik/blueprints:/blueprints/churn-radar:ro
+    healthcheck:
+      test: ["CMD", "ak", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      authentik-postgres: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "1", memory: 1G}
 
 configs:
   metrics_token:
@@ -445,3 +508,4 @@ volumes:
   natsdata:
   promdata:
   grafanadata:
+  authentikdb:

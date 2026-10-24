@@ -1,6 +1,22 @@
-import { Activity, Bell, Database, FileCode2, LayoutDashboard, LogOut, Mail, Megaphone, Moon, ShieldCheck, SlidersHorizontal, Sun, Users } from 'lucide-react'
+import {
+  Activity,
+  Bell,
+  CircleUserRound,
+  Database,
+  FileCode2,
+  LayoutDashboard,
+  LogOut,
+  Mail,
+  Megaphone,
+  Moon,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sun,
+  UserCog,
+  Users,
+} from 'lucide-react'
 import type { ReactNode } from 'react'
-import { NavLink, Outlet } from 'react-router'
+import { Link, NavLink, Outlet } from 'react-router'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
   DropdownMenu,
@@ -38,6 +54,7 @@ const NAV: NavItem[] = [
   { to: '/quality', label: 'Качество модели', icon: <ShieldCheck /> },
   { to: '/mail', label: 'Письма', icon: <Mail /> },
   { to: '/data', label: 'Данные', icon: <Database />, adminOnly: true },
+  { to: '/users', label: 'Пользователи', icon: <UserCog />, adminOnly: true },
 ]
 
 export function Logo({ className }: { className?: string }) {
@@ -116,7 +133,8 @@ function UserMenu() {
   const role = admin ? ROLE_LABEL.admin : ROLE_LABEL.analyst
   const access = admin ? 'полный доступ' : 'только просмотр'
   // «Администратор / Администратор» — когда имя совпадает с ролью; вторая строка — логин и права
-  const caption = `${user.auth_method === 'oidc' ? 'SSO' : user.username} · ${access}`
+  const via = user.auth_method === 'oidc' ? 'SSO' : user.auth_method === 'saml' ? 'SAML' : user.username
+  const caption = `${via} · ${access}`
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -151,6 +169,12 @@ function UserMenu() {
             <Bell />
             Уведомления
           </NavLink>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link to="/profile">
+            <CircleUserRound />
+            Профиль: почта и пароль
+          </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
           <a href={SWAGGER_PATH} target="_blank" rel="noopener noreferrer">

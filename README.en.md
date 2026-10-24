@@ -29,6 +29,7 @@ evaluate the project.
 - [What to look at in the panel](#what-to-look-at-in-the-panel)
 - [How it works](#how-it-works)
 - [Notifications](#notifications)
+- [Users and SSO](#users-and-sso)
 - [Risk model](#risk-model)
 - [Quality check](#quality-check)
 - [Marketing metrics](#marketing-metrics)
@@ -88,10 +89,11 @@ docker compose down        # stop, data is kept
 docker compose down -v     # stop and delete data
 ```
 
-Sign-in through Keycloak (OIDC) runs as a separate profile, see [docs/deploy.md](docs/deploy.md):
+Sign-in through Authentik (SSO over OIDC and SAML) runs as a separate profile, see
+[Users and SSO](#users-and-sso):
 
 ```bash
-docker compose --profile oidc up -d --build --wait     # Keycloak on :8081
+docker compose --profile sso up -d --build --wait      # Authentik on :9000
 ```
 
 ## What to look at in the panel
@@ -227,7 +229,7 @@ flowchart TB
     end
 
     subgraph platform["Platform"]
-        auth["auth<br/>FastAPI: login, sessions, OIDC"]
+        auth["auth<br/>FastAPI: login, sessions, users, OIDC and SAML"]
         web["web<br/>React + nginx"]
         notifier["notifier x2<br/>Go, SSE"]
     end
@@ -251,7 +253,7 @@ flowchart TB
         graf["Grafana"]
     end
 
-    keycloak["Keycloak<br/>oidc profile"]
+    authentik["Authentik<br/>IdP, sso profile"]
 
     browser --> traefik
     traefik -. "session check" .-> auth
@@ -261,7 +263,7 @@ flowchart TB
     traefik --> simulator
     traefik -- "/api/v1/stream" --> notifier
     auth --> redis
-    auth -.-> keycloak
+    auth -. "OIDC, SAML" .-> authentik
     simulator --> ingest
     ingest --> pg
     ingest -- "source.changed" --> nats
@@ -283,8 +285,8 @@ flowchart TB
 Every request goes through Traefik. Before each route except login and the login page assets,
 the gateway asks `auth` (ForwardAuth): the session lives in an httpOnly cookie, and Redis stores
 only the SHA-256 of the token. `auth` returns the user and their roles in headers, and core
-services trust only those. Password login always works; Keycloak login (Authorization Code +
-PKCE) is enabled by the `oidc` profile.
+services trust only those. Password login always works; sign-in through Authentik over OIDC
+(Authorization Code + PKCE) and SAML 2.0 is enabled by the `sso` profile.
 
 How data gets from the source to the screen:
 
@@ -407,6 +409,118 @@ In Helm the bot token and the SMTP password go to `secrets.alerts` (a separate S
 ready Secret via `secrets.alerts.existingSecret`; the rest goes to `alerts.env` (`SMTP_HOST` and
 so on). Outbound HTTPS and SMTP (587, 465) are opened by a dedicated NetworkPolicy
 (`networkPolicy.alertsEgress`).
+
+## Users and SSO
+
+### Panel users
+
+Accounts live in PostgreSQL (`auth` schema). On first start `auth` seeds `admin` / `admin` and
+`analyst` / `analyst` from the environment; after that the administrator manages users on the
+"Пользователи" (Users) page:
+
+- search by login, name and email;
+- create with a password, with a temporary password (shown once, hand it over to the person) or
+  "SSO only": the account waits for the first Authentik sign-in with the same login and gets the
+  role the admin picked;
+- change name, email and role, block and unblock, reset the password, delete;
+- an audit log: who did what and when.
+
+You cannot block, demote or delete yourself, nor the last active administrator. Blocking, a
+role change, a password reset and deletion close all of the user's sessions in Redis right
+away, no need to wait for the session to expire. Every user changes their own email and
+password in the profile (menu in the top right). The email is returned by `/api/v1/auth/me` and
+is used for notifications.
+
+One caveat: the `admin` and `analyst` accounts from the environment are seeded on every start,
+so a deleted seed account comes back. A blocked one stays blocked.
+
+### Sign-in through Authentik (OIDC and SAML)
+
+Authentik is the project's main IdP. It starts with the `sso` profile and configures itself
+without any clicking in its admin UI: the blueprint
+[`deploy/authentik/blueprints/churn-radar.yaml`](deploy/authentik/blueprints/churn-radar.yaml)
+creates groups, demo users, OIDC and SAML providers with applications, and group-to-role
+mappings.
+
+```bash
+docker compose --profile sso up -d --build --wait
+```
+
+The first Authentik start takes a minute or two while it migrates its database. Then
+http://localhost:8080/login shows "Войти через Authentik (OIDC)" and "Войти через Authentik
+(SAML)". The buttons appear only when the IdP is configured and answering right now: without the
+`sso` profile the login page looks as usual.
+
+| Authentik login | Password | Group | Panel role |
+|---|---|---|---|
+| `admin` | `admin` | `churn-admins` | administrator |
+| `marketer` | `marketer` | `churn-analysts` | analyst |
+| `outsider` | `outsider` | none | access denied |
+| `akadmin` | `authentik` | — | Authentik admin UI at http://localhost:9000 |
+
+The passwords are demo values from `.env.example`; change them, together with
+`AUTHENTIK_SECRET_KEY`, for anything beyond a demo.
+
+How it works:
+
+- **OIDC**: Authorization Code + PKCE (S256), one-time `state`, `nonce` is checked. Endpoints
+  come from discovery. The browser talks to the public Authentik address, while `auth` exchanges
+  the code and fetches keys over the internal network. Authentik builds `iss` from the Host
+  header, so internal requests carry the public Host and `iss` matches.
+- **SAML 2.0**: SP-initiated sign-in (HTTP-Redirect), the assertion comes to the ACS via
+  HTTP-POST. SP metadata: `GET /api/v1/auth/saml/metadata`. The signature is checked against the
+  certificate from the IdP metadata (by URL, from a file or straight from a variable). After that
+  `auth` reads only the fragment covered by the signature, requires exactly one assertion in the
+  response and checks Issuer, Audience, Recipient, NotBefore/NotOnOrAfter and InResponseTo. The
+  assertion ID is kept in Redis until it expires, so it cannot be accepted twice. Unsolicited
+  (IdP-initiated) responses and encrypted assertions are not supported, and there is no SLO.
+- **Roles**: from the `roles` claim (OIDC) or the `churn-radar-role` attribute (SAML) filled in by
+  the blueprint, or from groups (`groups` and `http://schemas.xmlsoap.org/claims/Group`).
+  `SSO_ADMIN_GROUPS` and `SSO_ANALYST_GROUPS` decide which group gives which role. No matching
+  group means no access (`SSO_DEFAULT_ROLE` is empty).
+- **Accounts**: an SSO user appears in the panel on first sign-in, and the role follows the
+  groups on every sign-in. If an admin changed the role by hand, it wins over the groups. A user
+  blocked in the panel cannot get in through SSO either, even if Authentik lets them in.
+- After SSO the same session is created as after a password login: cookie, Redis, ForwardAuth.
+
+The SAML signature is verified by [signxml](https://github.com/XML-Security/signxml) (lxml +
+cryptography). python3-saml and pysaml2 pull in native xmlsec1, which needs exactly the same
+libxml2 version as lxml; that breaks builds often and adds packages to the image. The SP logic
+(the checks above) is our own and covered by tests: a valid assertion passes, while a foreign
+key, a change after signing, a wrong Audience, expiry, replay and signature wrapping are rejected.
+
+Keycloak, which used to live in the `oidc` profile, is gone: Authentik covers both OIDC and SAML,
+and two IdPs in a demo is an extra gigabyte of memory. The OIDC client in `auth` works with any
+provider via discovery, so Keycloak can be plugged in with variables (below).
+
+### Your own IdP
+
+Your own Authentik, Keycloak, Entra ID, Okta — anything with OIDC or SAML 2.0:
+
+```bash
+# OIDC
+OIDC_PUBLIC_ISSUER=https://auth.company.com/application/o/churn-radar/
+OIDC_INTERNAL_ISSUER=           # empty means the same address
+OIDC_CLIENT_ID=churn-radar
+OIDC_CLIENT_SECRET=...
+OIDC_SCOPES="openid profile email"
+# redirect URI in the IdP: <PUBLIC_URL>/api/v1/auth/oidc/callback
+
+# SAML
+SAML_IDP_METADATA_URL=https://auth.company.com/application/saml/churn-radar/metadata/
+SAML_IDP_PUBLIC_URL=            # only if metadata is fetched over an internal address
+# in the IdP: ACS = <PUBLIC_URL>/api/v1/auth/saml/acs, Audience/Entity ID = <PUBLIC_URL>/api/v1/auth/saml/metadata,
+# sign the assertion (RSA-SHA256), ACS binding HTTP-POST
+
+# IdP groups -> roles
+SSO_ADMIN_GROUPS=churn-admins
+SSO_ANALYST_GROUPS=churn-analysts
+```
+
+In Kubernetes the same goes into the `sso` block of the Helm chart values: OIDC issuer and
+client, SAML metadata, the client secret via `sso.existingSecret`, egress to the IdP via
+`sso.egress` (NetworkPolicy). The chart does not install Authentik itself: it is a separate
+system that a company usually already runs. See [docs/deploy.md](docs/deploy.md#sso-в-kubernetes).
 
 ## Risk model
 
@@ -571,7 +685,7 @@ and that raising its weight never lowers the risk. Full example with a test:
 | Editable weights that persist | "Модель" (model) page, `PATCH /api/v1/model/settings`; versions and history in PostgreSQL, survive a restart |
 | Auto-refresh without reload | NATS JetStream → `scoring` → `scores.updated` → `notifier` (SSE) → panel |
 | `/metrics` endpoint | `api`, Prometheus format, token-protected; Grafana dashboards in `monitoring/` |
-| Authentication | `services/auth`: password (argon2id), `admin` and `analyst` roles, OIDC via Keycloak |
+| Authentication | `services/auth`: password (argon2id), `admin` and `analyst` roles, SSO through Authentik over OIDC and SAML 2.0, user management in the panel |
 | Compose deployment | [`docker-compose.yml`](docker-compose.yml), one command, no `.env` |
 | API documentation | Swagger UI at `/api/v1/docs`, contract [`contracts/openapi.yaml`](contracts/openapi.yaml) |
 | Model and architecture description | [docs/model.md](docs/model.md), [docs/architecture.md](docs/architecture.md) |
@@ -721,7 +835,7 @@ publishes, who listens" table is in [contracts/README.md](contracts/README.md).
 ```text
 .
 ├── services/
-│   ├── auth/         login, sessions, OIDC, ForwardAuth (Python, FastAPI)
+│   ├── auth/         login, sessions, users, OIDC and SAML, ForwardAuth (Python, FastAPI)
 │   ├── api/          ranking, analytics, model settings, /metrics, Swagger
 │   ├── ingest/       snapshot and change stream intake
 │   ├── scoring/      event-driven risk recalculation
@@ -735,7 +849,7 @@ publishes, who listens" table is in [contracts/README.md](contracts/README.md).
 ├── contracts/        OpenAPI and event schemas
 ├── data/sample/      case sample data and its generator
 ├── db/core/          core database schema
-├── deploy/           Traefik, Keycloak, Helm chart, kind
+├── deploy/           Traefik, Authentik (blueprint), Helm chart, kind
 ├── monitoring/       Prometheus (scraping, alerts) and Grafana (dashboards)
 ├── tests/            e2e (Playwright), load (k6)
 ├── tools/calibration/  model quality check on a synthetic future
@@ -769,10 +883,25 @@ the table by itself, `/metrics` matches the panel, Swagger opens, and an analyst
 the model. The scenario changes the weights and data of the stack, so do not run it against a
 demo someone is looking at.
 
+`users.spec.ts` covers user management: an admin creates an analyst, the analyst signs in, after
+blocking their session is closed and they can no longer sign in, and the account is deleted at
+the end. Sign-in through Authentik is covered by `sso.spec.ts`. It needs the `sso` profile, so
+without the variable it is skipped:
+
+```bash
+docker compose --profile sso up -d --build --wait
+cd tests/e2e && SSO_E2E=1 npx playwright test specs/sso.spec.ts
+```
+
+The `auth` integration tests (migrations up and down, user management, SSO sign-in against real
+Postgres and Redis) are enabled by `AUTH_TEST_DATABASE_URL` and `AUTH_TEST_REDIS_URL`; the
+database must be empty and disposable. CI runs them in a separate job with postgres and redis
+services.
+
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push and PR: ruff,
 eslint and tsc, hadolint, actionlint and promtool, tests of all services, image builds with a
-Trivy scan, `helm lint` with kubeconform, e2e in Compose, and a chart install into kind (on PRs
-and `main`). A `v*` tag publishes the images to GHCR.
+Trivy scan, `helm lint` with kubeconform, e2e in Compose, e2e of the Authentik sign-in with the
+`sso` profile, and a chart install into kind (the last two on PRs and `main`). A `v*` tag publishes the images to GHCR.
 
 ## Configuration
 
@@ -794,7 +923,8 @@ change something, copy it to `.env`.
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | empty | Telegram bot token (no token, no bot) and the team chat for the journal |
 | `SEED_REFERENCE_TIME` | `2026-10-19T15:00:00Z` | the moment the case sample is scored at on first start |
 | `GRAFANA_PORT`, `PROMETHEUS_PORT` | `3000`, `9090` | observability ports |
-| `OIDC_*`, `KEYCLOAK_*` | see `.env.example` | Keycloak login (`oidc` profile) |
+| `OIDC_*`, `SAML_*`, `SSO_*` | see `.env.example` | sign-in through an IdP over OIDC and SAML, groups for roles |
+| `AUTHENTIK_*`, `SSO_DEMO_*` | see `.env.example` | Authentik in the `sso` profile and its demo users' passwords |
 
 Default passwords and tokens are for the demo only. Set your own for any other deployment.
 
@@ -807,8 +937,14 @@ Default passwords and tokens are for the demo only. Set your own for any other d
   login pair.
 - CSRF: the cookie is `SameSite=Lax`, and for state-changing requests the gateway requires an
   `Origin` from the same site.
-- Roles: `admin` changes the model, uploads data and controls the simulator; `analyst` can only
-  view. Permissions are checked both at the gateway and in the service.
+- Roles: `admin` changes the model, uploads data, controls the simulator and manages users;
+  `analyst` can only view. Permissions are checked both at the gateway and in the service.
+  Blocking, a role change or a password reset closes all of the user's sessions at once, and
+  admin actions are written to an audit log.
+- SSO: the SAML assertion signature is checked against the certificate from the IdP metadata,
+  and only the signed fragment is read afterwards (protection against signature wrapping), plus
+  Audience, validity window, InResponseTo and assertion replay. OIDC checks the `id_token`
+  signature, `iss`, `aud`, `nonce` and PKCE.
 - Application containers run as non-root, with a read-only root filesystem, `cap_drop: ALL`,
   `no-new-privileges` and CPU and memory limits.
 - `/metrics` is protected by its own token; Grafana and Prometheus listen on localhost only.

@@ -36,6 +36,13 @@ render alerts-channels --set secrets.alerts.webhookUrl=https://hooks.example/chu
   --set secrets.alerts.telegramBotToken=123:abc --set secrets.alerts.telegramChatId=-100123 | validate
 render alerts-existing --set secrets.alerts.existingSecret=churn-alerts-channels | validate
 render alerts-off --set alerts.enabled=false | validate
+# внешний IdP: OIDC с секретом из чарта и SAML по URL метаданных; затем готовый Secret
+render sso --set sso.oidc.enabled=true --set sso.oidc.issuer=https://auth.example.com/application/o/churn-radar/ \
+  --set sso.oidc.internalIssuer=http://authentik.idp.svc:9000/application/o/churn-radar/ \
+  --set sso.oidc.clientSecret=demo-secret --set sso.saml.enabled=true \
+  --set sso.saml.idpMetadataUrl=https://auth.example.com/application/saml/churn-radar-saml/metadata/ | validate
+render sso-existing --set sso.oidc.enabled=true --set sso.oidc.issuer=https://idp.example/realms/x \
+  --set sso.existingSecret=churn-sso | validate
 # повторная установка (upgrade) рендерит миграции как pre-upgrade хук
 render upgrade --is-upgrade | validate
 # бэкап во внешнюю БД с готовым PVC, PriorityClass для всех подов
@@ -44,7 +51,7 @@ render backup-external --set backup.enabled=true --set backup.persistence.existi
   --set postgresql.enabled=false --set postgresql.external.url=postgresql://u:p@db.example:5432/churn | validate
 
 # values.schema.json должна отклонять заведомо неверные значения
-for bad in "ingest.strategy.type=BlueGreen" "backup.retention=0" "redis.maxmemoryPolicy=lru"; do
+for bad in "ingest.strategy.type=BlueGreen" "backup.retention=0" "redis.maxmemoryPolicy=lru" "sso.defaultRole=root"; do
   if "$helm_bin" lint "$chart" --set "$bad" >/dev/null 2>&1; then
     echo "schema пропустила неверное значение: $bad" >&2
     exit 1

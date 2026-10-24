@@ -30,7 +30,13 @@ import type {
   SnapshotAccepted,
   SourceSnapshot,
   Summary,
+  AuditList,
+  ManagedUser,
   User,
+  UserCreate,
+  UserCreated,
+  UserList,
+  UserUpdate,
 } from './types'
 
 export const api = {
@@ -39,6 +45,23 @@ export const api = {
   login: (body: LoginRequest) =>
     request<User>('/api/v1/auth/login', { method: 'POST', body, allowUnauthorized: true }),
   logout: () => request<void>('/api/v1/auth/logout', { method: 'POST', allowUnauthorized: true }),
+  updateProfile: (body: { email: string | null }) =>
+    request<User>('/api/v1/auth/me', { method: 'PATCH', body }),
+  changePassword: (body: { current_password: string; new_password: string }) =>
+    request<void>('/api/v1/auth/me/password', { method: 'POST', body }),
+
+  users: (q: string, signal?: AbortSignal) => request<UserList>('/api/v1/auth/users', { query: { q }, signal }),
+  createUser: (body: UserCreate) => request<UserCreated>('/api/v1/auth/users', { method: 'POST', body }),
+  updateUser: (id: string, body: UserUpdate) =>
+    request<{ user: ManagedUser }>(`/api/v1/auth/users/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
+  resetUserPassword: (id: string, password: string | null) =>
+    request<{ temporary_password: string } | undefined>(`/api/v1/auth/users/${encodeURIComponent(id)}/password`, {
+      method: 'POST',
+      body: { password },
+    }),
+  deleteUser: (id: string) => request<void>(`/api/v1/auth/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  userAudit: (limit = 50, signal?: AbortSignal) =>
+    request<AuditList>('/api/v1/auth/audit', { query: { limit }, signal }),
 
   customers: (query: Record<string, string | number | undefined>, signal?: AbortSignal) =>
     request<CustomerPage>('/api/v1/customers', { query, signal }),
@@ -120,4 +143,7 @@ export const queryKeys = {
   modelQuality: ['model-quality'] as const,
   settingsPreview: (patch: ModelSettingsPatch) => ['settings-preview', patch] as const,
   simulator: ['simulator'] as const,
+  users: ['users'] as const,
+  userList: (q: string) => ['users', 'list', q] as const,
+  userAudit: ['users', 'audit'] as const,
 }

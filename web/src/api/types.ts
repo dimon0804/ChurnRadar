@@ -64,6 +64,13 @@ export type AuthProviders =
   operations['authProviders']['responses']['200']['content']['application/json']
 export type SettingsHistory =
   operations['modelSettingsHistory']['responses']['200']['content']['application/json']
-export type CustomersQuery = NonNullable<operations['listCustomers']['parameters']['query']>
+export type ManagedUser = Schemas['ManagedUser']
+export type UserCreate = Schemas['UserCreate']
+export type UserUpdate = Schemas['UserUpdate']
+export type AuditEntry = Schemas['AuditEntry']
+export type UserList = operations['listUsers']['responses']['200']['content']['application/json']
+export type UserCreated = operations['createUser']['responses']['201']['content']['application/json']
+export type AuditList = operations['userAudit']['responses']['200']['content']['application/json']
+export type CustomersQuery =NonNullable<operations['listCustomers']['parameters']['query']>
 export type CustomerSort = NonNullable<CustomersQuery['sort']>
 export type SortOrder = NonNullable<CustomersQuery['order']>

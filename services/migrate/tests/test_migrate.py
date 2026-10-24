@@ -55,13 +55,13 @@ async def test_apply_idempotent_and_concurrent(fresh_db, tmp_path):
     dirs = [str(REPO_ROOT / "db" / "core"), str(tmp_path / "auth-missing")]
     results = await asyncio.gather(*(migrate.run(fresh_db, dirs, 10) for _ in range(3)))
     applied = sorted(name for r in results for name in r)
-    assert applied == ["core/001_core.sql"]  # применена ровно один раз
+    assert applied == ["core/001_core.sql", "core/002_outbox.sql"]  # применена ровно один раз
     assert await migrate.run(fresh_db, dirs, 10) == []
 
     conn = await asyncpg.connect(fresh_db)
     try:
         rows = await conn.fetch("SELECT name, checksum FROM public.schema_migrations")
-        assert [r["name"] for r in rows] == ["core/001_core.sql"]
+        assert [r["name"] for r in rows] == ["core/001_core.sql", "core/002_outbox.sql"]
         assert len(rows[0]["checksum"]) == 64
         assert await conn.fetchval("SELECT count(*) FROM source.clock") == 1
     finally:

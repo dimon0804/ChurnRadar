@@ -21,6 +21,18 @@ async def _init_json_codec(conn: asyncpg.Connection) -> None:
         await conn.set_type_codec(typ, encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
 
 
+def session_settings(
+    statement_timeout_ms: int | None, idle_in_transaction_timeout_ms: int | None
+) -> dict[str, str]:
+    """server_settings для asyncpg: таймауты в миллисекундах строками."""
+    out: dict[str, str] = {}
+    if statement_timeout_ms is not None:
+        out["statement_timeout"] = str(int(statement_timeout_ms))
+    if idle_in_transaction_timeout_ms is not None:
+        out["idle_in_transaction_session_timeout"] = str(int(idle_in_transaction_timeout_ms))
+    return out
+
+
 async def create_pool(
     dsn: str,
     min_size: int = 1,
@@ -29,12 +41,18 @@ async def create_pool(
     timeout_s: float = 60.0,
     command_timeout: float = 60.0,
     json_codec: bool = True,
+    statement_timeout_ms: int | None = 60_000,
+    idle_in_transaction_timeout_ms: int | None = 60_000,
 ) -> asyncpg.Pool:
     """Пул с повторами подключения в течение timeout_s (0 — без повторов).
 
     json_codec=True — json/jsonb отдаются и принимаются как объекты Python; без него —
     строками (так работает scoring, который сам сериализует jsonb).
+
+    statement_timeout_ms и idle_in_transaction_timeout_ms ставятся на сессию: зависший запрос
+    или забытая транзакция не держат блокировки вечно. None — оставить как на сервере, 0 — без лимита.
     """
+    server_settings = session_settings(statement_timeout_ms, idle_in_transaction_timeout_ms)
     deadline = time.monotonic() + timeout_s
     delay = 0.5
     while True:
@@ -45,6 +63,7 @@ async def create_pool(
                 max_size=max_size,
                 init=_init_json_codec if json_codec else None,
                 command_timeout=command_timeout,
+                server_settings=server_settings or None,
             )
         except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError) as exc:
             if time.monotonic() >= deadline:

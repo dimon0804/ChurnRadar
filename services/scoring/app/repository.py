@@ -109,7 +109,10 @@ _SERVICES_SQL = (
     "SELECT id, name, owner_id, payment_term, auto_prolong, created_at, expires_at, status, price "
     "FROM source.services"
 )
-_TX_SQL = "SELECT t.id, t.service_id, t.amount, t.status, t.type, t.created_at, t.performed_at FROM source.transactions t"
+_TX_SQL = (
+    "SELECT t.id, t.service_id, t.amount, t.status, t.type, t.created_at, t.performed_at "
+    "FROM source.transactions t"
+)
 
 
 def _accounts(rows: Iterable[Sequence[Any]]) -> list[Account]:

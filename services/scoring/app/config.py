@@ -32,6 +32,7 @@ class Config:
     incremental_max_accounts: int
     stream_name: str
     durable_name: str
+    # 3 keepalive по 20 с: сообщения убитой реплики другая получит через минуту, а не через 5 минут
     ack_wait_s: float
     cache_results: bool
     advisory_lock_key: int
@@ -66,7 +67,7 @@ class Config:
             incremental_max_accounts=int(os.getenv("INCREMENTAL_MAX_ACCOUNTS", "5000")),
             stream_name=os.getenv("NATS_STREAM", "CHURN"),
             durable_name=os.getenv("NATS_DURABLE", "scoring"),
-            ack_wait_s=float(os.getenv("ACK_WAIT_S", "300")),
+            ack_wait_s=float(os.getenv("ACK_WAIT_S", "60")),
             cache_results=_env_bool("CACHE_RESULTS", True),
             advisory_lock_key=int(os.getenv("ADVISORY_LOCK_KEY", "7340001")),
             chunk_size=int(os.getenv("RESCORE_CHUNK_SIZE", "5000")),

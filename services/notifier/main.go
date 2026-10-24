@@ -220,8 +220,10 @@ func (s *server) connectNATS() (*nats.Conn, error) {
 		nats.RetryOnFailedConnect(true),
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(2*time.Second),
-		nats.ConnectHandler(func(*nats.Conn) { s.setReady(true) }),
-		nats.ReconnectHandler(func(*nats.Conn) { s.setReady(true); s.log.Info("nats reconnected") }),
+		// with RetryOnFailedConnect the first connect may happen after clients are
+		// already streaming, so it is treated like a reconnect
+		nats.ConnectHandler(func(*nats.Conn) { s.natsUp("nats_connected") }),
+		nats.ReconnectHandler(func(*nats.Conn) { s.natsUp("nats_reconnected") }),
 		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
 			s.setReady(false)
 			s.log.Warn("nats disconnected", "error", fmt.Sprint(err))
@@ -242,6 +244,15 @@ func (s *server) connectNATS() (*nats.Conn, error) {
 		}
 	}
 	return nc, nil
+}
+
+// natsUp runs once the connection is (re)established. A core subscription does not
+// redeliver what was published during the outage, so every client is told to resync.
+// nats.go resubscribes before calling the handler, so nothing after this point is lost.
+func (s *server) natsUp(reason string) {
+	s.setReady(true)
+	s.hub.Resync(reason)
+	s.log.Info("nats up, clients resynced", "reason", reason, "clients", s.hub.Clients())
 }
 
 func (s *server) setReady(v bool) {

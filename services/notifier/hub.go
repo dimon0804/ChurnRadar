@@ -4,7 +4,12 @@ import (
 	"sync"
 )
 
-// Event is one SSE message ready to be written to clients.
+// ResyncEvent is the SSE event name telling clients to refetch everything: the stream
+// lost events (NATS outage) or the replica cannot replay from their Last-Event-ID.
+const ResyncEvent = "resync"
+
+// Event is one SSE message ready to be written to clients. Events without an ID are
+// service messages: they are neither stored in the ring nor deduplicated.
 type Event struct {
 	ID   string
 	Name string
@@ -38,9 +43,14 @@ func NewHub(ringSize, clientBuf int) *Hub {
 	}
 }
 
+func resyncEvent(reason string) Event {
+	return Event{Name: ResyncEvent, Data: []byte(`{"reason":"` + reason + `"}`)}
+}
+
 // Subscribe registers a client and returns the events it missed after lastID.
-// When lastID is unknown to this replica nothing is replayed; the client is expected
-// to refetch its data after reconnecting anyway.
+// When lastID is unknown to this replica (evicted from the ring, another replica,
+// or lost in a NATS outage) nothing can be replayed, so the backlog is a single
+// resync event and the client refetches its data.
 func (h *Hub) Subscribe(lastID string) (*client, []Event) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -48,16 +58,15 @@ func (h *Hub) Subscribe(lastID string) (*client, []Event) {
 	h.clients[c] = struct{}{}
 	h.onConnected(len(h.clients))
 
-	var backlog []Event
-	if lastID != "" {
-		for i := len(h.ring) - 1; i >= 0; i-- {
-			if h.ring[i].ID == lastID {
-				backlog = append(backlog, h.ring[i+1:]...)
-				break
-			}
+	if lastID == "" {
+		return c, nil
+	}
+	for i := len(h.ring) - 1; i >= 0; i-- {
+		if h.ring[i].ID == lastID {
+			return c, append([]Event(nil), h.ring[i+1:]...)
 		}
 	}
-	return c, backlog
+	return c, []Event{resyncEvent("unknown_last_event_id")}
 }
 
 func (h *Hub) Unsubscribe(c *client) {
@@ -104,6 +113,26 @@ func (h *Hub) Publish(ev Event) bool {
 		}
 	}
 	return true
+}
+
+// Resync tells every client to refetch its data. The ring is cleared first: events
+// published while the bus was unreachable are lost, so replaying from any older
+// Last-Event-ID would silently skip them.
+func (h *Hub) Resync(reason string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.ring = nil
+	ev := resyncEvent(reason)
+	for c := range h.clients {
+		select {
+		case c.ch <- ev:
+		default:
+			// a full buffer means the client is behind anyway; it reconnects with
+			// an ID that is no longer in the ring and gets resync on Subscribe
+			h.removeLocked(c)
+			h.onDropped()
+		}
+	}
 }
 
 // CloseAll disconnects every client, used on graceful shutdown so browsers move to

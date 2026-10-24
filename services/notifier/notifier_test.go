@@ -54,9 +54,77 @@ func TestReplayAfterLastEventID(t *testing.T) {
 	if len(backlog) != 2 || backlog[0].ID != "4" || backlog[1].ID != "5" {
 		t.Fatalf("unexpected backlog %+v", backlog)
 	}
-	_, none := h.Subscribe("1") // evicted from ring
-	if len(none) != 0 {
-		t.Fatalf("evicted id must replay nothing, got %d", len(none))
+	_, latest := h.Subscribe("5")
+	if len(latest) != 0 {
+		t.Fatalf("up-to-date client needs no backlog, got %+v", latest)
+	}
+	_, fresh := h.Subscribe("")
+	if len(fresh) != 0 {
+		t.Fatalf("new client needs no backlog, got %+v", fresh)
+	}
+}
+
+func TestUnknownLastEventIDGetsResync(t *testing.T) {
+	h := NewHub(3, 4)
+	for i := 1; i <= 5; i++ {
+		h.Publish(ev(fmt.Sprint(i)))
+	}
+	for _, id := range []string{"1", "foreign"} { // evicted from ring / never seen
+		_, backlog := h.Subscribe(id)
+		if len(backlog) != 1 || backlog[0].Name != ResyncEvent || backlog[0].ID != "" {
+			t.Fatalf("id %q: expected a single resync, got %+v", id, backlog)
+		}
+	}
+	empty := NewHub(3, 4) // replica restarted, ring is empty
+	if _, backlog := empty.Subscribe("5"); len(backlog) != 1 || backlog[0].Name != ResyncEvent {
+		t.Fatalf("empty ring: expected resync, got %+v", backlog)
+	}
+}
+
+func TestResyncBroadcastsAndClearsRing(t *testing.T) {
+	h := NewHub(10, 1)
+	dropped := 0
+	h.onDropped = func() { dropped++ }
+	h.Publish(ev("1"))
+	a, _ := h.Subscribe("")
+	full, _ := h.Subscribe("")
+	full.ch <- ev("stuck") // buffer of one is now full
+
+	h.Resync("nats_reconnected")
+
+	got := <-a.ch
+	if got.Name != ResyncEvent || got.ID != "" || string(got.Data) != `{"reason":"nats_reconnected"}` {
+		t.Fatalf("unexpected %+v", got)
+	}
+	if dropped != 1 || h.Clients() != 1 {
+		t.Fatalf("client with full buffer must be dropped: dropped=%d clients=%d", dropped, h.Clients())
+	}
+	// events before the outage must not be replayed: there may be a gap after them
+	if _, backlog := h.Subscribe("1"); len(backlog) != 1 || backlog[0].Name != ResyncEvent {
+		t.Fatalf("pre-outage id must get resync, got %+v", backlog)
+	}
+	// dedup still works for new events
+	if !h.Publish(ev("2")) || h.Publish(ev("2")) {
+		t.Fatal("dedup after resync broken")
+	}
+}
+
+func TestNatsUpResyncsClients(t *testing.T) {
+	s, ts := newTestServer()
+	defer ts.Close()
+	s.ready.Store(false)
+	c, _ := s.hub.Subscribe("")
+	s.natsUp("nats_reconnected")
+	if !s.ready.Load() {
+		t.Fatal("must be ready after reconnect")
+	}
+	select {
+	case got := <-c.ch:
+		if got.Name != ResyncEvent {
+			t.Fatalf("unexpected %+v", got)
+		}
+	default:
+		t.Fatal("resync not delivered")
 	}
 }
 
@@ -143,12 +211,18 @@ func TestStreamDeliversEventsAndPings(t *testing.T) {
 		s.hub.Publish(ev("new"))
 	}()
 
-	var sawEvent, sawPing bool
+	var sawResync, sawEvent, sawPing bool
 	sc := bufio.NewScanner(resp.Body)
-	for sc.Scan() && !(sawEvent && sawPing) {
+	for sc.Scan() && !(sawResync && sawEvent && sawPing) {
 		line := sc.Text()
 		if line == "id: old" {
 			t.Fatal("unknown Last-Event-ID must not replay")
+		}
+		if line == "event: resync" {
+			if sawEvent {
+				t.Fatal("resync must come before live events")
+			}
+			sawResync = true
 		}
 		if line == "id: new" {
 			sawEvent = true
@@ -157,8 +231,8 @@ func TestStreamDeliversEventsAndPings(t *testing.T) {
 			sawPing = true
 		}
 	}
-	if !sawEvent || !sawPing {
-		t.Fatalf("event=%v ping=%v", sawEvent, sawPing)
+	if !sawResync || !sawEvent || !sawPing {
+		t.Fatalf("resync=%v event=%v ping=%v", sawResync, sawEvent, sawPing)
 	}
 }
 

@@ -365,7 +365,7 @@ and that raising its weight never lowers the risk. Full example with a test:
 | Web panel with customer ranking, sorting and filters | `web/`, "Клиенты" (customers) page |
 | Risk reason in plain words | `reasons[]` on the customer card; the text comes from the feature itself (`libs/riskcore/riskcore/features/`) |
 | Money estimate | `expected_loss`, `exposure`, monthly revenue, summary and KPIs on the overview ([docs/model.md](docs/model.md#деньги)) |
-| Editable weights that persist | "Модель" (model) page, `PUT /api/v1/model/settings`; versions and history in PostgreSQL, survive a restart |
+| Editable weights that persist | "Модель" (model) page, `PATCH /api/v1/model/settings`; versions and history in PostgreSQL, survive a restart |
 | Auto-refresh without reload | NATS JetStream → `scoring` → `scores.updated` → `notifier` (SSE) → panel |
 | `/metrics` endpoint | `api`, Prometheus format, token-protected; Grafana dashboards in `monitoring/` |
 | Authentication | `services/auth`: password (argon2id), `admin` and `analyst` roles, OIDC via Keycloak |
@@ -389,11 +389,20 @@ curl -H "Authorization: Bearer churn-metrics-demo-token" http://localhost:8080/m
 | `churn_customers_total` | total customers |
 | `churn_expected_loss_eur` | expected loss over the horizon, euros |
 | `churn_exposure_eur` | horizon revenue of medium and high risk services |
-| `churn_revenue_at_risk_share` | share of horizon revenue we expect to lose |
+| `churn_revenue_at_risk_share`, `churn_revenue_at_risk_ratio` | share of horizon revenue we expect to lose (the same number, the second name follows the Prometheus convention) |
+| `churn_risk_score_avg`, `churn_risk_score_max` | average and highest risk score of scored customers |
+| `churn_risk_score_bucket{le}`, `churn_risk_score_customers` | risk score distribution: customers with a score up to `le` (10, 20, …, 100, `+Inf`) and how many customers are scored |
 | `churn_monthly_revenue_eur` | monthly revenue from active services |
 | `churn_services_at_risk`, `churn_services_total` | services at risk and all active services |
 | `churn_model_version` | model settings version used in the last calculation |
 | `churn_last_scored_timestamp_seconds` | time of the last recalculation |
+
+All business metrics come from the same summary as `GET /api/v1/analytics/summary`, so they
+match the panel: money matches `expected_loss` and `exposure`, risk score matches `risk_scores`.
+The score distribution is a snapshot of the last recalculation, so it is a gauge with an `le`
+label rather than a histogram: a bucket can shrink after a recalculation, while a Prometheus
+histogram is made of counters that only grow. `histogram_quantile(0.5, churn_risk_score_bucket)`
+still works and gives the median.
 
 Every service also exposes its own metrics (`scoring_runs_total`, `scoring_duration_seconds`,
 `notifier_connected_clients`, `auth_logins_total` and others), and Prometheus scrapes them
@@ -442,7 +451,7 @@ types are generated from it. Main resources:
 | `GET /api/v1/customers` | ranking with sorting, level filter, search and pagination |
 | `GET /api/v1/customers/{id}` | card: reasons, score breakdown, money, recommendations, services |
 | `GET /api/v1/analytics/summary` | base summary, actual and forecast chart, top reasons |
-| `GET/PUT /api/v1/model/settings` | weights, thresholds and horizon; `reset` and `history` next to it |
+| `GET/PATCH /api/v1/model/settings` | weights, thresholds and horizon (PATCH changes only the fields you send); next to it `POST …/reset` and `GET …/history` |
 | `PUT /api/v1/source/snapshot` | upload a snapshot in the `data.json` format, gzip allowed |
 | `POST /api/v1/source/events` | a batch of real-time changes |
 | `GET /api/v1/stream` | live updates (SSE) |

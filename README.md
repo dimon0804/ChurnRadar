@@ -354,7 +354,7 @@ class NewCustomer(AccountFeature):
 | Веб-панель с рейтингом клиентов, сортировкой и фильтрами | `web/`, страница «Клиенты» |
 | Причина риска простыми словами | `reasons[]` в карточке клиента, текст формирует сам признак (`libs/riskcore/riskcore/features/`) |
 | Денежная оценка | `expected_loss`, `exposure`, выручка в месяц, сводка и KPI на обзоре ([docs/model.md](docs/model.md#деньги)) |
-| Редактируемые коэффициенты с сохранением | страница «Модель», `PUT /api/v1/model/settings`; версии и история в PostgreSQL, переживают рестарт |
+| Редактируемые коэффициенты с сохранением | страница «Модель», `PATCH /api/v1/model/settings`; версии и история в PostgreSQL, переживают рестарт |
 | Автообновление без перезагрузки | NATS JetStream → `scoring` → `scores.updated` → `notifier` (SSE) → панель |
 | Эндпоинт `/metrics` | `api`, формат Prometheus, закрыт токеном; дашборды Grafana в `monitoring/` |
 | Аутентификация | `services/auth`: пароль (argon2id), роли `admin` и `analyst`, OIDC через Keycloak |
@@ -377,11 +377,20 @@ curl -H "Authorization: Bearer churn-metrics-demo-token" http://localhost:8080/m
 | `churn_customers_total` | клиентов всего |
 | `churn_expected_loss_eur` | ожидаемая потеря за горизонт, евро |
 | `churn_exposure_eur` | выручка услуг среднего и высокого риска за горизонт |
-| `churn_revenue_at_risk_share` | доля выручки горизонта, которую ожидаем потерять |
+| `churn_revenue_at_risk_share`, `churn_revenue_at_risk_ratio` | доля выручки горизонта, которую ожидаем потерять (одно и то же число, второе имя по соглашению Prometheus) |
+| `churn_risk_score_avg`, `churn_risk_score_max` | средний и наибольший risk-score оценённых клиентов |
+| `churn_risk_score_bucket{le}`, `churn_risk_score_customers` | распределение risk-score: клиентов со score не выше `le` (10, 20, …, 100, `+Inf`) и сколько клиентов оценено |
 | `churn_monthly_revenue_eur` | месячная выручка с действующих услуг |
 | `churn_services_at_risk`, `churn_services_total` | услуги под риском и все действующие |
 | `churn_model_version` | версия настроек модели последнего расчёта |
 | `churn_last_scored_timestamp_seconds` | время последнего пересчёта |
+
+Все бизнес-метрики берутся из той же сводки, что `GET /api/v1/analytics/summary`, поэтому
+совпадают с панелью: деньги — с `expected_loss` и `exposure`, risk-score — с `risk_scores`.
+Распределение score — снимок последнего пересчёта, поэтому это gauge с меткой `le`, а не
+histogram: число клиентов в корзине после пересчёта может уменьшиться, а histogram в Prometheus
+состоит из растущих счётчиков. `histogram_quantile(0.5, churn_risk_score_bucket)` при этом
+работает и даёт медиану.
 
 Свои метрики есть у каждого сервиса (`scoring_runs_total`, `scoring_duration_seconds`,
 `notifier_connected_clients`, `auth_logins_total` и другие), Prometheus собирает их вместе
@@ -429,7 +438,7 @@ Swagger UI открывается по адресу http://localhost:8080/api/v1
 | `GET /api/v1/customers` | рейтинг с сортировкой, фильтром по уровню, поиском и пагинацией |
 | `GET /api/v1/customers/{id}` | карточка: причины, разложение score, деньги, рекомендации, услуги |
 | `GET /api/v1/analytics/summary` | сводка по базе, график факта и прогноза, главные причины |
-| `GET/PUT /api/v1/model/settings` | коэффициенты, пороги и горизонт; `reset` и `history` рядом |
+| `GET/PATCH /api/v1/model/settings` | коэффициенты, пороги и горизонт (PATCH меняет только переданные поля); рядом `POST …/reset` и `GET …/history` |
 | `PUT /api/v1/source/snapshot` | загрузить снимок в формате `data.json`, можно gzip |
 | `POST /api/v1/source/events` | пакет изменений в реальном времени |
 | `GET /api/v1/stream` | живые обновления (SSE) |

@@ -238,6 +238,53 @@ async def test_summary_empty_then_filled(client):
     assert "churn_revenue_at_risk_ratio 0.5" in metrics.text
 
 
+async def test_marketing_flow(client):
+    """Метрики считает настоящий riskcore по данным кейса, маржа и CAC живут в Postgres."""
+    import riskcore
+
+    sample = json.loads((REPO_ROOT / "data" / "sample" / "data.json").read_text(encoding="utf-8"))
+    accounts, services, transactions = riskcore.parse_snapshot(sample)
+    settings_ = riskcore.default_settings()
+    results = riskcore.score_customers(accounts, services, transactions, settings_, SCORED_AT)
+    data = riskcore.build_summary(results, services, [], settings_, SCORED_AT)
+    data["marketing"] = base = riskcore.build_marketing(results, [], 30, SCORED_AT)
+    conn = await asyncpg.connect(DB_URL)
+    await conn.execute("INSERT INTO scoring.summary (id, data, model_version, scored_at) VALUES (1, $1::jsonb, 4, $2)",
+                       json.dumps(data), SCORED_AT)
+    await conn.close()
+
+    page = (await client.get("/api/v1/analytics/marketing", headers=ANALYST)).json()
+    assert page["mrr"] == base["mrr"] == data["monthly_revenue_total"]
+    assert page["ltv"] == base["ltv"]
+    assert page["unit_economics"]["ltv_cac"] is None
+    assert page["settings"] == {"margin": 1.0, "cac": None, "updated_at": None, "updated_by": None}
+    assert "marketing" not in (await client.get("/api/v1/analytics/summary", headers=ANALYST)).json()
+
+    denied = await client.put("/api/v1/analytics/marketing/settings", json={"margin": 0.5}, headers=ANALYST)
+    assert denied.status_code == 403
+    saved = await client.put(
+        "/api/v1/analytics/marketing/settings", json={"margin": 0.5, "cac": 3_000}, headers=ADMIN
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["margin"] == 0.5 and saved.json()["cac"] == 3_000
+    assert saved.json()["updated_by"] == "admin"
+
+    page = (await client.get("/api/v1/analytics/marketing", headers=ANALYST)).json()
+    assert page["ltv"] == round(base["ltv"] * 0.5)
+    assert page["unit_economics"]["ltv_cac"] == pytest.approx(page["ltv"] / 3_000)
+    assert page["unit_economics"]["payback_months"] == pytest.approx(3_000 / (base["arpu"] * 0.5))
+
+    metrics = (await client.get("/metrics", headers={"Authorization": "Bearer churn-metrics-token"})).text
+    assert f"churn_mrr_eur {page['mrr'] / 100}" in metrics
+    assert f"churn_ltv_eur {page['ltv'] / 100}" in metrics
+    assert f"churn_customer_churn_rate {page['churn']['customer_monthly']}" in metrics
+
+    # CAC можно сбросить, маржа сохраняется
+    cleared = await client.put("/api/v1/analytics/marketing/settings", json={"margin": 0.5, "cac": None}, headers=ADMIN)
+    assert cleared.json()["cac"] is None
+    assert (await client.get("/api/v1/analytics/marketing/settings", headers=ANALYST)).json()["margin"] == 0.5
+
+
 async def test_settings_flow(client):
     first = await client.get("/api/v1/model/settings", headers=ANALYST)
     assert first.status_code == 200

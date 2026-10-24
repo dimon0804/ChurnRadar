@@ -49,6 +49,20 @@ risk_score_bucket = Gauge(
     ["le"],
     registry=registry,
 )
+# Маркетинговые метрики — те же числа, что на странице «Маркетинг» (/analytics/marketing):
+# LTV уже с маржой из настроек, отток — прогноз модели, пересчитанный на 30 дней.
+mrr_eur = Gauge("churn_mrr_eur", "MRR: месячная регулярная выручка действующих услуг, евро", registry=registry)
+arpu_eur = Gauge("churn_arpu_eur", "ARPU: MRR на одного активного клиента, евро", registry=registry)
+ltv_eur = Gauge(
+    "churn_ltv_eur", "LTV среднего клиента: ARPU × маржа / месячный отток клиентов, евро", registry=registry
+)
+customer_churn_rate = Gauge(
+    "churn_customer_churn_rate", "Прогнозный отток клиентов за 30 дней, доля 0..1", registry=registry
+)
+revenue_churn_rate = Gauge(
+    "churn_revenue_churn_rate", "Прогнозный отток выручки (gross revenue churn) за 30 дней, доля 0..1",
+    registry=registry,
+)
 model_version = Gauge("churn_model_version", "Версия настроек модели последнего расчёта", registry=registry)
 last_scored = Gauge(
     "churn_last_scored_timestamp_seconds", "Время последнего расчёта, unix-секунды (0 — расчёта не было)",
@@ -111,3 +125,12 @@ def _update_risk_scores(stats: dict[str, Any]) -> None:
     for le in RISK_SCORE_BUCKETS:
         risk_score_bucket.labels(str(le)).set(counts.get(str(le), 0.0))
     risk_score_bucket.labels("+Inf").set(scored)
+
+
+def update_from_marketing(data: dict[str, Any]) -> None:
+    churn = data.get("churn") or {}
+    mrr_eur.set(_num(data.get("mrr")) / 100)
+    arpu_eur.set(_num(data.get("arpu")) / 100)
+    ltv_eur.set(_num(data.get("ltv")) / 100)
+    customer_churn_rate.set(_num(churn.get("customer_monthly")))
+    revenue_churn_rate.set(_num(churn.get("revenue_monthly")))

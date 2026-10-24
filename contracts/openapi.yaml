@@ -331,6 +331,58 @@ paths:
               schema: { $ref: '#/components/schemas/Summary' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /api/v1/analytics/marketing:
+    get:
+      tags: [analytics]
+      summary: Маркетинговые метрики — MRR, ARPU, отток, LTV, сегменты по риску
+      description: |
+        Базовые числа scoring считает при каждом пересчёте вместе со сводкой (riskcore.marketing),
+        api накладывает маржу и стоимость привлечения (CAC) из настроек. Месяц — 30 дней.
+        Прогнозный отток — из модели: risk_score клиента = доля его выручки, которую ожидаем
+        потерять за горизонт; доля за горизонт пересчитывается в месяц как 1 − (1 − p)^(30/горизонт).
+        LTV = ARPU × маржа / месячный отток клиентов (срок жизни не больше `lifetime.cap_months`).
+        Доступно всем вошедшим.
+      operationId: getMarketing
+      responses:
+        '200':
+          description: Маркетинговые метрики
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Marketing' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/analytics/marketing/settings:
+    get:
+      tags: [analytics]
+      summary: Маржа и стоимость привлечения клиента для маркетинговых метрик
+      operationId: getMarketingSettings
+      responses:
+        '200':
+          description: Настройки
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MarketingSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [analytics]
+      summary: Изменение маржи и CAC (только admin)
+      description: Пересчёта модели не запускает — новые значения сразу видны в `/analytics/marketing`.
+      operationId: putMarketingSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MarketingSettingsUpdate' }
+      responses:
+        '200':
+          description: Новые настройки
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MarketingSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/v1/model/settings:
     get:
       tags: [model]
@@ -1015,8 +1067,177 @@ components:
               anyOf:
                 - $ref: '#/components/schemas/Recommendation'
                 - type: 'null'
+            marketing:
+              description: 'Маркетинговые показатели клиента; null — оценка посчитана до появления блока'
+              anyOf:
+                - $ref: '#/components/schemas/CustomerMarketing'
+                - type: 'null'
             scored_at: { type: [string, 'null'], format: date-time }
             model_version: { type: integer }
+
+    CustomerMarketing:
+      type: object
+      description: 'Маркетинговые показатели клиента. Месяц — 30 дней, деньги — евроценты'
+      required: [mrr, monthly_churn, expected_lifetime_months, lifetime_capped, ltv_forecast, ltv_fact, payments, tenure_days]
+      properties:
+        mrr: { type: integer, description: 'Выручка действующих услуг в месяц (та же, что money.monthly_revenue)' }
+        monthly_churn: { type: [number, 'null'], minimum: 0, maximum: 1, description: 'Вероятность ухода за 30 дней: risk_score / 100, пересчитанный с горизонта на месяц; null — нет оценки' }
+        expected_lifetime_months: { type: [number, 'null'], description: 'Сколько месяцев ещё ожидаем: 1 / monthly_churn, не больше 60' }
+        lifetime_capped: { type: boolean, description: 'Срок упёрся в потолок 60 месяцев' }
+        ltv_forecast: { type: integer, description: 'Сколько клиент ещё принесёт: mrr × маржа × expected_lifetime_months' }
+        ltv_fact: { type: integer, description: 'Сколько уже принёс: сумма проведённых транзакций за услуги' }
+        payments: { type: integer, description: 'Число проведённых ненулевых платежей' }
+        avg_check: { type: [integer, 'null'], description: 'Средний платёж клиента' }
+        first_seen: { type: [string, 'null'], format: date-time, description: 'Первая услуга или транзакция' }
+        tenure_days: { type: [number, 'null'], description: 'Сколько дней с нами: от first_seen до опорного момента или до ухода' }
+        left_at: { type: [string, 'null'], format: date-time, description: 'Когда ушёл (все услуги удалены или заблокированы; оценка по окончанию оплаты + 5 дней); null — ещё с нами' }
+        margin: { type: number, description: 'Маржа, с которой посчитан ltv_forecast (из настроек маркетинга)' }
+
+    MarketingSettings:
+      type: object
+      required: [margin, cac, updated_at, updated_by]
+      properties:
+        margin: { type: number, minimum: 0.01, maximum: 1, description: 'Доля выручки, которая остаётся прибылью; 1 — LTV в выручке' }
+        cac: { type: [integer, 'null'], minimum: 1, description: 'Стоимость привлечения одного клиента, евроценты; null — не задана' }
+        updated_at: { type: [string, 'null'], format: date-time }
+        updated_by: { type: [string, 'null'] }
+
+    MarketingSettingsUpdate:
+      type: object
+      additionalProperties: false
+      required: [margin]
+      properties:
+        margin: { type: number, minimum: 0.01, maximum: 1 }
+        cac: { type: [integer, 'null'], minimum: 1, maximum: 100000000, description: 'евроценты; null — сбросить' }
+
+    MarketingSegment:
+      type: object
+      required: [level, customers, mrr, arpu, monthly_churn, ltv, ltv_avg, expected_mrr_loss]
+      properties:
+        level: { $ref: '#/components/schemas/RiskLevel' }
+        customers: { type: integer }
+        mrr: { type: integer }
+        arpu: { type: integer, description: 'MRR сегмента на платящего клиента' }
+        monthly_churn: { type: [number, 'null'], description: 'Средняя вероятность ухода за 30 дней по платящим клиентам сегмента' }
+        ltv: { type: integer, description: 'Сумма прогнозных LTV клиентов сегмента (с маржой)' }
+        ltv_avg: { type: integer, description: 'Средний LTV платящего клиента сегмента' }
+        expected_mrr_loss: { type: integer, description: 'Сколько MRR ожидаем потерять за 30 дней' }
+
+    RetentionScenario:
+      type: object
+      description: 'Что будет, если удержать клиентов этих уровней: их отток вернётся к target_monthly_churn'
+      required: [levels, customers, mrr, ltv_now, ltv_retained, ltv_uplift, saved_mrr, target_monthly_churn, target_source]
+      properties:
+        levels: { type: array, items: { $ref: '#/components/schemas/RiskLevel' } }
+        customers: { type: integer }
+        mrr: { type: integer }
+        ltv_now: { type: integer, description: 'Сумма LTV этих клиентов сейчас' }
+        ltv_retained: { type: [integer, 'null'], description: 'Сумма LTV, если удержим' }
+        ltv_uplift: { type: [integer, 'null'], description: 'На сколько вырастет LTV базы' }
+        saved_mrr: { type: [integer, 'null'], description: 'Сколько MRR в месяц перестанем терять' }
+        target_monthly_churn: { type: [number, 'null'] }
+        target_source:
+          type: string
+          enum: [fact, low_risk, none]
+          description: 'fact — фактический отток по истории; low_risk — отток клиентов низкого риска; none — не с чем сравнить, сценарий не посчитан'
+
+    Marketing:
+      type: object
+      required: [horizon_days, customers_total, active_customers, paying_customers, mrr, arpu, arppu, churn, retention, lifetime, ltv, ltv_total, ltv_at_risk, ltv_fact, concentration, auto_prolong, payment_terms, segments, retention_scenarios, unit_economics, settings, scored_at, model_version]
+      properties:
+        horizon_days: { type: integer }
+        customers_total: { type: integer, description: 'Все клиенты в снимке, включая ушедших' }
+        active_customers: { type: integer, description: 'С хотя бы одной действующей услугой' }
+        paying_customers: { type: integer, description: 'С MRR больше нуля (и оценкой риска)' }
+        mrr: { type: integer, description: 'Месячная регулярная выручка, евроценты (совпадает с monthly_revenue_total сводки)' }
+        arpu: { type: integer, description: 'MRR / active_customers' }
+        arppu: { type: integer, description: 'MRR / paying_customers' }
+        churn:
+          type: object
+          required: [customer_horizon, customer_monthly, revenue_horizon, revenue_monthly, expected_customers_lost, expected_mrr_loss, fact]
+          properties:
+            customer_horizon: { type: [number, 'null'], description: 'Прогноз: доля платящих клиентов, которые уйдут за горизонт' }
+            customer_monthly: { type: [number, 'null'], description: 'То же за 30 дней' }
+            revenue_horizon: { type: [number, 'null'], description: 'Прогноз: доля выручки, которая уйдёт за горизонт' }
+            revenue_monthly: { type: [number, 'null'], description: 'Gross revenue churn за 30 дней' }
+            expected_customers_lost: { type: number, description: 'Сколько клиентов ожидаем потерять за 30 дней' }
+            expected_mrr_loss: { type: integer, description: 'Сколько MRR ожидаем потерять за 30 дней' }
+            fact:
+              type: object
+              description: 'Факт по истории: ушедшие клиенты / клиенто-месяцы наблюдения'
+              required: [customers_observed, customers_left, exposure_months, monthly_churn, avg_tenure_months, avg_lifetime_left_months]
+              properties:
+                customers_observed: { type: integer }
+                customers_left: { type: integer }
+                exposure_months: { type: number }
+                monthly_churn: { type: [number, 'null'] }
+                avg_tenure_months: { type: [number, 'null'], description: 'Средний срок с нами по всем клиентам' }
+                avg_lifetime_left_months: { type: [number, 'null'], description: 'Сколько в среднем прожили ушедшие' }
+        retention:
+          type: object
+          required: [customer_monthly, revenue_monthly]
+          properties:
+            customer_monthly: { type: [number, 'null'], description: '1 − churn.customer_monthly' }
+            revenue_monthly: { type: [number, 'null'], description: '1 − churn.revenue_monthly' }
+        lifetime:
+          type: object
+          required: [expected_months, capped, cap_months, fact_avg_months]
+          properties:
+            expected_months: { type: [number, 'null'], description: '1 / churn.customer_monthly' }
+            capped: { type: boolean }
+            cap_months: { type: number }
+            fact_avg_months: { type: [number, 'null'] }
+        ltv: { type: integer, description: 'LTV среднего клиента: ARPU × маржа × expected_months' }
+        ltv_total: { type: integer, description: 'Сумма прогнозных LTV всех клиентов' }
+        ltv_at_risk: { type: integer, description: 'Сумма LTV клиентов высокого и среднего риска' }
+        ltv_fact:
+          type: object
+          required: [total, avg_per_customer, payments, avg_check]
+          properties:
+            total: { type: integer, description: 'Сумма проведённых транзакций за услуги' }
+            avg_per_customer: { type: integer }
+            payments: { type: integer, description: 'Проведённые ненулевые платежи' }
+            avg_check: { type: [integer, 'null'], description: 'Средний платёж' }
+        concentration:
+          type: object
+          required: [top_customers, top_share]
+          properties:
+            top_customers: { type: integer, description: 'Сколько клиентов — топ-10% платящих по MRR (не меньше одного)' }
+            top_share: { type: [number, 'null'], description: 'Их доля в MRR' }
+        auto_prolong:
+          type: object
+          required: [customers, customers_share, mrr_share]
+          properties:
+            customers: { type: integer, description: 'Активные клиенты, у которых есть услуга на автопродлении' }
+            customers_share: { type: [number, 'null'] }
+            mrr_share: { type: [number, 'null'], description: 'Доля MRR с услуг на автопродлении' }
+        payment_terms:
+          type: array
+          items:
+            type: object
+            required: [term, services, mrr, share]
+            properties:
+              term: { $ref: '#/components/schemas/PaymentTerm' }
+              services: { type: integer, description: 'Действующие услуги' }
+              mrr: { type: integer }
+              share: { type: [number, 'null'] }
+        segments:
+          type: array
+          items: { $ref: '#/components/schemas/MarketingSegment' }
+        retention_scenarios:
+          type: array
+          items: { $ref: '#/components/schemas/RetentionScenario' }
+        unit_economics:
+          type: object
+          required: [margin, cac, ltv_cac, payback_months]
+          properties:
+            margin: { type: number }
+            cac: { type: [integer, 'null'] }
+            ltv_cac: { type: [number, 'null'], description: 'LTV / CAC; null — CAC не задан' }
+            payback_months: { type: [number, 'null'], description: 'CAC / (ARPU × маржа); null — CAC не задан' }
+        settings: { $ref: '#/components/schemas/MarketingSettings' }
+        scored_at: { type: [string, 'null'], format: date-time }
+        model_version: { type: integer }
 
     TimelinePoint:
       type: object

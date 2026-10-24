@@ -10,6 +10,8 @@ from typing import Any, Literal
 import asyncpg
 from svckit.errors import ApiError
 
+from app import marketing
+
 SortField = Literal["id", "email", "balance", "total_replenished", "risk_score", "expected_loss"]
 SortOrder = Literal["asc", "desc"]
 LEVELS = ("high", "medium", "low", "unknown")
@@ -153,6 +155,13 @@ async def list_customers(
     }
 
 
+def _get(row: Any, key: str) -> Any:
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return None
+
+
 def _default_money(row: asyncpg.Record) -> dict[str, Any]:
     return {
         "monthly_revenue": row["monthly_revenue"],
@@ -168,7 +177,8 @@ async def get_customer(pool: asyncpg.Pool, customer_id: int) -> dict[str, Any]:
         raise ApiError(404, "not_found", "Клиент не найден")
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            f"SELECT {SUMMARY_COLUMNS}, detail, model_version, scored_at "
+            f"SELECT {SUMMARY_COLUMNS}, detail, model_version, scored_at, "
+            "(SELECT margin FROM scoring.marketing_settings WHERE id = 1) AS margin "
             "FROM scoring.customer_scores WHERE customer_id = $1",
             customer_id,
         )
@@ -184,6 +194,7 @@ async def get_customer(pool: asyncpg.Pool, customer_id: int) -> dict[str, Any]:
             "money": detail.get("money") or _default_money(row),
             "recommendations": detail.get("recommendations", []),
             "next_action": detail.get("next_action"),
+            "marketing": marketing.customer_block(detail.get("marketing"), _get(row, "margin")),
             "scored_at": iso_z(row["scored_at"]),
             "model_version": row["model_version"],
         }
@@ -248,6 +259,7 @@ class SummaryCache:
     def __init__(self, ttl_s: float) -> None:
         self.ttl_s = ttl_s
         self._value: dict[str, Any] | None = None
+        self._marketing: dict[str, Any] | None = None
         self._stamp: tuple[Any, Any] | None = None
         self._at = 0.0
         self._lock = asyncio.Lock()
@@ -260,6 +272,15 @@ class SummaryCache:
     def last(self) -> dict[str, Any] | None:
         return self._value
 
+    @property
+    def last_marketing(self) -> dict[str, Any] | None:
+        return self._marketing
+
+    async def marketing(self, pool: asyncpg.Pool) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        """Базовые маркетинговые метрики последнего пересчёта и сводка, из которой они взяты."""
+        summary = await self.get(pool)
+        return self._marketing, summary
+
     async def get(self, pool: asyncpg.Pool) -> dict[str, Any]:
         async with self._lock:
             async with pool.acquire() as conn:
@@ -268,7 +289,10 @@ class SummaryCache:
             fresh = time.monotonic() - self._at < self.ttl_s
             if self._value is not None and stamp is not None and stamp == self._stamp and fresh:
                 return self._value
-            self._value = await load_summary(pool)
+            value = await load_summary(pool)
+            # маркетинг лежит в той же строке, но в /analytics/summary ему не место
+            self._marketing = value.pop("marketing", None)
+            self._value = value
             self._stamp = stamp
             self._at = time.monotonic()
             return self._value

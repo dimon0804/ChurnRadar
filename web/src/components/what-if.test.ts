@@ -41,7 +41,12 @@ const PREVIEW: ModelSettingsPreview = {
   duration_ms: 12,
 }
 
-type Call = { body: ModelSettingsPatch; signal: AbortSignal; resolve: (p: ModelSettingsPreview) => void }
+type Call = {
+  body: ModelSettingsPatch
+  signal: AbortSignal
+  resolve: (p: ModelSettingsPreview) => void
+  fail: (status: number, code: string, message: string) => void
+}
 
 describe('«Что если»', () => {
   let root: Root
@@ -85,6 +90,8 @@ describe('«Что если»', () => {
             body: JSON.parse(String(init.body)) as ModelSettingsPatch,
             signal,
             resolve: (p) => resolve(new Response(JSON.stringify(p), { status: 200 })),
+            fail: (status, code, message) =>
+              resolve(new Response(JSON.stringify({ error: { code, message } }), { status })),
           })
         })
       }),
@@ -171,5 +178,21 @@ describe('«Что если»', () => {
     await act(async () => calls[0]?.resolve({ ...PREVIEW, exact: false, sample_size: 2000, customers_total: 100_000 }))
     await wait(0)
     expect(container.querySelector('[data-testid="what-if-approximate"]')?.textContent).toContain('приблизительный')
+  })
+
+  it('при таймауте показывает ошибку и даёт повторить', async () => {
+    render({ horizon_days: 14 })
+    await wait(PREVIEW_DEBOUNCE_MS)
+    await act(async () => calls[0]?.fail(504, 'preview_timeout', 'Предпросмотр не уложился во время, попробуйте ещё раз'))
+    await wait(0)
+    expect(container.textContent).toContain('Не удалось посчитать: Предпросмотр не уложился во время')
+    act(() => button('Повторить').click())
+    await wait(0)
+    expect(calls).toHaveLength(2)
+    expect(calls[1]?.body).toEqual({ horizon_days: 14 })
+    await act(async () => calls[1]?.resolve(PREVIEW))
+    await wait(0)
+    expect(container.textContent).not.toContain('Не удалось посчитать')
+    expect(container.textContent).toContain('1 выйдет из высокого')
   })
 })

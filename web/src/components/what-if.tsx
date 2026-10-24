@@ -124,7 +124,11 @@ export function WhatIfBar({
   } else if (failed) {
     status = (
       <>
-        <AlertCircle className="size-4 text-risk-high" /> Не удалось посчитать: {errorMessage(preview.error)}
+        <AlertCircle className="size-4 shrink-0 text-risk-high" />
+        <span className="min-w-0">Не удалось посчитать: {errorMessage(preview.error)}</span>
+        <Button variant="link" size="sm" className="h-auto px-1" onClick={() => void preview.refetch()}>
+          Повторить
+        </Button>
       </>
     )
   } else if (p) {

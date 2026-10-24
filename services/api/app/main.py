@@ -19,7 +19,7 @@ from svckit.logs import configure_logging
 from svckit.metrics import HttpMetricsMiddleware, check_metrics_token, render
 from svckit.outbox import OutboxRelay
 
-from app import actions, metrics, model_quality, model_settings, preview, queries
+from app import actions, marketing, metrics, model_quality, model_settings, preview, queries
 from app.config import settings
 from app.docs import router as docs_router
 
@@ -167,6 +167,25 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
     async def get_summary(request: Request, _: CurrentUser, pool: Pool) -> dict[str, Any]:
         return await request.app.state.summary_cache.get(pool)
 
+    # Маркетинговые метрики видят все вошедшие; маржу и CAC меняет только admin.
+    # Пересчёта они не запускают: применяются к готовым числам при выдаче.
+    @app.get("/api/v1/analytics/marketing", tags=["analytics"])
+    async def get_marketing(request: Request, _: CurrentUser, pool: Pool) -> dict[str, Any]:
+        base, summary = await request.app.state.summary_cache.marketing(pool)
+        return marketing.build_response(base, summary, await marketing.get_settings(pool))
+
+    @app.get("/api/v1/analytics/marketing/settings", tags=["analytics"])
+    async def get_marketing_settings(_: CurrentUser, pool: Pool) -> dict[str, Any]:
+        return await marketing.get_settings(pool)
+
+    @app.put("/api/v1/analytics/marketing/settings", tags=["analytics"])
+    async def put_marketing_settings(
+        user: AdminUser, pool: Pool, update: Annotated[marketing.MarketingSettingsUpdate, Body()]
+    ) -> dict[str, Any]:
+        state = await marketing.put_settings(pool, update, user.name)
+        log.info("marketing_settings_changed", margin=state["margin"], cac=state["cac"], user=user.name)
+        return state
+
     # --- model settings ------------------------------------------------------------
     @app.get("/api/v1/model/settings", tags=["model"])
     async def get_model_settings(_: CurrentUser, pool: Pool) -> dict[str, Any]:
@@ -264,6 +283,10 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
         try:
             if pool is not None:
                 metrics.update_from_summary(await cache.get(pool))
+                base, summary = await cache.marketing(pool)
+                metrics.update_from_marketing(
+                    marketing.build_response(base, summary, await marketing.get_settings(pool))
+                )
         except Exception as exc:
             # отдаём последние известные значения, чтобы не терять серию
             log.warning("metrics_summary_failed", error=str(exc))

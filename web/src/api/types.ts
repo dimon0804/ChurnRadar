@@ -43,6 +43,12 @@ export type CustomerActionState = Schemas['CustomerActionState']
 export type CustomerActionLogEntry = Schemas['CustomerActionLogEntry']
 export type CallToday = Schemas['CallToday']
 export type CallTodayItem = Schemas['CallTodayItem']
+export type Marketing = Schemas['Marketing']
+export type MarketingSegment = Schemas['MarketingSegment']
+export type RetentionScenario = Schemas['RetentionScenario']
+export type MarketingSettings = Schemas['MarketingSettings']
+export type MarketingSettingsUpdate = Schemas['MarketingSettingsUpdate']
+export type CustomerMarketing = Schemas['CustomerMarketing']
 
 export type AuthProviders =
   operations['authProviders']['responses']['200']['content']['application/json']

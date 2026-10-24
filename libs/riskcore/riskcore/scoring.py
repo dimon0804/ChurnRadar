@@ -17,6 +17,7 @@ from .context import (
     build_account_context,
     build_service_context,
 )
+from .marketing import customer_marketing, exit_moment, payments_of
 from .money import format_eur, horizon_revenue
 from .recommendations import action_for, build_recommendations
 from .registry import account_features, service_features
@@ -209,6 +210,10 @@ class CustomerResult:
     horizon_revenue: float = 0.0
     services: tuple[ServiceOutcome, ...] = field(default=(), repr=False)
     feature_totals: tuple[FeatureTotal, ...] = field(default=(), repr=False)
+    # Для маркетинговых метрик: сумма проведённых платежей, их число (без нулевых) и первый контакт.
+    paid_total: int = 0
+    payments: int = 0
+    first_seen: datetime | None = None
 
     def to_row(self, scored_at: datetime | None = None) -> dict[str, Any]:
         """Строка таблицы scoring.customer_scores."""
@@ -495,6 +500,7 @@ def score_account(
 
     recommendations = build_recommendations(totals, unknown_reason[0] if unknown_reason else None)
     capped = sum(1 for o in live if o.revenue_note is not None)
+    paid = payments_of(ctx.all_services, ctx.transactions)
     detail = {
         "services": [o.to_api() for o in outcomes],
         "features": features,
@@ -502,6 +508,9 @@ def score_account(
         "money": _money(monthly, expected, exposure, ctx, capped),
         "recommendations": [r.to_api() for r in recommendations],
         "next_action": recommendations[0].to_api() if recommendations else None,
+        "marketing": customer_marketing(
+            monthly, score, settings.horizon_days, paid, exit_moment(ctx.all_services, as_of), as_of
+        ),
     }
     return CustomerResult(
         customer_id=account.id,
@@ -526,6 +535,9 @@ def score_account(
         horizon_revenue=total_revenue,
         services=tuple(outcomes),
         feature_totals=tuple(totals),
+        paid_total=paid.total,
+        payments=paid.count,
+        first_seen=paid.first_seen,
     )
 
 

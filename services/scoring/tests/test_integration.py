@@ -53,6 +53,15 @@ async def test_full_rescore_creates_settings_scores_and_summary(db_pool, sample_
     assert summary["risk_scores"]["scored"] == len(scored)
     assert summary["risk_scores"]["avg"] == pytest.approx(sum(scored) / len(scored))
     assert summary["risk_scores"]["max"] == pytest.approx(max(scored))
+    # маркетинговые метрики считаются тем же пересчётом и лежат в той же строке
+    marketing = summary["marketing"]
+    assert marketing["mrr"] == summary["monthly_revenue_total"]
+    assert marketing["customers_total"] == 10
+    assert marketing["ltv_fact"]["total"] == 32_487  # проведённые транзакции кейса, посчитаны руками
+    assert marketing["churn"]["fact"]["customers_left"] == 4
+    async with db_pool.acquire() as conn:
+        detail = json.loads(await conn.fetchval("SELECT detail FROM scoring.customer_scores WHERE customer_id = 1"))
+    assert detail["marketing"]["ltv_fact"] == 3_340
 
 
 async def test_settings_from_db_are_used(db_pool, sample_data) -> None:  # type: ignore[no-untyped-def]
@@ -92,6 +101,8 @@ async def test_incremental_updates_and_removes(db_pool, sample_data) -> None:  #
         summary = json.loads(await conn.fetchval("SELECT data FROM scoring.summary"))
     assert after["balance"] == before["balance"] + 777
     assert summary["customers_total"] == 9
+    assert summary["marketing"]["customers_total"] == 9
+    assert summary["marketing"]["mrr"] == summary["monthly_revenue_total"]
 
 
 async def test_stale_cache_falls_back_to_full(db_pool, sample_data) -> None:  # type: ignore[no-untyped-def]
@@ -269,7 +280,7 @@ async def test_chunked_full_equals_single_chunk(db_pool, sample_data) -> None:  
             rows_parts = [tuple(r) for r in await conn.fetch(query)]
         assert rows_parts == rows_whole, workers
         assert parts is not None
-        for key in ("by_level", "expected_loss", "exposure", "top_reasons", "timeline", "risk_scores"):
+        for key in ("by_level", "expected_loss", "exposure", "top_reasons", "timeline", "risk_scores", "marketing"):
             assert parts.summary[key] == whole.summary[key], (workers, key)
 
 

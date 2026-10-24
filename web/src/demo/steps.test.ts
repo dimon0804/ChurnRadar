@@ -73,9 +73,9 @@ const step = (id: string) => {
 }
 
 describe('scenario', () => {
-  it('has 6 to 11 steps with unique ids and short speaker notes', () => {
+  it('has 6 to 12 steps with unique ids and short speaker notes', () => {
     expect(DEMO_STEPS.length).toBeGreaterThanOrEqual(6)
-    expect(DEMO_STEPS.length).toBeLessThanOrEqual(11)
+    expect(DEMO_STEPS.length).toBeLessThanOrEqual(12)
     expect(new Set(DEMO_STEPS.map((s) => s.id)).size).toBe(DEMO_STEPS.length)
     for (const s of DEMO_STEPS) {
       const sentences = s.say.split(/[.!?…](?=\s|$)/).filter((x) => x.trim()).length
@@ -135,6 +135,7 @@ describe('scenario', () => {
       'chart',
       'customers',
       'customer',
+      'marketing',
       'model',
       'quality',
       'live',
@@ -165,6 +166,19 @@ describe('scenario', () => {
   it('looks for the what-if switch only while it is off', () => {
     expect(WHAT_IF_OFF.selector).toContain('[aria-checked="false"]')
     expect(WHAT_IF_OFF.text).toBe('Что если')
+  })
+
+  it('opens the marketing page on LTV and the retention block', async () => {
+    const { ctx } = makeCtx({}, false)
+    await step('marketing').run?.(ctx)
+    expect(ctx.navigate).toHaveBeenCalledWith('/marketing')
+    const targets = vi.mocked(ctx.spotlight).mock.calls[0]?.[0] ?? []
+    expect(targets.map((t) => t.selector)).toEqual([
+      '[data-testid="mkt-ltv"]',
+      '[data-testid="mkt-ltv-cac"]',
+      '[data-testid="mkt-retention"]',
+    ])
+    expect(isLocked(step('marketing'), false)).toBe(false)
   })
 
   it('opens the model quality page on lift and ROC AUC', async () => {

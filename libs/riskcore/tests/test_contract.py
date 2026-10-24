@@ -9,9 +9,12 @@ import pytest
 
 from riskcore import (
     StatusChange,
+    apply_economics,
+    build_marketing,
     build_summary,
     default_settings,
     parse_snapshot,
+    scale_customer,
     score_customers,
     settings_to_api,
 )
@@ -112,3 +115,34 @@ def test_model_settings_match_schema(openapi):
     validate(openapi, "ModelSettings", api)
     for weight in api["weights"]:
         assert set(weight) <= strict(openapi, "FeatureWeight")
+
+
+def test_marketing_matches_schema(openapi, scored):
+    results, _, history, settings = scored
+    out = apply_economics(build_marketing(results, history, settings.horizon_days, AS_OF), 0.6, 4_000)
+    out["settings"] = {
+        "margin": 0.6,
+        "cac": 4_000,
+        "updated_at": "2026-10-19T15:00:00Z",
+        "updated_by": "admin",
+    }
+    out["scored_at"] = "2026-10-19T15:00:05Z"
+    out["model_version"] = 1
+    validate(openapi, "Marketing", out)
+    assert set(out) <= strict(openapi, "Marketing")
+    props = openapi["components"]["schemas"]["Marketing"]["properties"]
+    nested = ("churn", "retention", "lifetime", "ltv_fact", "concentration", "auto_prolong", "unit_economics")
+    for key in nested:
+        assert set(out[key]) <= set(props[key]["properties"]), key
+    for row in out["segments"]:
+        assert set(row) <= strict(openapi, "MarketingSegment")
+    for row in out["retention_scenarios"]:
+        assert set(row) <= strict(openapi, "RetentionScenario")
+
+
+def test_customer_marketing_matches_schema(openapi, scored):
+    results, *_ = scored
+    for result in results:
+        block = scale_customer(result.detail["marketing"], 0.5)
+        validate(openapi, "CustomerMarketing", block)
+        assert set(block) <= strict(openapi, "CustomerMarketing")

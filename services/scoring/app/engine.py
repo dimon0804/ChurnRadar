@@ -321,7 +321,7 @@ class Scorer:
 
                 started = time.perf_counter()
                 summary = await asyncio.to_thread(
-                    _without_gc, riskcore.build_summary, list(slim.values()), services, history, settings, as_of
+                    _without_gc, build_summary, list(slim.values()), services, history, settings, as_of
                 )
                 summary = _stamp_summary(summary, version, scored_at)
                 timings["summary_s"] = time.perf_counter() - started
@@ -396,7 +396,7 @@ class Scorer:
         all_results = list(cache.results.values())
         all_services = [s for group in cache.services_by_owner.values() for s in group]
         summary = await asyncio.to_thread(
-            _without_gc, riskcore.build_summary, all_results, all_services, history, settings, as_of
+            _without_gc, build_summary, all_results, all_services, history, settings, as_of
         )
         scored_at = now_ms()
         summary = _stamp_summary(summary, version, scored_at)
@@ -454,6 +454,16 @@ def _score_chunk(
     finally:
         if gc_was_enabled:
             gc.enable()
+
+
+def build_summary(
+    results: Sequence[Any], services: Sequence[Service], history: Sequence[Any], settings: Settings, as_of: datetime
+) -> dict[str, Any]:
+    """Сводка и маркетинговые метрики одним проходом. Маркетинг лежит в той же строке
+    scoring.summary под ключом marketing: api отдаёт его отдельно, в /analytics/marketing."""
+    summary = riskcore.build_summary(results, services, history, settings, as_of)
+    summary["marketing"] = riskcore.build_marketing(results, history, settings.horizon_days, as_of)
+    return summary
 
 
 def _without_gc(func: Any, *args: Any) -> Any:

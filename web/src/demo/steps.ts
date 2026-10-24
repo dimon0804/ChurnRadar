@@ -85,6 +85,11 @@ const PROFILE_TARGET: Target = { selector: 'header button[aria-label^="Проф�
 const ALERTS_TARGET: Target = { selector: 'header button[aria-label^="Оповещения"]' }
 const CALL_TODAY_TARGET: Target = { selector: '[data-testid="call-today"]' }
 const CALL_TODAY_CSV_TARGET: Target = { selector: '[data-testid="call-today-csv"]' }
+export const MARKETING_TARGETS: Target[] = [
+  { selector: '[data-testid="mkt-ltv"]' },
+  { selector: '[data-testid="mkt-ltv-cac"]' },
+  { selector: '[data-testid="mkt-retention"]' },
+]
 const QUALITY_LIFT_TARGET: Target = { selector: '[data-testid="quality-lift"]' }
 const QUALITY_AUC_TARGET: Target = { selector: '[data-testid="quality-auc"]' }
 export const WHAT_IF_SWITCH: Target = { selector: 'label:has(button[role="switch"])', text: 'Что если' }
@@ -236,6 +241,18 @@ export const DEMO_STEPS: DemoStep[] = [
       ctx.navigate(`/customers/${top.id}?level=high`)
       ctx.spotlight([sheetSection('Почему'), sheetSection('Что сделать'), sheetSection('Работа с клиентом')])
       return top.nextAction ? `Главное действие: ${top.nextAction}` : `Клиент #${top.id}, ${top.email}`
+    },
+  },
+  {
+    id: 'marketing',
+    title: 'Маркетинг: MRR, LTV и что даст удержание',
+    say:
+      'Для маркетолога отдельная страница с привычными метриками: месячная выручка, доход с клиента, LTV, отток клиентов и выручки, а у каждой цифры по значку «i» формула и пример простыми словами. Главное здесь связь с риском: видно, на сколько вырастет LTV базы, если удержать клиентов высокого риска, а стоимость привлечения задаётся руками, потому что в данных хостинга её нет.',
+    show: 'Карточки LTV и LTV/CAC сверху и блок «Что даст удержание». Ниже сегменты по риску и словарь терминов.',
+    run: async (ctx) => {
+      ctx.navigate('/marketing')
+      await ctx.waitFor(MARKETING_TARGETS[2]!)
+      ctx.spotlight(MARKETING_TARGETS)
     },
   },
   {

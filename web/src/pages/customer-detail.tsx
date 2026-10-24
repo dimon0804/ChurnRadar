@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { CheckCircle2, CircleHelp, Lightbulb, PiggyBank, RefreshCcw, RefreshCwOff, Target, UserX } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
-import { useLocation, useNavigate, useParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import { isApiError } from '@/api/client'
 import { api, queryKeys } from '@/api/endpoints'
 import type { CustomerDetail, FeatureContribution, ServiceRisk, Transaction } from '@/api/types'
@@ -23,8 +23,10 @@ import {
   formatMoney,
   formatPoints,
   formatScore,
+  formatShare,
   plural,
 } from '@/lib/format'
+import { formatMonths, formatTenure } from '@/lib/marketing'
 import {
   labelOf,
   PAYMENT_TERM_LABEL,
@@ -248,6 +250,55 @@ function Money({ c }: { c: CustomerDetail }) {
           </div>
         ))}
       </dl>
+    </Section>
+  )
+}
+
+/** Маркетинговые показатели клиента: его MRR, ценность (LTV) по прогнозу и по факту, срок с нами. */
+function MarketingStats({ c }: { c: CustomerDetail }) {
+  const m = c.marketing
+  if (!m) return null
+  const margin = typeof m.margin === 'number' && m.margin < 1 ? `, маржа ${formatShare(m.margin, 0)}` : ''
+  return (
+    <Section
+      title="Маркетинг"
+      aside={
+        <Link to="/marketing" className="text-xs text-link underline-offset-4 hover:underline">
+          Что это значит
+        </Link>
+      }
+    >
+      <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+        <Stat label="MRR (выручка в месяц)" value={formatMoney(m.mrr, { cents: false })} />
+        <Stat
+          label="LTV прогноз"
+          value={m.monthly_churn === null ? '—' : formatMoney(m.ltv_forecast, { cents: false })}
+          hint={
+            m.expected_lifetime_months !== null
+              ? `ещё ${formatMonths(m.expected_lifetime_months, m.lifetime_capped)}${margin}`
+              : m.left_at
+                ? 'клиент уже ушёл'
+                : 'нет оценки риска'
+          }
+          strong
+        />
+        <Stat
+          label="LTV факт (уже принёс)"
+          value={formatMoney(m.ltv_fact, { cents: false })}
+          hint={countLabel(m.payments, ['платёж', 'платежа', 'платежей'])}
+        />
+        <Stat
+          label={m.left_at ? 'Был с нами' : 'С нами'}
+          value={formatTenure(m.tenure_days)}
+          hint={m.left_at ? `ушёл ~${formatDate(m.left_at)}` : m.first_seen ? `с ${formatDate(m.first_seen)}` : undefined}
+        />
+      </div>
+      {m.monthly_churn !== null && (
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
+          Модель оценивает вероятность ухода за месяц в {formatShare(m.monthly_churn, 0)}, поэтому ждём, что клиент пробудет с нами ещё{' '}
+          {formatMonths(m.expected_lifetime_months, m.lifetime_capped)} и принесёт {formatMoney(m.ltv_forecast, { cents: false })}.
+        </p>
+      )}
     </Section>
   )
 }
@@ -535,6 +586,7 @@ export default function CustomerSheet() {
             <Reasons c={c} services={services} />
             {riskLevelOf(c.risk_level) !== 'unknown' && <Features features={c.features ?? []} level={riskLevelOf(c.risk_level)} />}
             <Money c={c} />
+            <MarketingStats c={c} />
             <Services services={c.services ?? []} />
             <Transactions txs={c.transactions ?? []} services={services} />
             <p className="px-6 py-4 text-xs text-subtle-foreground num">

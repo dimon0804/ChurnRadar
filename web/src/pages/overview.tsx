@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, Info, ListChecks } from 'lucide-react'
-import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { api, queryKeys } from '@/api/endpoints'
 import type { RiskLevel, Summary } from '@/api/types'
@@ -8,75 +7,18 @@ import { AnimatedNumber } from '@/components/animated-number'
 import { CallTodayCard } from '@/components/call-today'
 import { ChurnChart } from '@/components/churn-chart'
 import { DataClockBadge, useDataClock } from '@/components/data-clock'
-import { FlashOverlay } from '@/components/flash'
+import { KpiCard, KpiSkeleton } from '@/components/kpi-card'
 import { PageHeader, RecalcNote } from '@/components/page-header'
 import { RISK_BAR, RiskGlyph, RISK_TEXT } from '@/components/risk'
 import { EmptyState, ErrorState } from '@/components/states'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Tooltip } from '@/components/ui/tooltip'
-import { useChangeStamp } from '@/hooks/use-change-stamp'
 import { countLabel, formatInt, formatMoney, formatShare, plural } from '@/lib/format'
 import { RISK_LABEL_LONG } from '@/lib/labels'
 import { RISK_LEVELS } from '@/lib/url-state'
 import { cn } from '@/lib/utils'
 
 const money = (v: number | null | undefined) => formatMoney(v, { cents: false })
-
-function KpiCard({
-  label,
-  value,
-  sub,
-  info,
-  emphasis,
-  testId,
-  watch,
-}: {
-  label: string
-  value: ReactNode
-  sub?: ReactNode
-  info?: ReactNode
-  emphasis?: boolean
-  testId?: string
-  /** Число, при изменении которого карточка коротко подсвечивается (после пересчёта). */
-  watch?: number | null
-}) {
-  const stamp = useChangeStamp(watch ?? null)
-  return (
-    <Card className="relative flex flex-col px-5 py-4" data-testid={testId}>
-      {stamp > 0 && <FlashOverlay key={stamp} />}
-      <div className="flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground">
-        {emphasis && <RiskGlyph level="high" className="text-risk-high" />}
-        <span>{label}</span>
-        {info && (
-          <Tooltip content={info}>
-            <button
-              type="button"
-              className="ml-auto -mr-1 inline-flex size-6 items-center justify-center rounded text-subtle-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label={`Что такое «${label}»`}
-            >
-              <Info className="size-3.5" />
-            </button>
-          </Tooltip>
-        )}
-      </div>
-      <div className="mt-2 text-[28px] leading-none font-semibold tracking-[-0.025em] num" data-role="value">
-        {value}
-      </div>
-      {sub && <div className="mt-2.5 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{sub}</div>}
-    </Card>
-  )
-}
-
-function KpiSkeleton() {
-  return (
-    <Card className="px-5 py-4">
-      <Skeleton className="h-4 w-36" />
-      <Skeleton className="mt-3 h-7 w-28" />
-      <Skeleton className="mt-3 h-4 w-44" />
-    </Card>
-  )
-}
 
 function KpiRow({ s }: { s: Summary }) {
   const total = s.customers_total

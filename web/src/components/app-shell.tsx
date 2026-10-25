@@ -6,6 +6,7 @@ import {
   Database,
   FileCode2,
   LayoutDashboard,
+  LogIn,
   LogOut,
   Mail,
   Megaphone,
@@ -80,6 +81,7 @@ const ADMIN_GROUP = 'Администрирование'
 const ADMIN_NAV: NavItem[] = [
   { to: '/data', label: 'Данные', hint: 'загрузка снимка и источники', icon: <Database /> },
   { to: '/users', label: 'Пользователи', hint: 'учётные записи и роли', icon: <UserCog /> },
+  { to: '/login-settings', label: 'Вход и регистрация', hint: 'пароль, SSO и автосоздание', icon: <LogIn /> },
   { to: '/integrations', label: 'Интеграции', hint: 'токены API и отчёт на почту', icon: <Plug /> },
   { to: '/audit', label: 'Журнал действий', hint: 'кто, что и когда менял', icon: <ScrollText /> },
 ]

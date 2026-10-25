@@ -598,6 +598,7 @@ is what enforces it: a direct request gets 403.
 | Simulator | `PUT /api/v1/simulator` | — | — | ✓ |
 | Other users' notifications | `GET/DELETE /api/v1/alerts/preferences/users…` | — | — | ✓ |
 | Users and the audit log | `/api/v1/auth/users…`, `GET /api/v1/auth/audit` | — | — | ✓ |
+| Sign-in methods and SSO registration | `GET/PATCH /api/v1/auth/login-settings` | — | — | ✓ |
 
 Any state-changing request that matches no rule is let through by the gateway for admins only:
 a new endpoint stays closed until it is explicitly given a role. The matrix is covered by
@@ -673,9 +674,10 @@ How it works:
 - **Roles**: from the `roles` claim (OIDC) or the `churn-radar-role` attribute (SAML) filled in by
   the blueprint, or from groups (`groups` and `http://schemas.xmlsoap.org/claims/Group`).
   `SSO_ADMIN_GROUPS` and `SSO_ANALYST_GROUPS` decide which group gives which role. No matching
-  group means no access (`SSO_DEFAULT_ROLE` is empty).
-- **Accounts**: an SSO user appears in the panel on first sign-in, and the role follows the
-  groups on every sign-in. If an admin changed the role by hand, it wins over the groups. A user
+  group means no access unless the admin sets a default role on the "Вход и регистрация" page
+  (its initial value is `SSO_DEFAULT_ROLE`, empty by default).
+- **Accounts**: an SSO user appears in the panel on first sign-in (unless the admin turned
+  auto-provisioning off, see below), and the role follows the groups on every sign-in. If an admin changed the role by hand, it wins over the groups. A user
   blocked in the panel cannot get in through SSO either, even if Authentik lets them in.
 - After SSO the same session is created as after a password login: cookie, Redis, ForwardAuth.
 
@@ -718,6 +720,49 @@ In Kubernetes the same goes into the `sso` block of the Helm chart values: OIDC 
 client, SAML metadata, the client secret via `sso.existingSecret`, egress to the IdP via
 `sso.egress` (NetworkPolicy). The chart does not install Authentik itself: it is a separate
 system that a company usually already runs. See [docs/deploy.md](docs/deploy.md#sso-в-kubernetes).
+
+### Sign-in methods and registration
+
+Which ways of signing in exist at all is up to the administrator on "Администрирование → Вход и
+регистрация" (Administration → Sign-in and registration). The usual security request, "SSO only,
+turn passwords off", is one switch there.
+
+- **Sign-in methods**: login and password, SSO over OIDC, SSO over SAML. The flags live in
+  Postgres (`auth.login_settings`) on top of the environment: a provider that is not configured in
+  `OIDC_*`/`SAML_*` is marked "not configured on the server" and cannot be turned on from the page.
+- **SSO registration**: create a user on the first SSO sign-in or let in only accounts created in
+  advance ("SSO only" on the Users page); which role to give when IdP groups give none (deny,
+  analyst or marketer — admin is never handed out automatically); which email domains may be
+  auto-provisioned (exact match, empty means any). Existing users are not affected. The initial
+  default role comes from `SSO_DEFAULT_ROLE`, after that it is changed in the panel.
+
+The server enforces it, not just the UI. With passwords off `POST /api/v1/auth/login` answers
+`403` "Вход по паролю отключён администратором, войдите через SSO" (password sign-in is disabled
+by the administrator, use SSO); OIDC/SAML login and callback for a disabled method redirect to
+`/login?error=method_disabled`; `/api/v1/auth/providers` lists only enabled methods and the login
+page shows exactly those (SSO only — no login and password fields, large SSO buttons). An unknown
+user with auto-provisioning off, or an email outside the allowed domains, gets a clear refusal on
+the login page. Sessions issued by a method that was turned off are dropped right away, and if one
+survives, ForwardAuth rejects it anyway.
+
+How the panel keeps you from locking yourself out:
+
+- you cannot turn every method off — at least one stays;
+- passwords can be turned off only from inside the panel via an SSO method that stays enabled,
+  with an SSO-linked admin account. Being here through SSO proves SSO works for you. An admin
+  signed in with a password gets a clear error telling them to sign in through SSO first, so there
+  is no "what about his own password session" case: whoever disables passwords has none;
+- while passwords are off, the last admin who signs in through an enabled SSO cannot be blocked,
+  demoted or deleted;
+- as a last resort there is a break-glass key: `AUTH_BREAK_GLASS_PASSWORD_LOGIN=1` in the `auth`
+  environment (compose, `.env`, Helm `auth.env.AUTH_BREAK_GLASS_PASSWORD_LOGIN: "true"`) lets administrators in
+  with a password whatever the database says. Everyone else still cannot use a password, every such
+  sign-in is logged (`auth.break_glass_login`) and the settings page shows a warning. Sign in, fix
+  the settings, remove the variable and restart `auth`.
+
+Every change and every rejected attempt goes to the audit log (`auth.settings.update`: who, when,
+what it was and what it became, how many sessions were dropped). The new path
+`/api/v1/auth/login-settings` is admin-only in the gateway rules.
 
 ## Integrations
 
@@ -1319,6 +1364,7 @@ change something, copy it to `.env`.
 | `OIDC_*`, `SAML_*`, `SSO_*` | see `.env.example` | sign-in through an IdP over OIDC and SAML, groups for roles |
 | `AUTHENTIK_*`, `SSO_DEMO_*` | see `.env.example` | Authentik in the `sso` profile and its demo users' passwords |
 | `API_TOKEN_RATE_LIMIT_PER_MIN` | `600` | requests per minute per API token unless the token has its own limit |
+| `AUTH_BREAK_GLASS_PASSWORD_LOGIN` | `false` | break-glass key: password sign-in for administrators even when it is turned off in the panel ([details](#sign-in-methods-and-registration)) |
 
 Default passwords and tokens are for the demo only. Set your own for any other deployment.
 

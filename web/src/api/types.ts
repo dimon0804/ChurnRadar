@@ -83,6 +83,10 @@ export type SettingsHistory =
 export type SettingsCompare =
   operations['compareModelSettings']['responses']['200']['content']['application/json']
 export type ManagedUser = Schemas['ManagedUser']
+export type LoginSettings = Schemas['LoginSettings']
+export type LoginSettingsUpdate = Schemas['LoginSettingsUpdate']
+export type LoginSettingsSaved = operations['updateLoginSettings']['responses']['200']['content']['application/json']
+export type SsoDefaultRole = LoginSettings['sso_default_role']
 export type UserCreate = Schemas['UserCreate']
 export type UserUpdate = Schemas['UserUpdate']
 export type AuditEntry = Schemas['AuditEntry']

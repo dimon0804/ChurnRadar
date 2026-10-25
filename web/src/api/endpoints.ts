@@ -42,6 +42,9 @@ import type {
   SummaryHistory,
   AuditList,
   ManagedUser,
+  LoginSettings,
+  LoginSettingsSaved,
+  LoginSettingsUpdate,
   User,
   UserCreate,
   UserCreated,
@@ -81,6 +84,9 @@ export const api = {
       body: { password },
     }),
   deleteUser: (id: string) => request<void>(`/api/v1/auth/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  loginSettings: (signal?: AbortSignal) => request<LoginSettings>('/api/v1/auth/login-settings', { signal }),
+  updateLoginSettings: (body: LoginSettingsUpdate) =>
+    request<LoginSettingsSaved>('/api/v1/auth/login-settings', { method: 'PATCH', body }),
   userAudit: (limit = 50, signal?: AbortSignal) =>
     request<AuditList>('/api/v1/auth/audit', { query: { limit }, signal }),
 
@@ -175,6 +181,7 @@ export const api = {
 export const queryKeys = {
   me: ['me'] as const,
   providers: ['auth-providers'] as const,
+  loginSettings: ['login-settings'] as const,
   customers: ['customers'] as const,
   customerList: (query: Record<string, unknown>) => ['customers', query] as const,
   customer: (id: number) => ['customer', id] as const,

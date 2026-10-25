@@ -21,6 +21,7 @@ const ModelQualityPage = lazy(() => import('@/pages/model-quality'))
 const MarketingPage = lazy(() => import('@/pages/marketing'))
 const NotificationsPage = lazy(() => import('@/pages/notifications'))
 const UsersPage = lazy(() => import('@/pages/users'))
+const LoginSettingsPage = lazy(() => import('@/pages/login-settings'))
 const ProfilePage = lazy(() => import('@/pages/profile'))
 const IntegrationsPage = lazy(() => import('@/pages/integrations'))
 const AuditPage = lazy(() => import('@/pages/audit'))
@@ -130,6 +131,7 @@ export const router = createBrowserRouter([
       { path: 'model', element: <AdminOnly><ModelPage /></AdminOnly> },
       { path: 'data', element: <AdminOnly><DataPage /></AdminOnly> },
       { path: 'users', element: <AdminOnly><UsersPage /></AdminOnly> },
+      { path: 'login-settings', element: <AdminOnly><LoginSettingsPage /></AdminOnly> },
       { path: 'integrations', element: <AdminOnly><IntegrationsPage /></AdminOnly> },
       { path: 'audit', element: <AdminOnly><AuditPage /></AdminOnly> },
       { path: 'profile', element: <Lazy><ProfilePage /></Lazy> },

@@ -63,7 +63,7 @@ export const FEATURES: Feature[] = [
   {
     id: 'auth',
     title: 'Вход по логину и паролю',
-    detail: 'Роли администратор и аналитик. SSO через Authentik по OIDC и SAML, роль из группы; включается профилем sso.',
+    detail: 'Три роли: администратор, маркетолог и аналитик. SSO через Authentik по OIDC и SAML, роль из группы; включается профилем sso. Способы входа выбирает админ: например, только SSO без пароля.',
     target: { kind: 'step', step: 'roles' },
   },
   {

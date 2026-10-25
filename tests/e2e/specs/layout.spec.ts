@@ -13,6 +13,7 @@ const PAGES: { path: string; heading: string }[] = [
   { path: '/mail', heading: 'Письма' },
   { path: '/notifications', heading: 'Уведомления' },
   { path: '/users', heading: 'Пользователи' },
+  { path: '/login-settings', heading: 'Вход и регистрация' },
   { path: '/data', heading: 'Данные' },
   { path: '/profile', heading: 'Профиль' },
   { path: '/playbooks', heading: 'Сценарии' },
@@ -33,7 +34,7 @@ const DIALOGS: { name: string; path: string; open: (page: Page) => Promise<void>
 ]
 
 const MAIN_NAV = ['Обзор', 'Клиенты', 'Маркетинг', 'Модель', 'Качество модели', 'Письма', 'Сценарии']
-const ADMIN_NAV = ['Данные', 'Пользователи', 'Интеграции', 'Журнал действий']
+const ADMIN_NAV = ['Данные', 'Пользователи', 'Вход и регистрация', 'Интеграции', 'Журнал действий']
 
 /** Подписи основных разделов видны целиком (не только иконки и не обрезаны). */
 async function expectMainLabelsVisible(page: Page) {

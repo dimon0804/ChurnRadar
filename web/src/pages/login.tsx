@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertCircle, ArrowRight, Eye, EyeOff, KeyRound, Loader2, Moon, ShieldCheck, Sun } from 'lucide-react'
+import { AlertCircle, ArrowRight, Eye, EyeOff, Info, KeyRound, Loader2, Moon, ShieldCheck, Sun } from 'lucide-react'
 import { useEffect, useId, useState, type FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { z } from 'zod'
@@ -10,7 +10,9 @@ import { RadarBackdrop } from '@/components/overview-hero'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Skeleton } from '@/components/ui/skeleton'
 import { plural } from '@/lib/format'
+import { loginView, ssoErrorText } from '@/lib/login-settings'
 import { safeNext } from '@/lib/url-state'
 import { useTheme } from '@/providers/theme'
 
@@ -37,13 +39,6 @@ function loginErrorText(error: unknown, retryLeft: number): string {
 function withNext(url: string, next: string): string {
   const sep = url.includes('?') ? '&' : '?'
   return `${url}${sep}next=${encodeURIComponent(next)}`
-}
-
-const SSO_ERRORS: Record<string, string> = {
-  oidc_failed: 'Не удалось войти через SSO. Попробуйте ещё раз или войдите по логину и паролю.',
-  oidc_denied: 'Вход через SSO отменён.',
-  blocked: 'Учётная запись заблокирована в панели. Обратитесь к администратору.',
-  forbidden:'У этой учётной записи нет доступа к панели: её нет ни в одной группе ChurnRadar у провайдера входа.',
 }
 
 export function LoginPage() {
@@ -86,6 +81,10 @@ export function LoginPage() {
       navigate(next, { replace: true })
     },
     onError: (error) => {
+      // пароль выключили, пока страница была открыта: перечитываем способы входа, форма исчезнет
+      if (isApiError(error) && error.code === 'password_login_disabled') {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.providers })
+      }
       if (isApiError(error) && error.status === 429) {
         setRetryUntil(Date.now() + (error.retryAfter ?? 30) * 1000)
         setNow(Date.now())
@@ -125,24 +124,11 @@ export function LoginPage() {
     login.mutate(parsed.data)
   }
 
-  // кнопка SSO есть, только если провайдер настроен и прямо сейчас отвечает
-  const oidc = providers.data?.oidc
-  const saml = providers.data?.saml
-  const ssoButtons = [
-    oidc?.enabled && {
-      key: 'oidc',
-      url: oidc.login_url || '/api/v1/auth/oidc/login',
-      label: oidc.display_name?.trim() || 'Войти через SSO (OIDC)',
-    },
-    saml?.enabled && {
-      key: 'saml',
-      url: saml.login_url || '/api/v1/auth/saml/login',
-      label: saml.display_name?.trim() || 'Войти через SSO (SAML)',
-    },
-  ].filter((b): b is { key: string; url: string; label: string } => Boolean(b))
-  const ssoError = params.get('error')
-  const ssoErrorText = ssoError ? (SSO_ERRORS[ssoError] ?? SSO_ERRORS.oidc_failed) : null
-  const formError = login.isError ? loginErrorText(login.error, retryLeft) : ssoErrorText
+  // кнопка SSO есть, только если провайдер настроен, отвечает и не выключен администратором;
+  // форма пароля — только если вход по паролю включён (или открыт админам аварийным ключом)
+  const view = loginView(providers.data)
+  const ssoButtons = view.ssoButtons
+  const formError = login.isError ? loginErrorText(login.error, retryLeft) : ssoErrorText(params.get('error'))
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-x-clip bg-background">
@@ -179,72 +165,110 @@ export function LoginPage() {
             </div>
           )}
 
-          <form className="mt-6 space-y-4" onSubmit={onSubmit} noValidate aria-describedby={formError ? errorId : undefined}>
-            <div className="space-y-1.5">
-              <Label htmlFor={usernameId}>Логин</Label>
-              <Input
-                id={usernameId}
-                name="username"
-                autoComplete="username"
-                autoCapitalize="none"
-                spellCheck={false}
-                autoFocus
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                aria-invalid={fieldErrors.username ? true : undefined}
-                className="h-10"
-              />
-              {fieldErrors.username && <p className="text-xs text-destructive">{fieldErrors.username}</p>}
+          {providers.isPending ? (
+            <div className="mt-6 space-y-3" aria-busy="true" aria-label="Загружаем способы входа">
+              <Skeleton className="h-10" />
+              <Skeleton className="h-10" />
+              <Skeleton className="h-11" />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor={passwordId}>Пароль</Label>
-              <div className="relative">
-                <Input
-                  id={passwordId}
-                  name="password"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  aria-invalid={fieldErrors.password ? true : undefined}
-                  className="h-10 pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-md text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-label={showPassword ? 'Скрыть пароль' : 'Показать пароль'}
-                  aria-pressed={showPassword}
-                >
-                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                </button>
-              </div>
-              {fieldErrors.password && <p className="text-xs text-destructive">{fieldErrors.password}</p>}
+          ) : view.nothingAvailable ? (
+            <p role="status" className="mt-6 flex gap-2.5 rounded-lg border border-border bg-surface-2 px-3.5 py-3 text-[13px] leading-5 text-muted-foreground">
+              <Info className="mt-0.5 size-4 shrink-0" />
+              <span>
+                Вход по паролю отключён администратором, а провайдер SSO сейчас не отвечает. Попробуйте через минуту
+                или напишите администратору.
+              </span>
+            </p>
+          ) : view.ssoOnly ? (
+            <div className="mt-6 space-y-3" data-testid="sso-only">
+              <p className="text-[13px] leading-5 text-muted-foreground">
+                Вход по паролю отключён администратором. Войдите через корпоративный аккаунт:
+              </p>
+              {ssoButtons.map((sso, i) => (
+                <Button key={sso.key} asChild variant={i === 0 ? 'default' : 'outline'} size="lg" className="h-12 w-full text-sm">
+                  <a href={withNext(sso.url, next)}>
+                    {sso.key === 'saml' ? <ShieldCheck /> : <KeyRound />}
+                    {sso.label}
+                  </a>
+                </Button>
+              ))}
             </div>
-            <Button type="submit" size="lg" className="w-full" disabled={login.isPending || locked}>
-              {login.isPending ? <Loader2 className="animate-spin" /> : null}
-              {login.isPending ? 'Входим…' : locked ? `Подождите ${retryLeft} с` : 'Войти'}
-              {!login.isPending && !locked && <ArrowRight />}
-            </Button>
-          </form>
-
-          {ssoButtons.length > 0 && (
+          ) : (
             <>
-              <div className="my-6 flex items-center gap-3 text-xs text-subtle-foreground">
-                <div className="h-px flex-1 bg-border" />
-                или
-                <div className="h-px flex-1 bg-border" />
-              </div>
-              <div className="space-y-2.5">
-                {ssoButtons.map((sso) => (
-                  <Button key={sso.key} asChild variant="outline" size="lg" className="w-full">
-                    <a href={withNext(sso.url, next)}>
-                      {sso.key === 'saml' ? <ShieldCheck /> : <KeyRound />}
-                      {sso.label}
-                    </a>
-                  </Button>
-                ))}
-              </div>
+              {view.adminsOnly && (
+                <p role="status" className="mt-6 flex gap-2.5 rounded-lg border border-risk-medium/25 bg-risk-medium-bg px-3.5 py-3 text-[13px] leading-5 text-risk-medium">
+                  <Info className="mt-0.5 size-4 shrink-0" />
+                  <span>Вход по паролю отключён. Сейчас он открыт только администраторам по аварийному ключу на сервере.</span>
+                </p>
+              )}
+              <form className="mt-6 space-y-4" onSubmit={onSubmit} noValidate aria-describedby={formError ? errorId : undefined}>
+                <div className="space-y-1.5">
+                  <Label htmlFor={usernameId}>Логин</Label>
+                  <Input
+                    id={usernameId}
+                    name="username"
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    autoFocus
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    aria-invalid={fieldErrors.username ? true : undefined}
+                    className="h-10"
+                  />
+                  {fieldErrors.username && <p className="text-xs text-destructive">{fieldErrors.username}</p>}
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor={passwordId}>Пароль</Label>
+                  <div className="relative">
+                    <Input
+                      id={passwordId}
+                      name="password"
+                      type={showPassword ? 'text' : 'password'}
+                      autoComplete="current-password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      aria-invalid={fieldErrors.password ? true : undefined}
+                      className="h-10 pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-md text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      aria-label={showPassword ? 'Скрыть пароль' : 'Показать пароль'}
+                      aria-pressed={showPassword}
+                    >
+                      {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                  {fieldErrors.password && <p className="text-xs text-destructive">{fieldErrors.password}</p>}
+                </div>
+                <Button type="submit" size="lg" className="w-full" disabled={login.isPending || locked}>
+                  {login.isPending ? <Loader2 className="animate-spin" /> : null}
+                  {login.isPending ? 'Входим…' : locked ? `Подождите ${retryLeft} с` : 'Войти'}
+                  {!login.isPending && !locked && <ArrowRight />}
+                </Button>
+              </form>
+
+              {ssoButtons.length > 0 && (
+                <>
+                  <div className="my-6 flex items-center gap-3 text-xs text-subtle-foreground">
+                    <div className="h-px flex-1 bg-border" />
+                    или
+                    <div className="h-px flex-1 bg-border" />
+                  </div>
+                  <div className="space-y-2.5">
+                    {ssoButtons.map((sso) => (
+                      <Button key={sso.key} asChild variant="outline" size="lg" className="w-full">
+                        <a href={withNext(sso.url, next)}>
+                          {sso.key === 'saml' ? <ShieldCheck /> : <KeyRound />}
+                          {sso.label}
+                        </a>
+                      </Button>
+                    ))}
+                  </div>
+                </>
+              )}
             </>
           )}
         </div>

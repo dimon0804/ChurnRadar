@@ -174,7 +174,7 @@ export function DemoPanel({
       </div>
 
       <div className="px-5 pt-3">
-        <div className="inline-flex w-full rounded-md border border-border p-0.5" role="tablist" aria-label="Разделы пульта">
+        <div className="inline-flex w-full rounded-[11px] border border-border bg-surface-2 p-[3px]" role="tablist" aria-label="Разделы пульта">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -183,8 +183,8 @@ export function DemoPanel({
               aria-selected={tab === t.id}
               onClick={() => onTab(t.id)}
               className={cn(
-                'h-7 flex-1 rounded-[5px] text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                tab === t.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
+                'h-8 flex-1 rounded-[8px] text-[13px] font-semibold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                tab === t.id ? 'bg-card text-foreground shadow-sm ring-1 ring-brand/45' : 'text-muted-foreground hover:text-foreground',
               )}
             >
               {t.label}

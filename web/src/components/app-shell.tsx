@@ -332,10 +332,10 @@ function DesktopNav({ items }: { items: NavItem[] }) {
           }
         >
           {/* узко — только иконки; шире — подписи; совсем широко (и разделов немного) — и то и другое */}
-          <span aria-hidden className={many ? 'min-[1400px]:hidden' : 'xl:max-[1439px]:hidden'}>
+          <span aria-hidden className={many ? 'min-[1400px]:hidden' : 'xl:max-[1440px]:hidden'}>
             {item.icon}
           </span>
-          <span className={many ? 'max-[1399px]:sr-only' : 'max-xl:sr-only'}>{item.label}</span>
+          <span className={many ? 'max-[1400px]:sr-only' : 'max-xl:sr-only'}>{item.label}</span>
         </NavLink>
       ))}
     </nav>

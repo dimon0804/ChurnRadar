@@ -143,7 +143,7 @@ export function ReasonPanel({
           <p className="text-xs text-muted-foreground">Причина риска{r?.group ? ` · ${groupLabel(r.group)}` : ''}</p>
           <h2 className="truncate text-[15px] font-semibold">{title}</h2>
         </div>
-        <div className="inline-flex shrink-0 rounded-md border border-border p-0.5" role="group" aria-label="Каких клиентов показывать">
+        <div className="inline-flex shrink-0 rounded-[11px] border border-border bg-surface-2 p-[3px]" role="group" aria-label="Каких клиентов показывать">
           {(
             [
               ['any', 'Есть среди причин'],
@@ -156,8 +156,8 @@ export function ReasonPanel({
               aria-pressed={scope === key}
               onClick={() => onScopeChange(key)}
               className={cn(
-                'inline-flex h-7 items-center rounded px-2.5 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                scope === key ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
+                'inline-flex h-7 items-center rounded-[8px] px-2.5 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                scope === key ? 'bg-card text-foreground shadow-sm ring-1 ring-brand/45' : 'text-muted-foreground hover:text-foreground',
               )}
             >
               {text}

@@ -81,7 +81,7 @@ function Segmented<K extends string>({
   label: string
 }) {
   return (
-    <div className="inline-flex rounded-md border border-border p-0.5" role="group" aria-label={label}>
+    <div className="inline-flex rounded-[11px] border border-border bg-surface-2 p-[3px]" role="group" aria-label={label}>
       {options.map(([key, text, icon]) => (
         <button
           key={key}
@@ -89,8 +89,8 @@ function Segmented<K extends string>({
           onClick={() => onChange(key)}
           aria-pressed={value === key}
           className={cn(
-            'inline-flex h-7 items-center gap-1.5 rounded px-2.5 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5',
-            value === key ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
+            'inline-flex h-7 items-center gap-1.5 rounded-[8px] px-2.5 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5',
+            value === key ? 'bg-card text-foreground shadow-sm ring-1 ring-brand/45' : 'text-muted-foreground hover:text-foreground',
           )}
         >
           {icon}

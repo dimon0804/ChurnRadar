@@ -228,7 +228,7 @@ export function ChurnChart({
             </li>
           )}
         </ul>
-        <div className="ml-auto inline-flex rounded-md border border-border p-0.5" role="group" aria-label="Вид">
+        <div className="ml-auto inline-flex rounded-[11px] border border-border bg-surface-2 p-[3px]" role="group" aria-label="Вид">
           {(
             [
               ['chart', 'График', LineIcon],
@@ -241,8 +241,8 @@ export function ChurnChart({
               onClick={() => setView(key)}
               aria-pressed={view === key}
               className={cn(
-                'inline-flex h-6 items-center gap-1.5 rounded px-2 text-xs font-medium transition-colors',
-                view === key ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
+                'inline-flex h-6 items-center gap-1.5 rounded-[8px] px-2 text-xs font-medium transition-colors',
+                view === key ? 'bg-card text-foreground shadow-sm ring-1 ring-brand/45' : 'text-muted-foreground hover:text-foreground',
               )}
             >
               <Icon className="size-3.5" />

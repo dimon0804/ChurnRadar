@@ -1,6 +1,9 @@
 <div align="center">
 
-# ChurnRadar
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/brand/logo-dark.svg">
+  <img src="docs/img/brand/logo-light.svg" alt="ChurnRadar" width="440">
+</picture>
 
 **Русский** · [English](README.en.md)
 

@@ -35,6 +35,8 @@
   --brand: #0a1a3d;
   --brand-foreground: #ffffff;
   --brand-soft: rgba(10, 26, 61, 0.08);
+  /* «Churn» в логотипе: голубой бренда, в светлой теме темнее, чтобы читался на светлом фоне */
+  --logo-accent: #5a77c7;
   --link: #2c4fa3;
   --destructive: #b4232a;
   --destructive-foreground: #ffffff;
@@ -92,6 +94,7 @@
   --brand: #93a9e2;
   --brand-foreground: #262626;
   --brand-soft: rgba(147, 169, 226, 0.12);
+  --logo-accent: #93a9e2;
   --link: #aebde6;
   --destructive: #ef9a9a;
   --destructive-foreground: #262626;
@@ -593,4 +596,12 @@
     transition-duration: 1ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* логотип вставлен в разметку (components/brand-logo.tsx): цвет «Churn» и пульса знака */
+.cr-logo .cr-accent {
+  fill: var(--logo-accent);
+}
+.cr-logo .cr-accent-stroke {
+  stroke: var(--logo-accent);
 }

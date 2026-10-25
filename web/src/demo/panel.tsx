@@ -1,5 +1,6 @@
 import { ArrowUpRight, Check, Loader2, Lock, Play, RotateCcw, X } from 'lucide-react'
 import { useState } from 'react'
+import { BrandLogo } from '@/components/brand-logo'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { DemoStatus } from './demo-mode'
@@ -157,6 +158,7 @@ export function DemoPanel({
       className="fixed top-3 right-3 bottom-3 z-[70] flex w-[min(440px,calc(100vw-24px))] animate-sheet-in flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-pop"
     >
       <div className="flex items-start gap-3 border-b border-border px-5 pt-4 pb-3">
+        <BrandLogo variant="mark" className="mt-0.5 size-9 text-foreground" />
         <div className="min-w-0 flex-1">
           <h2 className="text-[15px] font-semibold tracking-[-0.01em]">Пульт демонстрации</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">

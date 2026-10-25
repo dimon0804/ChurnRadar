@@ -161,7 +161,7 @@ export function LoginPage() {
 
       <div className="relative z-[1] flex flex-1 items-center justify-center px-4 py-12">
         <div className="w-full max-w-[420px] animate-enter rounded-2xl border border-border bg-card p-6 shadow-card sm:p-8">
-          <Logo className="mb-7" />
+          <Logo className="mb-7 h-16" />
           <p className="eyebrow mb-2">Центр мониторинга</p>
           <h1 className="text-[28px] leading-tight font-extrabold tracking-[-0.8px]">Вход в панель</h1>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">

@@ -22,7 +22,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.reports import LEVEL_TITLES, done_lines, kpis, money, num
 
@@ -141,6 +141,19 @@ def _table(data: list[list[Any]], widths: list[float], num_cols: tuple[int, ...]
     return t
 
 
+# логотип в светлой теме на прозрачном фоне, 1796x522 (2x от исходных 898x261)
+LOGO_PATH = Path(__file__).with_name("assets") / "logo.png"
+LOGO_HEIGHT = 13 * mm
+
+
+def _logo() -> list[Any]:
+    if not LOGO_PATH.is_file():
+        return []
+    logo = Image(str(LOGO_PATH), width=LOGO_HEIGHT * 1796 / 522, height=LOGO_HEIGHT)
+    logo.hAlign = "LEFT"
+    return [logo, Spacer(1, 4)]
+
+
 def render_pdf(report: dict[str, Any]) -> bytes:
     s = _styles()
     buf = io.BytesIO()
@@ -150,7 +163,8 @@ def render_pdf(report: dict[str, Any]) -> bytes:
     )
     width = doc.width
     story: list[Any] = [
-        Paragraph("ChurnRadar — еженедельный отчёт", s["h1"]),
+        *_logo(),
+        Paragraph("Еженедельный отчёт", s["h1"]),
         Paragraph(
             _esc(
                 f"Период {report['period_from']} — {report['period_to']}. Пересчёт {report['scored_at'] or '—'}, "

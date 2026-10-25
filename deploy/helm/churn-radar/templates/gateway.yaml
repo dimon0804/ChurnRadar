@@ -155,7 +155,7 @@ spec:
           port: 8000
     {{- if .Values.web.enabled }}
     - kind: Rule
-      match: {{ printf "%s(Path(`/login`) || Path(`/theme-init.js`) || PathPrefix(`/assets/`) || PathPrefix(`/fonts/`) || Path(`/favicon.svg`) || Path(`/robots.txt`))" $hostPrefix | quote }}
+      match: {{ printf "%s(Path(`/login`) || Path(`/theme-init.js`) || PathPrefix(`/assets/`) || PathPrefix(`/fonts/`) || Path(`/favicon.svg`) || Path(`/favicon-32.png`) || Path(`/apple-touch-icon.png`) || Path(`/robots.txt`))" $hostPrefix | quote }}
       priority: 120
       {{- if .Values.gateway.securityHeaders }}
       middlewares:

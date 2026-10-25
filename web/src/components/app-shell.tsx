@@ -36,6 +36,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
+import { BrandLogo } from '@/components/brand-logo'
 import { AlertsBell } from '@/components/alerts-bell'
 import { RecalcToast } from '@/components/recalc-toast'
 import { formatAgo } from '@/lib/format'
@@ -91,13 +92,16 @@ function isActivePath(pathname: string, item: NavItem) {
 export const HEADER_ICON_BTN =
   'size-10 rounded-[11px] border border-border bg-card text-foreground hover:border-brand/60 hover:bg-brand-soft [&_svg]:size-[17px]'
 
-export function Logo({ className }: { className?: string }) {
+/**
+ * Логотип с подписью для экранного диктора. responsive — в шапке: на телефоне только знак,
+ * шире — полный логотип. Высота задаётся классом (по умолчанию 40px).
+ */
+export function Logo({ className, responsive = false }: { className?: string; responsive?: boolean }) {
   return (
-    <span className={cn('inline-flex items-center gap-2.5', className)}>
-      <span className="grid size-[34px] shrink-0 place-items-center rounded-[11px] bg-brand text-brand-foreground" aria-hidden>
-        <Activity className="size-[21px]" strokeWidth={2.25} />
-      </span>
-      <span className="text-[19px] font-extrabold tracking-[-0.5px] whitespace-nowrap max-sm:text-base">ChurnRadar</span>
+    <span className={cn('inline-flex h-10 items-center text-foreground', className)}>
+      <BrandLogo className={cn('h-full', responsive && 'max-sm:hidden')} />
+      {responsive && <BrandLogo variant="mark" className="h-[34px] sm:hidden" />}
+      <span className="sr-only">ChurnRadar</span>
     </span>
   )
 }
@@ -453,7 +457,7 @@ export function AppShell() {
         <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-2 px-3.5 sm:gap-3 md:px-6 lg:h-[70px] lg:gap-[22px] xl:px-7">
           <MobileNav items={items} adminItems={adminItems} />
           <NavLink to="/" className="shrink-0 rounded-[11px] outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="ChurnRadar, обзор">
-            <Logo className="[&>span:last-child]:max-sm:sr-only" />
+            <Logo responsive className="h-10 lg:h-12" />
           </NavLink>
           <div className="flex min-w-0 flex-1 justify-center max-lg:hidden">
             <DesktopNav items={items} adminItems={adminItems} />

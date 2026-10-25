@@ -43,6 +43,15 @@ def test_end_to_end_small(tmp_path, capsys):
         high = scenario["thresholds"]["high"]
         assert high["flagged"] == levels["high"]["n"]
         assert abs(high["churned"]["precision"] - levels["high"]["churn_rate"]) < 1e-9
+    honesty = report["honesty"]
+    assert honesty["calibration"]["fit_scenario"] == "calendar"
+    for scenario in honesty["calibration"]["by_scenario"].values():
+        assert set(scenario["methods"]) == {"rules", "rules_calibrated", "logreg", "gbm"}
+        points = scenario["reliability"]["rules_calibrated"]
+        assert points and all(0.0 <= p["predicted"] <= 1.0 for p in points)
+    assert [g["cap"] for g in honesty["groups"]] == [None, 85.0, 70.0, 60.0, 50.0]
+    # пробный прогон в другой каталог не подменяет таблицу, которая идёт в рантайм
+    assert honesty["tables_sha"] is None and "case" not in honesty
     labels = [row["label"] for row in report["robustness"]]
     assert labels[0] == "seed 5 (основной)"
     assert len(labels) == 6

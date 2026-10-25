@@ -31,6 +31,7 @@ ENDPOINTS = [
     ("PATCH", "/api/v1/model/settings", {"horizon_days": "x"}, "admin"),
     ("POST", "/api/v1/model/settings/preview", {"horizon_days": "x"}, "admin"),
     ("POST", "/api/v1/model/settings/reset", None, "admin"),
+    ("POST", "/api/v1/model/settings/rollback", {"version": 0}, "admin"),
     ("PUT", "/api/v1/simulator", None, "admin"),
 ]
 

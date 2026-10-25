@@ -6,7 +6,7 @@
   "accounts": 20000,
   "seed": 42,
   "reference": "2026-10-01T12:00:00Z",
-  "riskcore_sources": "2ddf6ec1cae8",
+  "riskcore_sources": "25e8e9e3cf56",
   "simulator_sources": "530c4ad01846"
  },
  "settings": {

@@ -28,11 +28,14 @@ export function OverviewHero({
   eyebrow,
   description,
   meta,
+  actions,
 }: {
   title: string
   eyebrow: string
   description: ReactNode
   meta?: ReactNode
+  /** кнопки под заголовком, например «Скачать отчёт» */
+  actions?: ReactNode
 }) {
   const ref = useRef<HTMLDivElement>(null)
 
@@ -71,6 +74,7 @@ export function OverviewHero({
         <h1 className="mb-2.5 text-[clamp(32px,4.2vw,48px)] leading-[1.1] font-extrabold tracking-[-1.1px]">{title}</h1>
         <p className="max-w-[520px] text-sm leading-6 text-muted-foreground">{description}</p>
         {meta && <div className="mt-3.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 opacity-90">{meta}</div>}
+        {actions && <div className="mt-4 flex flex-wrap items-center justify-center gap-2">{actions}</div>}
       </div>
     </>
   )

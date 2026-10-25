@@ -26,7 +26,7 @@ from svckit.logs import get_logger
 
 from . import repository as repo
 from .events import scores_updated_payload
-from .metrics import CUSTOMERS, DURATION, RUNS
+from .metrics import CUSTOMERS, DURATION, RUNS, publish_drift
 
 log = get_logger("scoring.engine")
 
@@ -84,6 +84,8 @@ class _Cache:
     scored_at: datetime
     results: dict[int, Any]
     services_by_owner: dict[int, list[Service]]
+    # PSI признаков из последнего полного пересчёта: инкрементальный его переносит, а не считает заново
+    drift: dict[str, Any] | None = None
 
 
 def _group_services(services: Sequence[Service]) -> dict[int, list[Service]]:
@@ -321,8 +323,8 @@ class Scorer:
                     await asyncio.gather(producer, return_exceptions=True)
 
                 started = time.perf_counter()
-                summary = await asyncio.to_thread(
-                    _without_gc, build_summary, list(slim.values()), services, history, settings, as_of
+                summary, drift = await asyncio.to_thread(
+                    _without_gc, _full_summary, list(slim.values()), services, history, settings, as_of
                 )
                 summary = _stamp_summary(summary, version, scored_at)
                 timings["summary_s"] = time.perf_counter() - started
@@ -348,7 +350,9 @@ class Scorer:
                 scored_at=scored_at,
                 results=slim,
                 services_by_owner=_group_services(services),
+                drift=drift,
             )
+        publish_drift(drift)
         # Кэш живёт до следующего полного пересчёта: убираем его из обходов циклического GC.
         gc.collect()
         gc.freeze()
@@ -416,6 +420,8 @@ class Scorer:
         summary = await asyncio.to_thread(
             _without_gc, build_summary, all_results, all_services, history, settings, as_of
         )
+        if cache.drift is not None:
+            summary["drift"] = cache.drift
         scored_at = now_ms()
         summary = _stamp_summary(summary, version, scored_at)
         records = _records(results, version, scored_at)
@@ -490,8 +496,32 @@ def build_summary(
     """Сводка и маркетинговые метрики одним проходом. Маркетинг лежит в той же строке
     scoring.summary под ключом marketing: api отдаёт его отдельно, в /analytics/marketing."""
     summary = riskcore.build_summary(results, services, history, settings, as_of)
-    summary["marketing"] = riskcore.build_marketing(results, history, settings.horizon_days, as_of)
+    # Маркетинг читает risk_score как прогнозный отток, поэтому отдаём ему долю ожидаемой
+    # (калиброванной) потери, а не ранжирующий score. for_money переживает результат без услуг.
+    money = [r.for_money() for r in results]
+    summary["marketing"] = riskcore.build_marketing(money, history, settings.horizon_days, as_of)
     return summary
+
+
+def drift_of(results: Sequence[Any], settings: Settings) -> dict[str, Any] | None:
+    """PSI признаков против эталона калибровки. Монитор вспомогательный: если он упал,
+    пересчёт всё равно должен записать оценки, поэтому ошибку только логируем."""
+    try:
+        return riskcore.drift.feature_psi(results, settings)
+    except Exception as exc:
+        log.warning("drift_failed", error=str(exc))
+        return None
+
+
+def _full_summary(
+    results: Sequence[Any], services: Sequence[Service], history: Sequence[Any], settings: Settings, as_of: datetime
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Сводка полного пересчёта: обычная плюс дрейф признаков в summary["drift"]."""
+    summary = build_summary(results, services, history, settings, as_of)
+    drift = drift_of(results, settings)
+    if drift is not None:
+        summary["drift"] = drift
+    return summary, drift
 
 
 def _without_gc(func: Any, *args: Any) -> Any:

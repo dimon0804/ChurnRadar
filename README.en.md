@@ -107,7 +107,7 @@ On the first start, while the database is empty, `ingest` loads the case sample
 [`data/sample/data.json`](data/sample/data.json) (10 customers, 30 services, 100 transactions)
 and scores it at a fixed moment, 2026-10-19 15:00 UTC, so everyone gets the same result. On
 this set there are 4 high-risk customers, 2 medium and 4 without a score (they have no active
-services), and the expected loss over 30 days is €2,297.83. The per-customer breakdown is in
+services), and the expected loss over 30 days is €1,531.68 by calibrated probability (€2,297.83 by the raw score). The per-customer breakdown is in
 [docs/model.md](docs/model.md#результат-на-тестовом-наборе).
 
 Ten customers are not enough to get a feel for the panel. On the "Данные" (data) tab an
@@ -831,8 +831,8 @@ p_s = 1 − Π (1 − w_i · x_i)
 A weight reads literally: 85 for "waiting for payment" means this reason alone, at full
 strength, gives an 85% chance of losing the service. The result always stays between 0 and 1,
 raising any weight can never lower the risk, and a new feature adds one more factor without
-changing what the old weights mean. We deliberately did not train a model: the case data has
-neither churn labels nor status history.
+changing what the old weights mean. The main model is rules: the case data has neither churn
+labels nor status history. A trained model runs next to it as a challenger (see "Model honesty").
 
 A customer's score is the expected share of their revenue we lose over the horizon:
 `risk_score = 100 · Σ p_s · rev_s / Σ rev_s`. Loyalty is `100 − risk_score`. Levels: 65 and
@@ -854,6 +854,34 @@ chosen by how much money it saves if the reason is removed.
 
 Full description, the reasoning behind the weights and the sample breakdown:
 [docs/model.md](docs/model.md).
+
+
+### Model honesty
+
+**The score ranks, the probability is calibrated.** Risk levels still come from the raw score.
+Money and forecasts (`expected_loss`, expected non-renewals, churn and LTV in marketing) use a
+calibrated probability: isotonic regression fitted on the synthetic future and shipped in
+riskcore as an 80-point table (no sklearn at runtime). In the renew-on-expiry scenario the Brier
+score drops from 0.086 to 0.062; in the live-stream scenario it grows from 0.168 to 0.180. The
+absolute loss level depends on simulation assumptions, and the quality page shows both. On the
+case data the expected loss goes from €2,297.83 to €1,531.68, expected non-renewals from 8.0 to
+5.1 services, forecast churn from 65% to 42% a month; levels do not change. The "use calibrated
+probabilities" switch is in the model settings and is on by default.
+
+**Groups of correlated features.** "Payment" (awaiting payment, not enough money, failed
+payments) and "Site behaviour" (three Yandex Metrica features). Inside a group it is noisy-OR,
+and the group's contribution is capped, so one fact no longer earns 80 points out of 82. On
+the synthetic data the payment group does not improve quality (cap 60: AUC 0.932 → 0.925), so
+both groups are off by default and can be switched on in the settings.
+
+**Challenger.** Logistic regression and gradient boosting on the same features. In the scenario
+they were trained on, boosting beats the rules (AUC 0.943 vs 0.932); in the other scenario the
+rules are no worse (0.765 vs 0.753–0.759). The logistic score is shown on the customer card for
+comparison. Tables and the reliability diagram are on the "Качество модели" page.
+
+**Drift and versions.** A full rescore computes feature PSI against the calibration reference
+(`churn_feature_psi`, the `ModelDrift` alert, the "model is stale" event). Any settings version
+can be rolled back, and two versions can be compared together with the effect on levels and loss.
 
 ## Quality check
 
@@ -1041,6 +1069,15 @@ Every service also exposes its own metrics (`scoring_runs_total`, `scoring_durat
 together with the PostgreSQL, Redis and NATS exporters. Alert rules are in
 [`monitoring/prometheus/alerts.yml`](monitoring/prometheus/alerts.yml); Grafana dashboards are
 provisioned automatically from [`monitoring/grafana/`](monitoring/grafana/).
+
+`scoring` also watches for model staleness: after every full rescore it compares the feature
+distribution with the calibration reference and exports PSI as `churn_feature_psi{feature}`
+(plus `churn_feature_psi_services`, the number of paid services in the calculation). The same
+numbers are stored in the summary under `drift`. When a feature's PSI stays above 0.25 for
+15 minutes, the `ModelDrift` alert fires and alerts posts a `model_drift` event ("the model is
+out of date") to the journal and the team channel. The fix is to rerun `python -m tools.calibration`.
+Grafana shows it on the "Дрейф признаков (PSI)" panel of the churn dashboard. Without a
+reference or with fewer than 200 paid services PSI is not computed and there are no series.
 
 ## Reliability
 

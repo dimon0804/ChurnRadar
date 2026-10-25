@@ -287,6 +287,57 @@ async def test_patch_schema_errors(client, body):
     assert_error(await client.patch("/api/v1/model/settings", json=body, headers=ADMIN), 422, "validation_error")
 
 
+def _real_current():
+    api = model_catalog.defaults_api(NOW)
+    return model_catalog.storage_from_api(api), api["weights"], api["groups"]
+
+
+def test_patch_groups_and_calibrated():
+    current, catalog, groups = _real_current()
+    assert current["calibrated"] is True
+    assert current["groups"]["payment"]["enabled"] is False
+    patch = ModelSettingsPatch.model_validate(
+        {"groups": [{"code": "payment", "enabled": True, "cap": 60}], "calibrated": False}
+    )
+    new = apply_patch(current, catalog, patch, groups)
+    assert new["groups"]["payment"] == {"cap": 60.0, "enabled": True}
+    assert new["calibrated"] is False
+    assert current["groups"]["payment"]["enabled"] is False  # исходник не мутирован
+    paths = [c["path"] for c in diff_settings(current, new)]
+    assert paths == ["groups.payment.cap", "groups.payment.enabled", "calibrated"]
+
+
+@pytest.mark.parametrize(
+    ("body", "field"),
+    [
+        ({"groups": [{"code": "nope", "enabled": True}]}, "groups.0.code"),
+        ({"groups": [{"code": "payment"}, {"code": "payment"}]}, "groups.1.code"),
+    ],
+)
+def test_patch_groups_validation(body, field):
+    current, catalog, groups = _real_current()
+    with pytest.raises(ApiError) as exc:
+        apply_patch(current, catalog, ModelSettingsPatch.model_validate(body), groups)
+    assert exc.value.details[0]["field"] == field
+
+
+@pytest.mark.parametrize(
+    "body", [{"groups": [{"code": "payment", "cap": 101}]}, {"calibrated": "да"}, {"groups": [{"cap": 5}]}]
+)
+async def test_patch_groups_schema_errors(client, body):
+    assert_error(await client.patch("/api/v1/model/settings", json=body, headers=ADMIN), 422, "validation_error")
+
+
+async def test_rollback_and_compare_need_admin(client):
+    assert_error(
+        await client.post("/api/v1/model/settings/rollback", json={"version": 1}, headers=ANALYST), 403, "forbidden"
+    )
+    assert_error(await client.get("/api/v1/model/settings/compare?from=1&to=2", headers=ANALYST), 403, "forbidden")
+    assert_error(
+        await client.post("/api/v1/model/settings/rollback", json={"version": 0}, headers=ADMIN), 422, "validation_error"
+    )
+
+
 # --- прокси симулятора -----------------------------------------------------------------
 
 async def test_simulator_proxy_forwards_user(client, app):

@@ -130,3 +130,78 @@ def test_unwritable_settings_path_does_not_break_service(tmp_path):
         resp = c.patch("/api/v1/model/settings", json={"horizon_days": 20}, headers=ADMIN)
         assert resp.status_code == 200
         assert resp.json()["version"] == 2
+
+
+def test_groups_and_calibration_in_settings(client):
+    s = client.get("/api/v1/model/settings").json()
+    assert s["calibrated"] is True
+    assert s["calibration"] == {"available": True, "matches_settings": True}
+    payment = next(g for g in s["groups"] if g["code"] == "payment")
+    assert payment["enabled"] is False and payment["cap"] == payment["default_cap"] == 85
+
+    body = client.patch(
+        "/api/v1/model/settings",
+        json={"groups": [{"code": "payment", "enabled": True, "cap": 70}], "calibrated": False},
+        headers=ADMIN,
+    ).json()
+    payment = next(g for g in body["groups"] if g["code"] == "payment")
+    assert payment["enabled"] is True and payment["cap"] == 70
+    assert body["calibrated"] is False
+    assert body["calibration"]["matches_settings"] is False
+
+    items = client.get("/api/v1/model/settings/history").json()["items"]
+    assert {c["path"] for c in items[0]["changes"]} == {"groups.payment.enabled", "groups.payment.cap", "calibrated"}
+    assert "settings" not in items[0]
+
+    for bad in ({"groups": [{"code": "nope", "enabled": True}]}, {"groups": [{"code": "payment", "cap": 101}]}):
+        assert client.patch("/api/v1/model/settings", json=bad, headers=ADMIN).status_code == 422
+
+
+def test_rollback_creates_new_version(client, recorder):
+    client.patch("/api/v1/model/settings", json={"horizon_days": 14}, headers=ADMIN)
+    client.patch("/api/v1/model/settings", json={"thresholds": {"high": 80}}, headers=ADMIN)
+
+    resp = client.post("/api/v1/model/settings/rollback", json={"version": 2}, headers=ADMIN)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["version"] == 4
+    assert body["horizon_days"] == 14 and body["thresholds"]["high"] == 65
+    items = client.get("/api/v1/model/settings/history").json()["items"]
+    assert items[0]["version"] == 4
+    assert items[0]["changes"] == [{"path": "thresholds.high", "old": 80.0, "new": 65.0}]
+    assert [e["type"] for e in recorder.events][-2:] == ["settings.changed", "scores.updated"]
+
+    # к первой версии (значения по умолчанию) тоже можно вернуться
+    first = client.post("/api/v1/model/settings/rollback", json={"version": 1}, headers=ADMIN).json()
+    assert first["version"] == 5 and first["horizon_days"] == 30
+    # откат к тому, что уже действует, версию не двигает
+    same = client.post("/api/v1/model/settings/rollback", json={"version": 5}, headers=ADMIN).json()
+    assert same["version"] == 5
+
+    assert client.post("/api/v1/model/settings/rollback", json={"version": 99}, headers=ADMIN).status_code == 404
+    assert client.post("/api/v1/model/settings/rollback", json={"version": 2}, headers=ANALYST).status_code == 403
+
+
+def test_rollback_survives_restart(settings_path):
+    with TestClient(create_app(make_config(settings_path))) as c:
+        c.patch("/api/v1/model/settings", json={"horizon_days": 45}, headers=ADMIN)
+        c.patch("/api/v1/model/settings", json={"horizon_days": 60}, headers=ADMIN)
+    with TestClient(create_app(make_config(settings_path))) as c:
+        body = c.post("/api/v1/model/settings/rollback", json={"version": 2}, headers=ADMIN).json()
+        assert body["version"] == 4 and body["horizon_days"] == 45
+
+
+def test_compare_versions(client):
+    client.patch("/api/v1/model/settings", json={"horizon_days": 14}, headers=ADMIN)
+    client.patch("/api/v1/model/settings", json={"groups": [{"code": "payment", "enabled": True}]}, headers=ADMIN)
+
+    body = client.get("/api/v1/model/settings/compare", params={"from": 1, "to": 3}, headers=ADMIN).json()
+    assert body["from"]["version"] == 1 and body["to"]["version"] == 3
+    assert body["to"]["changed_by"] == "admin"
+    assert {c["path"] for c in body["changes"]} == {"horizon_days", "groups.payment.enabled"}
+    assert body["impact"] is None
+
+    missing = client.get("/api/v1/model/settings/compare", params={"from": 1, "to": 42}, headers=ADMIN)
+    assert missing.status_code == 404
+    forbidden = client.get("/api/v1/model/settings/compare", params={"from": 1, "to": 3}, headers=ANALYST)
+    assert forbidden.status_code == 403

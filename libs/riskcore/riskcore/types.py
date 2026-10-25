@@ -110,6 +110,13 @@ class WeightSetting(TypedDict):
     enabled: bool
 
 
+class GroupSetting(TypedDict):
+    """Группа коррелированных признаков (groups.py): потолок вклада 0..100 и включена ли."""
+
+    cap: float
+    enabled: bool
+
+
 DEFAULT_HORIZON_DAYS = 30
 DEFAULT_THRESHOLDS: Thresholds = {"medium": 35.0, "high": 65.0}
 
@@ -120,6 +127,10 @@ class Settings:
     horizon_days: int = DEFAULT_HORIZON_DAYS
     thresholds: Thresholds = field(default_factory=lambda: Thresholds(**DEFAULT_THRESHOLDS))
     weights: dict[str, WeightSetting] = field(default_factory=dict)
+    # Пустой словарь — группы выключены; merge_settings подставляет значения по умолчанию.
+    groups: dict[str, GroupSetting] = field(default_factory=dict)
+    # Деньги и прогнозы по калиброванной вероятности (calibration.py), а не по сырому score.
+    calibrated: bool = False
 
     def effective_weight(self, code: str) -> float:
         """Действующий коэффициент 0..1; выключенный или неизвестный признак даёт 0."""
@@ -134,6 +145,8 @@ class Settings:
             "horizon_days": self.horizon_days,
             "thresholds": dict(self.thresholds),
             "weights": {code: dict(entry) for code, entry in self.weights.items()},
+            "groups": {code: dict(entry) for code, entry in self.groups.items()},
+            "calibrated": self.calibrated,
         }
 
     def level_for(self, score: float | None) -> RiskLevel:

@@ -9,7 +9,7 @@
     "concentration": 8.0,
     "bootstrap": 200,
     "riskcore_version": "1.0.0",
-    "riskcore_sources": "6fce0b3d64ec",
+    "riskcore_sources": "25e8e9e3cf56",
     "simulator_sources": "530c4ad01846",
     "weights": {
       "prolong_wait": 85.0,
@@ -26,6 +26,7 @@
       "panel_absence": 25.0,
       "web_activity_drop": 20.0
     },
+    "groups": {},
     "thresholds": {
       "medium": 35.0,
       "high": 65.0
@@ -2017,7 +2018,998 @@
       }
     }
   },
-  "elapsed_s": 75.4,
+  "honesty": {
+    "calibration": {
+      "fit_scenario": "calendar",
+      "services": 37450,
+      "brier_cross": {
+        "stream": {
+          "stream": 0.15779916499031427,
+          "calendar": 0.08432217536714472
+        },
+        "calendar": {
+          "stream": 0.17986118251658886,
+          "calendar": 0.06240488590538956
+        }
+      },
+      "by_scenario": {
+        "stream": {
+          "methods": {
+            "rules": {
+              "service_roc_auc": 0.7203342293117747,
+              "service_brier": 0.16805679366576853,
+              "service_lift_top10": 2.5937665081880614,
+              "mean_predicted": 0.22130494438714832,
+              "actual_rate": 0.2527369826435247,
+              "customer_roc_auc": 0.765322270685476,
+              "customer_lift_top10": 3.479321587293178,
+              "expected_loss": 15238448.818478411,
+              "actual_loss": 18720826.254271034
+            },
+            "rules_calibrated": {
+              "service_roc_auc": 0.719767896940488,
+              "service_brier": 0.17986118251658886,
+              "service_lift_top10": 2.590596936080296,
+              "mean_predicted": 0.11209573948468805,
+              "actual_rate": 0.2527369826435247,
+              "customer_roc_auc": 0.7589732499190927,
+              "customer_lift_top10": 3.376686732210784,
+              "expected_loss": 7727783.13965893,
+              "actual_loss": 18720826.254271034
+            },
+            "logreg": {
+              "service_roc_auc": 0.726357592329526,
+              "service_brier": 0.17995109677409768,
+              "service_lift_top10": 2.8494453248811413,
+              "mean_predicted": 0.11215915252578475,
+              "actual_rate": 0.2527369826435247,
+              "customer_roc_auc": 0.7591231914352414,
+              "customer_lift_top10": 3.616168060736371,
+              "expected_loss": 7596488.254802746,
+              "actual_loss": 18720826.254271034
+            },
+            "gbm": {
+              "service_roc_auc": 0.7200872873466948,
+              "service_brier": 0.17854744685478066,
+              "service_lift_top10": 2.760697305863709,
+              "mean_predicted": 0.1124440649737807,
+              "actual_rate": 0.2527369826435247,
+              "customer_roc_auc": 0.7528260611353519,
+              "customer_lift_top10": 3.6059045752281316,
+              "expected_loss": 7672339.0901860185,
+              "actual_loss": 18720826.254271034
+            }
+          },
+          "reliability": {
+            "rules": [
+              {
+                "n": 7734,
+                "predicted": 0.0,
+                "actual": 0.1420998189811223
+              },
+              {
+                "n": 1334,
+                "predicted": 0.02199251114715764,
+                "actual": 0.15292353823088456
+              },
+              {
+                "n": 7551,
+                "predicted": 0.04500000000000003,
+                "actual": 0.12448682293735928
+              },
+              {
+                "n": 2099,
+                "predicted": 0.0687491609169464,
+                "actual": 0.1543592186755598
+              },
+              {
+                "n": 3561,
+                "predicted": 0.1199363179209278,
+                "actual": 0.16624543667509126
+              },
+              {
+                "n": 3936,
+                "predicted": 0.21203873618726027,
+                "actual": 0.2385670731707317
+              },
+              {
+                "n": 3745,
+                "predicted": 0.4006676317247749,
+                "actual": 0.272630173564753
+              },
+              {
+                "n": 3745,
+                "predicted": 0.5732494008312601,
+                "actual": 0.5049399198931909
+              },
+              {
+                "n": 3745,
+                "predicted": 0.7651363652848849,
+                "actual": 0.6555407209612817
+              }
+            ],
+            "rules_calibrated": [
+              {
+                "n": 4110,
+                "predicted": 0.0025012506253126567,
+                "actual": 0.14549878345498785
+              },
+              {
+                "n": 4085,
+                "predicted": 0.004291124840292026,
+                "actual": 0.1412484700122399
+              },
+              {
+                "n": 735,
+                "predicted": 0.0055233177747040585,
+                "actual": 0.145578231292517
+              },
+              {
+                "n": 4845,
+                "predicted": 0.008564437194127245,
+                "actual": 0.12920536635706914
+              },
+              {
+                "n": 4739,
+                "predicted": 0.008930821809113042,
+                "actual": 0.12935218400506435
+              },
+              {
+                "n": 3965,
+                "predicted": 0.013750840427232191,
+                "actual": 0.1707440100882724
+              },
+              {
+                "n": 4271,
+                "predicted": 0.05579596462125134,
+                "actual": 0.23671271365019902
+              },
+              {
+                "n": 3313,
+                "predicted": 0.12578906949077764,
+                "actual": 0.2840325988530033
+              },
+              {
+                "n": 3750,
+                "predicted": 0.3297626774409572,
+                "actual": 0.5157333333333334
+              },
+              {
+                "n": 3637,
+                "predicted": 0.587330954775288,
+                "actual": 0.6546604344239758
+              }
+            ],
+            "logreg": [
+              {
+                "n": 4499,
+                "predicted": 0.016207773445901637,
+                "actual": 0.140697932873972
+              },
+              {
+                "n": 4731,
+                "predicted": 0.016597665476353,
+                "actual": 0.14648065948002537
+              },
+              {
+                "n": 638,
+                "predicted": 0.017223203906815223,
+                "actual": 0.14733542319749215
+              },
+              {
+                "n": 4431,
+                "predicted": 0.017863952639588895,
+                "actual": 0.12299706612502821
+              },
+              {
+                "n": 4546,
+                "predicted": 0.018567758317134624,
+                "actual": 0.14232292124945006
+              },
+              {
+                "n": 3554,
+                "predicted": 0.02383829497200599,
+                "actual": 0.1626336522228475
+              },
+              {
+                "n": 3810,
+                "predicted": 0.03266446560077595,
+                "actual": 0.19081364829396325
+              },
+              {
+                "n": 3754,
+                "predicted": 0.07337274424024252,
+                "actual": 0.3090037293553543
+              },
+              {
+                "n": 3742,
+                "predicted": 0.21499430306030862,
+                "actual": 0.45189738107963656
+              },
+              {
+                "n": 3745,
+                "predicted": 0.6903184107454287,
+                "actual": 0.7201602136181575
+              }
+            ]
+          }
+        },
+        "calendar": {
+          "methods": {
+            "rules": {
+              "service_roc_auc": 0.9146423872629397,
+              "service_brier": 0.08594489557982982,
+              "service_lift_top10": 5.138161029061458,
+              "mean_predicted": 0.22130494438714832,
+              "actual_rate": 0.11209612817089452,
+              "customer_roc_auc": 0.9324565471277108,
+              "customer_lift_top10": 5.833667792805683,
+              "expected_loss": 15238448.818478411,
+              "actual_loss": 7571564.725170394
+            },
+            "rules_calibrated": {
+              "service_roc_auc": 0.9143511597550047,
+              "service_brier": 0.06240488590538956,
+              "service_lift_top10": 5.138161029061458,
+              "mean_predicted": 0.11209573948468805,
+              "actual_rate": 0.11209612817089452,
+              "customer_roc_auc": 0.9270659481452062,
+              "customer_lift_top10": 5.723390518839602,
+              "expected_loss": 7727783.13965893,
+              "actual_loss": 7571564.725170394
+            },
+            "logreg": {
+              "service_roc_auc": 0.9305947030048219,
+              "service_brier": 0.05541612242907077,
+              "service_lift_top10": 6.110052405907575,
+              "mean_predicted": 0.11215915252578475,
+              "actual_rate": 0.11209612817089452,
+              "customer_roc_auc": 0.9341322084034683,
+              "customer_lift_top10": 6.291318479764918,
+              "expected_loss": 7596488.254802746,
+              "actual_loss": 7571564.725170394
+            },
+            "gbm": {
+              "service_roc_auc": 0.9381298288261662,
+              "service_brier": 0.052108545844271145,
+              "service_lift_top10": 6.186279180562172,
+              "mean_predicted": 0.1124440649737807,
+              "actual_rate": 0.11209612817089452,
+              "customer_roc_auc": 0.9434839389067285,
+              "customer_lift_top10": 6.357484844144567,
+              "expected_loss": 7672339.0901860185,
+              "actual_loss": 7571564.725170394
+            }
+          },
+          "reliability": {
+            "rules": [
+              {
+                "n": 7734,
+                "predicted": 0.0,
+                "actual": 0.0034910783553141972
+              },
+              {
+                "n": 1334,
+                "predicted": 0.02199251114715764,
+                "actual": 0.005247376311844078
+              },
+              {
+                "n": 7551,
+                "predicted": 0.04500000000000003,
+                "actual": 0.009137862534763607
+              },
+              {
+                "n": 2099,
+                "predicted": 0.0687491609169464,
+                "actual": 0.009528346831824679
+              },
+              {
+                "n": 3561,
+                "predicted": 0.1199363179209278,
+                "actual": 0.014040999719180006
+              },
+              {
+                "n": 3936,
+                "predicted": 0.21203873618726027,
+                "actual": 0.054878048780487805
+              },
+              {
+                "n": 3745,
+                "predicted": 0.4006676317247749,
+                "actual": 0.11268357810413886
+              },
+              {
+                "n": 3745,
+                "predicted": 0.5732494008312601,
+                "actual": 0.32843791722296395
+              },
+              {
+                "n": 3745,
+                "predicted": 0.7651363652848849,
+                "actual": 0.5759679572763685
+              }
+            ],
+            "rules_calibrated": [
+              {
+                "n": 4110,
+                "predicted": 0.0025012506253126567,
+                "actual": 0.004379562043795621
+              },
+              {
+                "n": 4085,
+                "predicted": 0.004291124840292026,
+                "actual": 0.002937576499388005
+              },
+              {
+                "n": 735,
+                "predicted": 0.0055233177747040585,
+                "actual": 0.004081632653061225
+              },
+              {
+                "n": 4845,
+                "predicted": 0.008564437194127245,
+                "actual": 0.009907120743034056
+              },
+              {
+                "n": 4739,
+                "predicted": 0.008930821809113042,
+                "actual": 0.008862629246676515
+              },
+              {
+                "n": 3965,
+                "predicted": 0.013750840427232191,
+                "actual": 0.012862547288776798
+              },
+              {
+                "n": 4271,
+                "predicted": 0.05579596462125134,
+                "actual": 0.06228049637087333
+              },
+              {
+                "n": 3313,
+                "predicted": 0.12578906949077764,
+                "actual": 0.12073649260488983
+              },
+              {
+                "n": 3750,
+                "predicted": 0.3297626774409572,
+                "actual": 0.3352
+              },
+              {
+                "n": 3637,
+                "predicted": 0.587330954775288,
+                "actual": 0.5776739070662634
+              }
+            ],
+            "logreg": [
+              {
+                "n": 4499,
+                "predicted": 0.016207773445901637,
+                "actual": 0.0026672593909757725
+              },
+              {
+                "n": 4731,
+                "predicted": 0.016597665476353,
+                "actual": 0.004650179666032551
+              },
+              {
+                "n": 638,
+                "predicted": 0.017223203906815223,
+                "actual": 0.0109717868338558
+              },
+              {
+                "n": 4431,
+                "predicted": 0.017863952639588895,
+                "actual": 0.008801624915368992
+              },
+              {
+                "n": 4546,
+                "predicted": 0.018567758317134624,
+                "actual": 0.010558732952045754
+              },
+              {
+                "n": 3554,
+                "predicted": 0.02383829497200599,
+                "actual": 0.011817670230725942
+              },
+              {
+                "n": 3810,
+                "predicted": 0.03266446560077595,
+                "actual": 0.027296587926509186
+              },
+              {
+                "n": 3754,
+                "predicted": 0.07337274424024252,
+                "actual": 0.1254661694192861
+              },
+              {
+                "n": 3742,
+                "predicted": 0.21499430306030862,
+                "actual": 0.23730625334045966
+              },
+              {
+                "n": 3745,
+                "predicted": 0.6903184107454287,
+                "actual": 0.684913217623498
+              }
+            ]
+          }
+        }
+      },
+      "logreg": {
+        "intercept": -4.1112,
+        "coef": {
+          "prolong_wait": 6.15946,
+          "autoprolong_off_expiring": 2.90255,
+          "insufficient_funds": 1.93794,
+          "suspended": 0.47061,
+          "failed_payments": 2.45926,
+          "short_commitment": 0.28448,
+          "churn_history": 1.23291,
+          "inactivity": 0.0,
+          "bonus_dependency": 0.8445,
+          "withdraw_pressure": -0.16784,
+          "cancel_page_views": 0.0,
+          "panel_absence": 0.0,
+          "web_activity_drop": 0.0
+        }
+      }
+    },
+    "groups": [
+      {
+        "label": "без групп",
+        "cap": null,
+        "scenarios": {
+          "stream": {
+            "customer_roc_auc": 0.765322270685476,
+            "customer_lift_top10": 3.479321587293178,
+            "service_roc_auc": 0.7203342293117747,
+            "service_brier": 0.16805679366576853,
+            "service_brier_calibrated": 0.15779916499031427,
+            "high_lift": 3.3399529673076676
+          },
+          "calendar": {
+            "customer_roc_auc": 0.9324565471277108,
+            "customer_lift_top10": 5.833667792805683,
+            "service_roc_auc": 0.9146423872629397,
+            "service_brier": 0.08594489557982982,
+            "service_brier_calibrated": 0.06240488590538956,
+            "high_lift": 5.48162089954459
+          }
+        },
+        "level_changes": 0,
+        "levels": {
+          "high": 2093,
+          "medium": 3659,
+          "low": 12072,
+          "unknown": 2176
+        },
+        "expected_loss_raw": 15238448.818478411
+      },
+      {
+        "label": "группа «Оплата», потолок 85",
+        "cap": 85.0,
+        "scenarios": {
+          "stream": {
+            "customer_roc_auc": 0.7653642974850704,
+            "customer_lift_top10": 3.479321587293178,
+            "service_roc_auc": 0.7203343048182271,
+            "service_brier": 0.16801503532875078,
+            "service_brier_calibrated": 0.15775834537381367,
+            "high_lift": 3.343147566032974
+          },
+          "calendar": {
+            "customer_roc_auc": 0.9324810579929829,
+            "customer_lift_top10": 5.833667792805683,
+            "service_roc_auc": 0.9146190836178627,
+            "service_brier": 0.08595083132945436,
+            "service_brier_calibrated": 0.062404123291886104,
+            "high_lift": 5.486863961141477
+          }
+        },
+        "level_changes": 2,
+        "levels": {
+          "high": 2091,
+          "medium": 3661,
+          "low": 12072,
+          "unknown": 2176
+        },
+        "expected_loss_raw": 15221635.622774806
+      },
+      {
+        "label": "группа «Оплата», потолок 70",
+        "cap": 70.0,
+        "scenarios": {
+          "stream": {
+            "customer_roc_auc": 0.7652921170309035,
+            "customer_lift_top10": 3.5409025003426153,
+            "service_roc_auc": 0.7197163543483835,
+            "service_brier": 0.16770485399695545,
+            "service_brier_calibrated": 0.15838015017976675,
+            "high_lift": 3.41048542231007
+          },
+          "calendar": {
+            "customer_roc_auc": 0.93100036402855,
+            "customer_lift_top10": 5.932917339375155,
+            "service_roc_auc": 0.91200431148238,
+            "service_brier": 0.08634064816386904,
+            "service_brier_calibrated": 0.06527014108835989,
+            "high_lift": 5.624143722326836
+          }
+        },
+        "level_changes": 93,
+        "levels": {
+          "high": 2005,
+          "medium": 3742,
+          "low": 12077,
+          "unknown": 2176
+        },
+        "expected_loss_raw": 14881257.660812002
+      },
+      {
+        "label": "группа «Оплата», потолок 60",
+        "cap": 60.0,
+        "scenarios": {
+          "stream": {
+            "customer_roc_auc": 0.7632734412397824,
+            "customer_lift_top10": 3.3390539520139058,
+            "service_roc_auc": 0.718495715150398,
+            "service_brier": 0.16813243945609585,
+            "service_brier_calibrated": 0.15856953861575193,
+            "high_lift": 3.36390486182009
+          },
+          "calendar": {
+            "customer_roc_auc": 0.9249385325029748,
+            "customer_lift_top10": 5.342933923656622,
+            "service_roc_auc": 0.9062723526586386,
+            "service_brier": 0.08723139536320522,
+            "service_brier_calibrated": 0.06693663853108982,
+            "high_lift": 5.421583015023885
+          }
+        },
+        "level_changes": 507,
+        "levels": {
+          "high": 1603,
+          "medium": 4132,
+          "low": 12089,
+          "unknown": 2176
+        },
+        "expected_loss_raw": 14632075.124106115
+      },
+      {
+        "label": "группа «Оплата», потолок 50",
+        "cap": 50.0,
+        "scenarios": {
+          "stream": {
+            "customer_roc_auc": 0.7588753596276876,
+            "customer_lift_top10": 3.212470964078952,
+            "service_roc_auc": 0.7164528371124784,
+            "service_brier": 0.16871890593267716,
+            "service_brier_calibrated": 0.15959267213361045,
+            "high_lift": 3.2920265528068398
+          },
+          "calendar": {
+            "customer_roc_auc": 0.9133540740382465,
+            "customer_lift_top10": 4.852200054507562,
+            "service_roc_auc": 0.8962530998217834,
+            "service_brier": 0.08789813655783185,
+            "service_brier_calibrated": 0.06942684630934953,
+            "high_lift": 4.699891797130693
+          }
+        },
+        "level_changes": 1083,
+        "levels": {
+          "high": 1071,
+          "medium": 4620,
+          "low": 12133,
+          "unknown": 2176
+        },
+        "expected_loss_raw": 14226106.799381627
+      }
+    ],
+    "case": {
+      "as_of": "2026-10-19T15:00:00Z",
+      "variants": {
+        "before": {
+          "calibrated": false,
+          "groups_enabled": false,
+          "expected_loss": 229783,
+          "by_level": {
+            "high": 4,
+            "medium": 2,
+            "low": 0,
+            "unknown": 4
+          },
+          "revenue_at_risk_share": 0.7274099588110854,
+          "expected_nonrenewals": 8.01,
+          "customer_monthly_churn": 0.6511681805158596,
+          "level_changes": 0,
+          "customers": [
+            {
+              "id": 1,
+              "score": 66.2,
+              "level": "high",
+              "expected_loss": 45653,
+              "calibrated_probability": 0.4376,
+              "challenger_score": 27.7
+            },
+            {
+              "id": 2,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 3,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 4,
+              "score": 45.1,
+              "level": "medium",
+              "expected_loss": 579,
+              "calibrated_probability": 0.15,
+              "challenger_score": 4.9
+            },
+            {
+              "id": 5,
+              "score": 84.2,
+              "level": "high",
+              "expected_loss": 43028,
+              "calibrated_probability": 0.7287,
+              "challenger_score": 83.7
+            },
+            {
+              "id": 6,
+              "score": 57.0,
+              "level": "medium",
+              "expected_loss": 1378,
+              "calibrated_probability": 0.3403,
+              "challenger_score": 19.2
+            },
+            {
+              "id": 7,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 8,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 9,
+              "score": 72.4,
+              "level": "high",
+              "expected_loss": 138497,
+              "calibrated_probability": 0.4412,
+              "challenger_score": 14.4
+            },
+            {
+              "id": 10,
+              "score": 65.7,
+              "level": "high",
+              "expected_loss": 648,
+              "calibrated_probability": 0.4185,
+              "challenger_score": 44.8
+            }
+          ]
+        },
+        "calibrated": {
+          "calibrated": true,
+          "groups_enabled": false,
+          "expected_loss": 153168,
+          "by_level": {
+            "high": 4,
+            "medium": 2,
+            "low": 0,
+            "unknown": 4
+          },
+          "revenue_at_risk_share": 0.48487527034389055,
+          "expected_nonrenewals": 5.13,
+          "customer_monthly_churn": 0.4193713566752036,
+          "level_changes": 0,
+          "customers": [
+            {
+              "id": 1,
+              "score": 66.2,
+              "level": "high",
+              "expected_loss": 30154,
+              "calibrated_probability": 0.4376,
+              "challenger_score": 27.7
+            },
+            {
+              "id": 2,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 3,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 4,
+              "score": 45.1,
+              "level": "medium",
+              "expected_loss": 193,
+              "calibrated_probability": 0.15,
+              "challenger_score": 4.9
+            },
+            {
+              "id": 5,
+              "score": 84.2,
+              "level": "high",
+              "expected_loss": 37238,
+              "calibrated_probability": 0.7287,
+              "challenger_score": 83.7
+            },
+            {
+              "id": 6,
+              "score": 57.0,
+              "level": "medium",
+              "expected_loss": 823,
+              "calibrated_probability": 0.3403,
+              "challenger_score": 19.2
+            },
+            {
+              "id": 7,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 8,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 9,
+              "score": 72.4,
+              "level": "high",
+              "expected_loss": 84348,
+              "calibrated_probability": 0.4412,
+              "challenger_score": 14.4
+            },
+            {
+              "id": 10,
+              "score": 65.7,
+              "level": "high",
+              "expected_loss": 412,
+              "calibrated_probability": 0.4185,
+              "challenger_score": 44.8
+            }
+          ]
+        },
+        "groups": {
+          "calibrated": false,
+          "groups_enabled": true,
+          "expected_loss": 229783,
+          "by_level": {
+            "high": 4,
+            "medium": 2,
+            "low": 0,
+            "unknown": 4
+          },
+          "revenue_at_risk_share": 0.7274099588110853,
+          "expected_nonrenewals": 8.01,
+          "customer_monthly_churn": 0.6511681805158596,
+          "level_changes": 0,
+          "customers": [
+            {
+              "id": 1,
+              "score": 66.2,
+              "level": "high",
+              "expected_loss": 45653,
+              "calibrated_probability": 0.4376,
+              "challenger_score": 27.7
+            },
+            {
+              "id": 2,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 3,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 4,
+              "score": 45.1,
+              "level": "medium",
+              "expected_loss": 579,
+              "calibrated_probability": 0.15,
+              "challenger_score": 4.9
+            },
+            {
+              "id": 5,
+              "score": 84.2,
+              "level": "high",
+              "expected_loss": 43028,
+              "calibrated_probability": 0.7287,
+              "challenger_score": 83.7
+            },
+            {
+              "id": 6,
+              "score": 57.0,
+              "level": "medium",
+              "expected_loss": 1378,
+              "calibrated_probability": 0.3403,
+              "challenger_score": 19.2
+            },
+            {
+              "id": 7,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 8,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 9,
+              "score": 72.4,
+              "level": "high",
+              "expected_loss": 138497,
+              "calibrated_probability": 0.4412,
+              "challenger_score": 14.4
+            },
+            {
+              "id": 10,
+              "score": 65.7,
+              "level": "high",
+              "expected_loss": 648,
+              "calibrated_probability": 0.4185,
+              "challenger_score": 44.8
+            }
+          ]
+        },
+        "default": {
+          "calibrated": true,
+          "groups_enabled": false,
+          "expected_loss": 153168,
+          "by_level": {
+            "high": 4,
+            "medium": 2,
+            "low": 0,
+            "unknown": 4
+          },
+          "revenue_at_risk_share": 0.48487527034389055,
+          "expected_nonrenewals": 5.13,
+          "customer_monthly_churn": 0.4193713566752036,
+          "level_changes": 0,
+          "customers": [
+            {
+              "id": 1,
+              "score": 66.2,
+              "level": "high",
+              "expected_loss": 30154,
+              "calibrated_probability": 0.4376,
+              "challenger_score": 27.7
+            },
+            {
+              "id": 2,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 3,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 4,
+              "score": 45.1,
+              "level": "medium",
+              "expected_loss": 193,
+              "calibrated_probability": 0.15,
+              "challenger_score": 4.9
+            },
+            {
+              "id": 5,
+              "score": 84.2,
+              "level": "high",
+              "expected_loss": 37238,
+              "calibrated_probability": 0.7287,
+              "challenger_score": 83.7
+            },
+            {
+              "id": 6,
+              "score": 57.0,
+              "level": "medium",
+              "expected_loss": 823,
+              "calibrated_probability": 0.3403,
+              "challenger_score": 19.2
+            },
+            {
+              "id": 7,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 8,
+              "score": null,
+              "level": "unknown",
+              "expected_loss": 0,
+              "calibrated_probability": null,
+              "challenger_score": null
+            },
+            {
+              "id": 9,
+              "score": 72.4,
+              "level": "high",
+              "expected_loss": 84348,
+              "calibrated_probability": 0.4412,
+              "challenger_score": 14.4
+            },
+            {
+              "id": 10,
+              "score": 65.7,
+              "level": "high",
+              "expected_loss": 412,
+              "calibrated_probability": 0.4185,
+              "challenger_score": 44.8
+            }
+          ]
+        }
+      },
+      "drift": {
+        "services": 18,
+        "features": {},
+        "status": "too_few"
+      }
+    },
+    "tables_sha": "89fc5323d419",
+    "reference_services": 37450,
+    "isotonic_points": 80
+  },
+  "elapsed_s": 82.1,
   "robustness": [
     {
       "label": "seed 42 (основной)",

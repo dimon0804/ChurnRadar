@@ -54,6 +54,28 @@ describe('applyPatch', () => {
   })
 })
 
+describe('correlation groups and calibration in patches', () => {
+  const withGroups: ModelSettings = {
+    ...base,
+    calibrated: true,
+    groups: [{ code: 'payment', title: 'Оплата', features: ['b'], cap: 85, default_cap: 85, enabled: false }],
+  }
+
+  it('merges groups by code and keeps calibrated', () => {
+    const merged = mergePatch({ groups: [{ code: 'payment', enabled: true }] }, { groups: [{ code: 'payment', cap: 70 }], calibrated: false })
+    expect(merged).toEqual({ groups: [{ code: 'payment', enabled: true, cap: 70 }], calibrated: false })
+    expect(isEmptyPatch({ calibrated: false })).toBe(false)
+    expect(isEmptyPatch({ groups: [] })).toBe(true)
+  })
+
+  it('applies group and calibration changes optimistically', () => {
+    const next = applyPatch(withGroups, { groups: [{ code: 'payment', enabled: true, cap: 60 }], calibrated: false })
+    expect(next.groups?.[0]).toMatchObject({ enabled: true, cap: 60, default_cap: 85 })
+    expect(next.calibrated).toBe(false)
+    expect(applyPatch(base, { horizon_days: 7 })).not.toHaveProperty('groups')
+  })
+})
+
 describe('groups and steps', () => {
   it('groups weights in server order', () => {
     expect(groupWeights(base.weights).map(([g, ws]) => [g, ws.map((w) => w.code)])).toEqual([

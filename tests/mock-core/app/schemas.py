@@ -88,17 +88,32 @@ class WeightPatch(BaseModel):
     enabled: Optional[bool] = None
 
 
+class GroupPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str
+    cap: Optional[float] = Field(default=None, ge=0, le=100)
+    enabled: Optional[bool] = None
+
+
 class ModelSettingsPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     horizon_days: Optional[int] = Field(default=None, ge=1, le=365)
     thresholds: Optional[ThresholdsPatch] = None
     weights: Optional[List[WeightPatch]] = None
+    groups: Optional[List[GroupPatch]] = None
+    calibrated: Optional[bool] = None
 
     @model_validator(mode="after")
     def _not_empty(self) -> "ModelSettingsPatch":
-        if self.horizon_days is None and self.thresholds is None and self.weights is None:
+        fields = (self.horizon_days, self.thresholds, self.weights, self.groups, self.calibrated)
+        if all(f is None for f in fields):
             raise ValueError("нужно передать хотя бы одно поле")
         return self
+
+
+class RollbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: int = Field(ge=1)
 
 
 class GeneratePatch(BaseModel):

@@ -387,7 +387,8 @@ CASE_LEFT = {2, 3, 7, 8}
 def case(sample_data):
     accounts, services, transactions = parse_snapshot(sample_data)
     settings = default_settings()
-    results = score_customers(accounts, services, transactions, settings, AS_OF)
+    # как в scoring: маркетинг читает долю ожидаемой (калиброванной) потери, см. CustomerResult.for_money
+    results = [r.for_money() for r in score_customers(accounts, services, transactions, settings, AS_OF)]
     return results, services, settings
 
 

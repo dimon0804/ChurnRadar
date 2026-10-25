@@ -233,7 +233,11 @@ class Previewer:
         self._latest = 0
         self._cache: tuple[tuple[Any, ...], _Input, _Before] | None = None
 
-    async def preview(self, proposed: Mapping[str, Any]) -> dict[str, Any]:
+    async def preview(self, proposed: Mapping[str, Any], baseline: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """baseline — сравнение двух версий настроек: «было» по ним, а не по текущим.
+
+        Такой расчёт не берёт и не обновляет кэш «было»: он относится к текущим настройкам.
+        """
         self._latest += 1
         ticket = self._latest
         async with self._lock:
@@ -250,8 +254,13 @@ class Previewer:
                     else:
                         _, base, before = cached
                         data = replace(base, proposed=riskcore.merge_settings(dict(proposed), version=base.version + 1))
-                result, before = await asyncio.to_thread(_compare, data, before)
-            self._cache = None if key is None else (key, data, before)
+                if baseline is not None:
+                    data = replace(data, current=riskcore.merge_settings(dict(baseline), version=data.version))
+                    result, _ = await asyncio.to_thread(_compare, data, None)
+                else:
+                    result, before = await asyncio.to_thread(_compare, data, before)
+            if baseline is None:
+                self._cache = None if key is None else (key, data, before)
             result["duration_ms"] = round((time.perf_counter() - started) * 1000, 1)
             log.info(
                 "preview_done",

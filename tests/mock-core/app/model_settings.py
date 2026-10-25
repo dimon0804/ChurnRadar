@@ -18,6 +18,20 @@ log = logging.getLogger("mock-core.settings")
 DEFAULT_HORIZON_DAYS = 30
 DEFAULT_THRESHOLDS = {"medium": 35.0, "high": 65.0}
 HISTORY_LIMIT = 500
+DEFAULT_CALIBRATED = True
+
+# Группы коррелированных признаков: внутри группы вклад ограничен потолком.
+# В заглушке группа только хранится и отдаётся, на расчёт score не влияет.
+GROUPS = [
+    {
+        "code": "payment",
+        "title": "Оплата",
+        "description": "Ждёт оплаты, мало денег на балансе и неуспешные платежи обычно говорят об одной проблеме.",
+        "features": ["prolong_wait_status", "low_balance_coverage", "failed_payments"],
+        "default_cap": 85.0,
+    }
+]
+GROUPS_BY_CODE = {g["code"]: g for g in GROUPS}
 
 
 class SettingsValidationError(ValueError):
@@ -31,7 +45,31 @@ def default_state() -> Dict[str, Any]:
         "horizon_days": DEFAULT_HORIZON_DAYS,
         "thresholds": dict(DEFAULT_THRESHOLDS),
         "weights": {f.code: {"weight": float(f.default_weight), "enabled": True} for f in FEATURES},
+        "groups": {g["code"]: {"cap": g["default_cap"], "enabled": False} for g in GROUPS},
+        "calibrated": DEFAULT_CALIBRATED,
     }
+
+
+def _normalize(stored: Dict[str, Any]) -> Dict[str, Any]:
+    """Состояние из файла или журнала поверх значений по умолчанию; лишнее и битое отбрасывается."""
+    state = default_state()
+    if isinstance(stored.get("horizon_days"), int):
+        state["horizon_days"] = stored["horizon_days"]
+    for key in ("medium", "high"):
+        value = (stored.get("thresholds") or {}).get(key)
+        if isinstance(value, (int, float)):
+            state["thresholds"][key] = float(value)
+    for code, w in (stored.get("weights") or {}).items():
+        if code in state["weights"] and isinstance(w, dict):
+            state["weights"][code]["weight"] = float(w.get("weight", state["weights"][code]["weight"]))
+            state["weights"][code]["enabled"] = bool(w.get("enabled", True))
+    for code, g in (stored.get("groups") or {}).items():
+        if code in state["groups"] and isinstance(g, dict):
+            state["groups"][code]["cap"] = float(g.get("cap", state["groups"][code]["cap"]))
+            state["groups"][code]["enabled"] = bool(g.get("enabled", False))
+    if isinstance(stored.get("calibrated"), bool):
+        state["calibrated"] = stored["calibrated"]
+    return state
 
 
 def _flatten(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -41,6 +79,11 @@ def _flatten(state: Dict[str, Any]) -> Dict[str, Any]:
     for code, w in state["weights"].items():
         flat[f"weights.{code}.weight"] = w["weight"]
         flat[f"weights.{code}.enabled"] = w["enabled"]
+    for code, g in state.get("groups", {}).items():
+        flat[f"groups.{code}.cap"] = g["cap"]
+        flat[f"groups.{code}.enabled"] = g["enabled"]
+    if "calibrated" in state:
+        flat["calibrated"] = state["calibrated"]
     return flat
 
 
@@ -70,19 +113,7 @@ class SettingsManager:
         except (OSError, ValueError) as exc:
             log.warning("не удалось прочитать %s: %s, беру значения по умолчанию", self.path, exc)
             return
-        state = default_state()
-        stored = raw.get("settings", {})
-        if isinstance(stored.get("horizon_days"), int):
-            state["horizon_days"] = stored["horizon_days"]
-        for key in ("medium", "high"):
-            value = stored.get("thresholds", {}).get(key)
-            if isinstance(value, (int, float)):
-                state["thresholds"][key] = float(value)
-        for code, w in stored.get("weights", {}).items():
-            if code in state["weights"] and isinstance(w, dict):
-                state["weights"][code]["weight"] = float(w.get("weight", state["weights"][code]["weight"]))
-                state["weights"][code]["enabled"] = bool(w.get("enabled", True))
-        self.state = state
+        self.state = _normalize(raw.get("settings", {}))
         self.version = int(raw.get("version", 1))
         if raw.get("updated_at"):
             self.updated_at = datetime.fromisoformat(raw["updated_at"].replace("Z", "+00:00"))
@@ -153,10 +184,54 @@ class SettingsManager:
             "horizon_days": self.state["horizon_days"],
             "thresholds": dict(self.state["thresholds"]),
             "weights": weights,
+            "groups": [
+                {
+                    "code": g["code"],
+                    "title": g["title"],
+                    "description": g["description"],
+                    "features": list(g["features"]),
+                    "cap": self.state["groups"][g["code"]]["cap"],
+                    "default_cap": g["default_cap"],
+                    "enabled": self.state["groups"][g["code"]]["enabled"],
+                }
+                for g in GROUPS
+            ],
+            "calibrated": self.state["calibrated"],
+            # настоящей таблицы калибровки в заглушке нет; «совпадает», пока веса и группы по умолчанию
+            "calibration": {"available": True, "matches_settings": self._matches_defaults()},
         }
 
+    def _matches_defaults(self) -> bool:
+        base = default_state()
+        return self.state["weights"] == base["weights"] and self.state["groups"] == base["groups"]
+
     def history_items(self, limit: int) -> List[Dict[str, Any]]:
-        return self.history[:limit]
+        return [{k: v for k, v in item.items() if k != "settings"} for item in self.history[:limit]]
+
+    def _entry(self, version: int) -> Optional[Dict[str, Any]]:
+        return next((h for h in self.history if h.get("version") == version), None)
+
+    def state_of(self, version: int) -> Dict[str, Any]:
+        """Настройки, действовавшие в версии version. LookupError — такой версии нет."""
+        if version == self.version:
+            return copy.deepcopy(self.state)
+        entry = self._entry(version)
+        if entry is not None and isinstance(entry.get("settings"), dict):
+            return _normalize(entry["settings"])
+        if version == 1 and entry is None:
+            # первая версия в журнал не пишется: это значения по умолчанию
+            return default_state()
+        raise LookupError(version)
+
+    def ref(self, version: int) -> Dict[str, Any]:
+        if version == self.version:
+            return {"version": version, "changed_at": iso(self.updated_at), "changed_by": self.updated_by}
+        entry = self._entry(version) or {}
+        return {"version": version, "changed_at": entry.get("changed_at"), "changed_by": entry.get("changed_by")}
+
+    def compare(self, from_version: int, to_version: int) -> Dict[str, Any]:
+        a, b = self.state_of(from_version), self.state_of(to_version)
+        return {"from": self.ref(from_version), "to": self.ref(to_version), "changes": diff(a, b)}
 
     # --- изменение ---
 
@@ -187,6 +262,16 @@ class SettingsManager:
                 new["weights"][item.code]["weight"] = float(item.weight)
             if item.enabled is not None:
                 new["weights"][item.code]["enabled"] = item.enabled
+        for g in patch.groups or []:
+            if g.code not in GROUPS_BY_CODE:
+                errors.append({"field": f"groups.{g.code}", "message": "неизвестная группа признаков"})
+                continue
+            if g.cap is not None:
+                new["groups"][g.code]["cap"] = float(g.cap)
+            if g.enabled is not None:
+                new["groups"][g.code]["enabled"] = g.enabled
+        if patch.calibrated is not None:
+            new["calibrated"] = patch.calibrated
         if new["thresholds"]["medium"] > new["thresholds"]["high"]:
             errors.append({"field": "thresholds", "message": "порог medium не может быть больше порога high"})
         if errors:
@@ -196,6 +281,14 @@ class SettingsManager:
     def reset(self, user: Optional[str]) -> List[Dict[str, Any]]:
         return self._commit(default_state(), user)
 
+    def rollback(self, version: int, user: Optional[str]) -> bool:
+        """Новая версия с содержимым старой. False — настройки уже такие, версия не растёт."""
+        target = self.state_of(version)
+        if not diff(self.state, target):
+            return False
+        self._commit(target, user)
+        return True
+
     def _commit(self, new: Dict[str, Any], user: Optional[str]) -> List[Dict[str, Any]]:
         changes = diff(self.state, new)
         self.state = new
@@ -204,7 +297,14 @@ class SettingsManager:
         self.updated_by = user
         self.history.insert(
             0,
-            {"version": self.version, "changed_at": iso(self.updated_at), "changed_by": user, "changes": changes},
+            {
+                "version": self.version,
+                "changed_at": iso(self.updated_at),
+                "changed_by": user,
+                "changes": changes,
+                # полный снимок нужен для отката и сравнения; наружу не отдаётся
+                "settings": copy.deepcopy(new),
+            },
         )
         del self.history[HISTORY_LIMIT:]
         self.save()

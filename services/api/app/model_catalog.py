@@ -2,7 +2,8 @@
 
 api не считает риск сам, ему нужны только дефолты, слияние хранимых настроек
 с реестром признаков и представление настроек по схеме ModelSettings.
-Хранимая форма (scoring.settings.data): {horizon_days, thresholds, weights: {code: {weight, enabled}}}.
+Хранимая форма (scoring.settings.data): {horizon_days, thresholds, weights: {code: {weight, enabled}},
+groups: {code: {cap, enabled}}, calibrated}.
 """
 
 from __future__ import annotations
@@ -37,6 +38,8 @@ def storage_from_api(api: dict[str, Any]) -> dict[str, Any]:
         "weights": {
             w["code"]: {"weight": float(w["weight"]), "enabled": bool(w["enabled"])} for w in api["weights"]
         },
+        "groups": {g["code"]: {"cap": float(g["cap"]), "enabled": bool(g["enabled"])} for g in api.get("groups", [])},
+        "calibrated": bool(api.get("calibrated", False)),
     }
 
 

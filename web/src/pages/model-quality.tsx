@@ -19,6 +19,7 @@ import {
 import { api, queryKeys } from '@/api/endpoints'
 import type { ModelQuality, QualityScenario, Summary } from '@/api/types'
 import { PageHeader } from '@/components/page-header'
+import { HonestySection } from '@/components/quality-honesty'
 import { RiskGlyph, RISK_TEXT } from '@/components/risk'
 import { ErrorState } from '@/components/states'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -980,6 +981,7 @@ export function QualityBody({
         <CalibrationCard sc={sc} colors={colors} />
       </div>
       <BaselinesCard sc={sc} />
+      {q.honesty && <HonestySection honesty={q.honesty} scenario={scenario} />}
       <RobustnessCard q={q} />
       {summary && <LiveCard summary={summary} q={q} colors={colors} />}
       <MethodCard q={q} />

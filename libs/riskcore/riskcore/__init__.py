@@ -1,5 +1,6 @@
 """riskcore: объяснимая модель риска оттока клиентов хостинга."""
 
+from . import calibration, drift, groups
 from .base import AccountFeature, Feature, FeatureSpec, Recommendation, ServiceFeature, Signal
 from .context import AccountContext, Funds, ServiceContext
 from .marketing import apply_economics, build_marketing, scale_customer
@@ -46,10 +47,13 @@ __all__ = [
     "apply_economics",
     "build_marketing",
     "build_summary",
+    "calibration",
     "decision_moment",
     "decompose",
     "default_settings",
+    "drift",
     "feature_catalog",
+    "groups",
     "merge_settings",
     "monthly_price",
     "noisy_or",

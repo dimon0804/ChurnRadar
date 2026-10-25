@@ -44,6 +44,7 @@ AlertKind = Literal[
     "risk_share",
     "high_count_growth",
     "stale_data",
+    "model_drift",
     # записи старой ленты (до персональных настроек)
     "high_risk",
     "loss_jump",

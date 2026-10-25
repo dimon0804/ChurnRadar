@@ -17,10 +17,11 @@ from typing import Any
 
 import numpy as np
 
-from . import evaluate, future
+from . import evaluate, future, honesty
 from ._deps import ROOT, riskcore, timeutil
 
 SCENARIOS = ("stream", "calendar")
+DEFAULT_OUT = ROOT / "tools" / "calibration" / "results"
 DEFAULT_REFERENCE = "2026-10-01T12:00:00Z"
 NAMES = {
     "model": "модель (score)",
@@ -66,9 +67,25 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="разброс поведения внутри сегмента, параметр Beta; 0 — без разброса (calendar)",
     )
     p.add_argument("--bootstrap", type=int, default=200, help="число бутстреп-выборок для интервалов")
-    p.add_argument("--out", type=Path, default=ROOT / "tools" / "calibration" / "results")
+    p.add_argument("--out", type=Path, default=DEFAULT_OUT)
     p.add_argument("--img", type=Path, default=ROOT / "docs" / "img" / "calibration")
     p.add_argument("--no-plots", action="store_true")
+    p.add_argument(
+        "--fit-scenario",
+        choices=SCENARIOS,
+        default="calendar",
+        help="на каком сценарии обучать калибровку и челленджер (по умолчанию calendar)",
+    )
+    p.add_argument(
+        "--no-honesty",
+        action="store_true",
+        help="не считать калибровку, челленджер и группы признаков",
+    )
+    p.add_argument(
+        "--no-groups",
+        action="store_true",
+        help="не пересчитывать модель с группами признаков (быстрее)",
+    )
     p.add_argument(
         "--no-robustness",
         action="store_true",
@@ -112,7 +129,9 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, evaluate.Ac
     data, segments = future.generate_with_segments(args.accounts, args.seed, reference)
     _log(f"база: {len(data['accounts'])} клиентов, {len(data['services'])} услуг")
 
-    settings = riskcore.merge_settings({"horizon_days": args.horizon})
+    # Основная проверка — про сырой score: деньги в ней считаются по сырой вероятности, чтобы
+    # цифры не зависели от таблицы калибровки, которую этот же запуск и обучает.
+    settings = riskcore.merge_settings({"horizon_days": args.horizon, "calibrated": False})
     accounts, services, transactions = riskcore.parse_snapshot(data)
     results = riskcore.score_customers(accounts, services, transactions, settings, reference)
     _log(f"модель посчитана за {time.perf_counter() - started:.1f} с")
@@ -131,11 +150,13 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, evaluate.Ac
             "riskcore_sources": fingerprint(ROOT / "libs" / "riskcore" / "riskcore"),
             "simulator_sources": fingerprint(ROOT / "services" / "simulator" / "app"),
             "weights": {code: w["weight"] for code, w in settings.weights.items() if w["enabled"]},
+            "groups": {code: g["cap"] for code, g in settings.groups.items() if g["enabled"]},
             "thresholds": dict(settings.thresholds),
         },
         "scenarios": {},
     }
     tables: dict[str, evaluate.Accounts] = {}
+    finals: dict[str, dict[int, str]] = {}
     for offset, scenario in enumerate(SCENARIOS):
         if scenario not in args.scenarios:
             continue
@@ -162,7 +183,16 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, evaluate.Ac
         result["events"] = dict(sorted(outcome.events.items()))
         report["scenarios"][scenario] = result
         tables[scenario] = table
+        finals[scenario] = outcome.final_status
         _log(f"{scenario}: будущее и метрики за {time.perf_counter() - t0:.1f} с")
+    if not getattr(args, "no_honesty", False) and finals:
+        fit = args.fit_scenario if args.fit_scenario in finals else next(iter(finals))
+        # Таблицу в riskcore пишем только из основного запуска в каталог по умолчанию:
+        # тесты и пробные прогоны с другим --out не должны подменять то, что идёт в рантайм.
+        write = args.out.resolve() == DEFAULT_OUT.resolve()
+        report["honesty"] = honesty.run(
+            results, data, finals, settings, reference, report["params"], fit, write, groups=not args.no_groups
+        )
     report["elapsed_s"] = round(time.perf_counter() - started, 1)
     return report, tables
 
@@ -190,7 +220,7 @@ def run_robustness(args: argparse.Namespace, main_report: dict[str, Any]) -> lis
     """Основной прогон и несколько соседних: другие seed, темп потока и разброс поведения."""
     rows = [robustness_row(f"seed {args.seed} (основной)", args, main_report)]
     for label, overrides, scenarios in ROBUSTNESS:
-        variant = argparse.Namespace(**{**vars(args), **overrides, "bootstrap": 0})
+        variant = argparse.Namespace(**{**vars(args), **overrides, "bootstrap": 0, "no_honesty": True})
         variant.scenarios = [name for name in scenarios if name in args.scenarios]
         if not variant.scenarios:
             continue
@@ -366,6 +396,8 @@ def to_markdown(report: dict[str, Any]) -> str:
             f"События будущего: {', '.join(f'{k} {v}' for k, v in sc['events'].items())}.",
             "",
         ]
+    if report.get("honesty"):
+        out += honesty.to_markdown(report["honesty"])
     if report.get("robustness"):
         out += ["## Устойчивость", "", *robustness_md(report["robustness"]), ""]
     return "\n".join(out)

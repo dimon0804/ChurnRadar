@@ -1389,6 +1389,84 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /api/v1/model/settings/rollback:
+    post:
+      tags: [model]
+      summary: Откатить настройки к версии из журнала
+      description: |
+        Создаёт новую версию настроек с содержимым выбранной версии (журнал не переписывается,
+        откат тоже попадает в историю). Если выбранная версия совпадает с текущими настройками,
+        ничего не меняется. После отката модель пересчитывается, как после PATCH. Требуется роль `admin`.
+      operationId: rollbackModelSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              additionalProperties: false
+              properties:
+                version: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Настройки после отката
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Такой версии нет в журнале
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/model/settings/compare:
+    get:
+      tags: [model]
+      summary: Сравнение двух версий настроек
+      description: |
+        Что изменилось между версиями `from` и `to` и как это сдвинуло уровни риска и ожидаемую
+        потерю на текущих данных. Сдвиг считает тот же предпросмотр «что если»: «было» — по
+        настройкам `from`, «станет» — по `to`, на одном снимке. Требуется роль `admin`.
+      operationId: compareModelSettings
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: integer, minimum: 1 } }
+        - { name: to, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: Различия и их эффект
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [from, to, changes, impact]
+                properties:
+                  from: { $ref: '#/components/schemas/SettingsVersionRef' }
+                  to: { $ref: '#/components/schemas/SettingsVersionRef' }
+                  changes:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, old, new]
+                      properties:
+                        path: { type: string }
+                        old: {}
+                        new: {}
+                  impact:
+                    oneOf:
+                      - { $ref: '#/components/schemas/ModelSettingsPreview' }
+                      - { type: 'null' }
+                    description: 'null — сервис оценки недоступен, различия всё равно отдаются'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Одной из версий нет в журнале
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /api/v1/model/settings/history:
     get:
       tags: [model]
@@ -1750,7 +1828,7 @@ paths:
         - { name: customer_id, in: query, schema: { type: integer, minimum: 1 } }
         - name: kind
           in: query
-          schema: { type: string, enum: [loss_growth, big_customer_high, risk_share, high_count_growth, stale_data, high_risk, loss_jump, total_loss_jump, bulk] }
+          schema: { type: string, enum: [loss_growth, big_customer_high, risk_share, high_count_growth, stale_data, model_drift, high_risk, loss_jump, total_loss_jump, bulk] }
       responses:
         '200':
           description: Страница ленты
@@ -2537,6 +2615,11 @@ components:
         service_id: { type: [integer, 'null'], format: int64, description: 'К какой услуге относится, если относится' }
         action: { type: string, description: 'Что сделать маркетологу по этой причине, коротко и с цифрами из данных' }
         expected_loss: { type: integer, description: 'Сколько ожидаемых потерь за горизонт приходится на эту причину, евроценты' }
+        correlation_group:
+          type: string
+          description: 'Группа коррелированных признаков, если она включена в настройках (например payment): внутри группы вклад ограничен потолком'
+          examples: [payment]
+        correlation_group_title: { type: string, description: 'Название группы для интерфейса', examples: [Оплата] }
 
     Recommendation:
       type: object
@@ -2592,7 +2675,7 @@ components:
         services_total: { type: integer }
         services_at_risk: { type: integer }
         monthly_revenue: { type: integer, description: евроценты }
-        expected_loss: { type: integer, description: евроценты }
+        expected_loss: { type: integer, description: 'евроценты; считается по калиброванной вероятности, если она включена в настройках модели' }
         exposure: { type: integer, description: евроценты }
         next_action:
           description: 'Самое выгодное действие — с наибольшим денежным эффектом (не путать с главной причиной риска reasons[0], у которой наибольший вклад в score)'
@@ -2603,6 +2686,16 @@ components:
           type: [number, 'null']
           description: 'Через сколько дней ближайший срок по риску: удаление услуги в «Ожидает оплаты», окончание услуги без автопродления, конец денег на автопродления. null — срока нет'
         urgent: { type: boolean, description: 'Срочно: до срока не больше 2 дней. Не зависит от уровня риска' }
+        calibrated_probability:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 1
+          description: 'Калиброванная доля выручки, которую ожидаем потерять за горизонт (score — ранжирование, это — вероятность). null — таблицы калибровки нет или оценки нет'
+        challenger_score:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 100
+          description: 'Score модели-челленджера (логистическая регрессия на тех же признаках), только для сравнения'
 
     CustomerPage:
       type: object
@@ -3164,6 +3257,16 @@ components:
         expires_at: { type: string, format: date-time }
         days_to_expiry: { type: [number, 'null'], description: 'Отрицательное — уже истекла' }
         risk_score: { type: [number, 'null'] }
+        calibrated_probability:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 1
+          description: 'Калиброванная вероятность непродления за горизонт'
+        challenger_probability:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 1
+          description: 'Вероятность непродления по модели-челленджеру (логистическая регрессия)'
         risk_level: { $ref: '#/components/schemas/RiskLevel' }
         reasons:
           type: array
@@ -3187,6 +3290,8 @@ components:
         weight: { type: number, description: 'Действующий коэффициент' }
         contribution: { type: number, description: 'Вклад в итоговый score, пунктов' }
         explanation: { type: string }
+        correlation_group: { type: string, description: 'Группа коррелированных признаков, если включена' }
+        correlation_group_title: { type: string }
 
     Transaction:
       type: object
@@ -3700,6 +3805,17 @@ components:
             total: { type: integer, description: 'Сколько услуг в статусе deleted' }
             last_date: { type: [string, 'null'], format: date, description: 'Дата последнего удаления; null, если удалённых нет' }
             last_estimated: { type: boolean, description: 'Дата последнего удаления — оценка по окончанию оплаты, а не замеченная смена статуса' }
+        drift:
+          type: object
+          description: 'Дрейф признаков: PSI распределения сил сигналов по платным услугам против эталона калибровки. Считается при полном пересчёте; меньше 0,1 — без изменений, больше 0,25 — модель пора перекалибровать'
+          required: [services, status, features]
+          properties:
+            services: { type: integer, description: 'Сколько платных услуг попало в расчёт' }
+            status: { type: string, enum: [ok, warn, alert, too_few, no_reference], description: 'too_few — услуг меньше 200, no_reference — нет эталона; в обоих случаях features пустой' }
+            features:
+              type: object
+              description: 'PSI по коду признака'
+              additionalProperties: { type: number, minimum: 0 }
         scored_at: { type: [string, 'null'], format: date-time }
         model_version: { type: integer }
 
@@ -3736,6 +3852,31 @@ components:
         weights:
           type: array
           items: { $ref: '#/components/schemas/FeatureWeight' }
+        groups:
+          type: array
+          description: 'Группы коррелированных признаков: внутри группы noisy-OR, вклад группы не выше потолка cap'
+          items:
+            type: object
+            required: [code, title, features, cap, default_cap, enabled]
+            properties:
+              code: { type: string, examples: [payment] }
+              title: { type: string }
+              description: { type: string }
+              features: { type: array, items: { type: string } }
+              cap: { type: number, minimum: 0, maximum: 100, description: 'Потолок вклада группы, пунктов из 100' }
+              default_cap: { type: number }
+              enabled: { type: boolean }
+        calibrated:
+          type: boolean
+          description: 'Деньги и прогнозы считаются по калиброванной вероятности, а не по сырому score'
+        calibration:
+          type: object
+          required: [available, matches_settings]
+          properties:
+            available: { type: boolean, description: 'В сборке есть таблица калибровки' }
+            matches_settings:
+              type: [boolean, 'null']
+              description: 'Таблица обучена на этих же весах и группах; false — числа приблизительные'
 
     ModelSettingsPatch:
       type: object
@@ -3756,6 +3897,16 @@ components:
               code: { type: string }
               weight: { type: number }
               enabled: { type: boolean }
+        groups:
+          type: array
+          items:
+            type: object
+            required: [code]
+            properties:
+              code: { type: string }
+              cap: { type: number, minimum: 0, maximum: 100 }
+              enabled: { type: boolean }
+        calibrated: { type: boolean }
 
     PreviewTotals:
       type: object
@@ -3834,6 +3985,90 @@ components:
               path: { type: string, examples: ['weights.autoprolong_off_expiring.weight'] }
               old: {}
               new: {}
+
+    SettingsVersionRef:
+      type: object
+      required: [version, changed_at, changed_by]
+      properties:
+        version: { type: integer }
+        changed_at: { type: [string, 'null'], format: date-time }
+        changed_by: { type: [string, 'null'] }
+
+    QualityHonestyMethod:
+      type: object
+      description: 'Метрики одного метода вне выборки; доли от 0 до 1, деньги в евроцентах'
+      properties:
+        service_roc_auc: { type: [number, 'null'] }
+        service_brier: { type: [number, 'null'], description: 'Brier score по услугам: средний квадрат ошибки вероятности' }
+        service_lift_top10: { type: [number, 'null'] }
+        mean_predicted: { type: [number, 'null'] }
+        actual_rate: { type: [number, 'null'] }
+        customer_roc_auc: { type: [number, 'null'] }
+        customer_lift_top10: { type: [number, 'null'] }
+        expected_loss: { type: [number, 'null'] }
+        actual_loss: { type: [number, 'null'] }
+
+    QualityReliabilityPoint:
+      type: object
+      required: [n, predicted, actual]
+      properties:
+        n: { type: integer }
+        predicted: { type: number, description: 'Средняя предсказанная вероятность в группе' }
+        actual: { type: number, description: 'Фактическая доля потерянных услуг в группе' }
+
+    QualityHonesty:
+      type: object
+      description: 'Калибровка score → вероятность, модель-челленджер и группы признаков (tools/calibration/honesty.py)'
+      required: [calibration]
+      properties:
+        calibration:
+          type: object
+          required: [fit_scenario, services, brier_cross, by_scenario]
+          properties:
+            fit_scenario: { type: string, enum: [stream, calendar] }
+            services: { type: integer }
+            brier_cross:
+              type: object
+              description: 'Brier калибровки: ключ — на каком сценарии обучена, вложенный ключ — на каком проверена'
+              additionalProperties: { type: object, additionalProperties: { type: [number, 'null'] } }
+            by_scenario:
+              type: object
+              additionalProperties:
+                type: object
+                required: [methods, reliability]
+                properties:
+                  methods:
+                    type: object
+                    description: 'rules — сырая вероятность правил, rules_calibrated — после калибровки, logreg и gbm — челленджеры'
+                    additionalProperties: { $ref: '#/components/schemas/QualityHonestyMethod' }
+                  reliability:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items: { $ref: '#/components/schemas/QualityReliabilityPoint' }
+            logreg:
+              type: object
+              properties:
+                intercept: { type: number }
+                coef: { type: object, additionalProperties: { type: number } }
+        groups:
+          type: array
+          items:
+            type: object
+            required: [label, cap, level_changes, levels, scenarios]
+            properties:
+              label: { type: string }
+              cap: { type: [number, 'null'] }
+              level_changes: { type: integer }
+              levels: { type: object, additionalProperties: { type: integer } }
+              expected_loss_raw: { type: number }
+              scenarios:
+                type: object
+                additionalProperties: { type: object, additionalProperties: { type: [number, 'null'] } }
+        case:
+          type: object
+          description: 'Эффект на данных кейса data/sample/data.json по вариантам настроек'
+        tables_sha: { type: [string, 'null'], description: 'Отпечаток model_tables.json, записанного этим расчётом' }
 
     QualityRanking:
       type: object
@@ -3997,6 +4232,7 @@ components:
             riskcore_sources: { type: string, description: 'Отпечаток исходников riskcore, на которых шла проверка' }
             simulator_sources: { type: string }
             weights: { type: object, additionalProperties: { type: number }, description: 'Веса признаков при проверке' }
+            groups: { type: object, additionalProperties: { type: number }, description: 'Включённые группы признаков и их потолки при проверке' }
             thresholds:
               type: object
               required: [medium, high]
@@ -4026,12 +4262,19 @@ components:
                 properties:
                   stream: { $ref: '#/components/schemas/QualityRobustnessScenario' }
                   calendar: { $ref: '#/components/schemas/QualityRobustnessScenario' }
+        honesty:
+          description: 'null — results.json посчитан без раздела честности (--no-honesty)'
+          oneOf:
+            - { $ref: '#/components/schemas/QualityHonesty' }
+            - { type: 'null' }
         current_model:
           type: object
           required: [riskcore_sources, matches]
           properties:
             riskcore_sources: { type: [string, 'null'], description: 'Отпечаток установленного riskcore' }
             matches: { type: [boolean, 'null'], description: 'Совпадает ли с тем, на котором считались цифры' }
+            tables_sha: { type: [string, 'null'], description: 'Отпечаток установленной таблицы калибровки model_tables.json' }
+            tables_match: { type: [boolean, 'null'], description: 'Совпадает ли таблица калибровки с той, что посчитал этот расчёт' }
 
     SourceAccount:
       type: object
@@ -4352,7 +4595,7 @@ components:
       required: [id, kind, message, link]
       properties:
         id: { type: integer }
-        kind: { type: string, enum: [loss_growth, big_customer_high, risk_share, high_count_growth, stale_data, high_risk, loss_jump, total_loss_jump, bulk] }
+        kind: { type: string, enum: [loss_growth, big_customer_high, risk_share, high_count_growth, stale_data, model_drift, high_risk, loss_jump, total_loss_jump, bulk] }
         customer_id: { type: [integer, 'null'], description: 'null у total_loss_jump и bulk' }
         email: { type: [string, 'null'] }
         risk_level: { type: [string, 'null'] }

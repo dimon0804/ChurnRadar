@@ -428,6 +428,29 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
             kick_relay(request)
         return state
 
+    @app.post("/api/v1/model/settings/rollback", tags=["model"])
+    async def rollback_model_settings(
+        request: Request,
+        user: AdminUser,
+        pool: Pool,
+        body: Annotated[model_settings.RollbackRequest, Body()],
+    ) -> dict[str, Any]:
+        state, changed = await model_settings.rollback_settings(pool, body.version, user.name)
+        if changed:
+            log.info("settings_rollback", version=state["version"], target=body.version, user=user.name)
+            kick_relay(request)
+        return state
+
+    @app.get("/api/v1/model/settings/compare", tags=["model"])
+    async def compare_model_settings(
+        request: Request,
+        user: AdminUser,
+        pool: Pool,
+        version_from: Annotated[int, Query(alias="from", ge=1)],
+        version_to: Annotated[int, Query(alias="to", ge=1)],
+    ) -> dict[str, Any]:
+        return await preview.compare(request, user, pool, version_from, version_to)
+
     @app.get("/api/v1/model/settings/history", tags=["model"])
     async def settings_history(
         _: CurrentUser, pool: Pool, limit: Annotated[int, Query(ge=1, le=200)] = 50

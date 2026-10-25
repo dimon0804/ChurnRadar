@@ -216,6 +216,17 @@ async def write_snapshot(conn: asyncpg.Connection, snap: Snapshot, every: timede
         )
 
 
+async def model_drift(conn: asyncpg.Connection) -> dict[str, Any] | None:
+    """summary["drift"] последнего полного пересчёта: PSI признаков против эталона калибровки."""
+    # Всю строку, а не data -> 'drift': как и current_metrics, переживаем сводку, записанную
+    # JSON-строкой внутри jsonb (так её кладут тесты через кодек пула).
+    data = await conn.fetchval("SELECT data FROM scoring.summary WHERE id = 1")
+    if isinstance(data, str):
+        data = json.loads(data)
+    drift = data.get("drift") if isinstance(data, dict) else None
+    return drift if isinstance(drift, dict) else None
+
+
 async def freshness(conn: asyncpg.Connection) -> tuple[datetime | None, datetime | None]:
     """(время последнего изменения источника, время последнего пересчёта)."""
     last_change = await conn.fetchval("SELECT max(created_at) FROM source.snapshots")

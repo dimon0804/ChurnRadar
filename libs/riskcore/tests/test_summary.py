@@ -120,7 +120,7 @@ def test_forecast_sums_to_probabilities_inside_horizon(portfolio):
     for outcome in (o for r in results for o in r.services if o.probability is not None):
         moment = decision_moment(outcome.service)
         if moment is None or moment <= horizon_end:
-            expected += outcome.probability
+            expected += outcome.loss_probability
     forecast = [p for p in summary["timeline"] if p["kind"] == "forecast"]
     assert sum(p["expected_nonrenewals"] for p in forecast) == pytest.approx(expected, abs=1e-6)
 
@@ -129,16 +129,18 @@ def test_forecast_places_decisions_on_right_days(portfolio):
     results, _, summary = portfolio
     forecast = {date.fromisoformat(p["date"]): p for p in summary["timeline"] if p["kind"] == "forecast"}
     outcomes = {o.service.id: o for r in results for o in r.services}
-    hourly_share = outcomes[2].probability / HORIZON
+    hourly_share = outcomes[2].loss_probability / HORIZON
     day_12 = (AS_OF + timedelta(days=12)).date()
-    assert forecast[day_12]["expected_nonrenewals"] == pytest.approx(outcomes[3].probability + hourly_share)
+    assert forecast[day_12]["expected_nonrenewals"] == pytest.approx(
+        outcomes[3].loss_probability + hourly_share
+    )
     first_day = AS_OF.date() + timedelta(days=1)
-    overdue = outcomes[5].probability + outcomes[6].probability
+    overdue = outcomes[5].loss_probability + outcomes[6].loss_probability
     pending_deletion = (AS_OF - timedelta(days=2) + PROLONG_WAIT_GRACE).date()
     assert pending_deletion == AS_OF.date() + timedelta(days=3)
     assert forecast[first_day]["expected_nonrenewals"] == pytest.approx(overdue + hourly_share)
     assert forecast[pending_deletion]["expected_nonrenewals"] == pytest.approx(
-        outcomes[1].probability + hourly_share
+        outcomes[1].loss_probability + hourly_share
     )
 
 

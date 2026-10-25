@@ -28,6 +28,7 @@ from .notify import (
     check_big_customers,
     check_high_count,
     check_loss_growth,
+    check_model_drift,
     check_risk_share,
     check_stale,
     digest_notice,
@@ -190,10 +191,38 @@ class Fanout:
                     delivered = await self.deliver(conn, prefs, notice, pref.channels, now=now, chats=chats)
                     result.personal += 1
                     result.queued_external |= any(v == "ok" for k, v in delivered.items() if k != "panel")
+        drift_entry = await self.drift_entry(conn, states, now=now)
+        if drift_entry is not None:
+            result.journal.append(drift_entry)
         if result.journal:
             await self.journal(conn, result.journal, event_ids=event_ids, now=now)
             result.queued_external |= bool(self._config.enabled_channels())
         return result
+
+    async def drift_entry(
+        self, conn: asyncpg.Connection, states: dict[tuple[str, str], tuple[datetime | None, bool]], *, now: datetime
+    ) -> JournalEntry | None:
+        """«Модель устарела»: системное событие в журнал и общий канал команды.
+
+        Персональных порогов у него нет — это сигнал тому, кто отвечает за модель, а не про
+        клиентов. Антидребезг как у stale_data: сообщаем один раз, пока статус держится в alert;
+        флаг снимаем, когда PSI вернулся в ok или warn. too_few и no_reference флаг не трогают:
+        по ним не понять, ушёл дрейф или нет.
+        """
+        drift = await repo.model_drift(conn)
+        status = (drift or {}).get("status")
+        _, active = states.get((repo.JOURNAL_USER, "model_drift"), (None, False))
+        notice = check_model_drift(drift)
+        if notice is None:
+            if active and status in ("ok", "warn"):
+                await repo.set_event_state(conn, repo.JOURNAL_USER, "model_drift", last_sent_at=None, active=False)
+            return None
+        if active:
+            SUPPRESSED.labels(kind="model_drift").inc()
+            return None
+        RAISED.labels(kind="model_drift").inc()
+        await repo.set_event_state(conn, repo.JOURNAL_USER, "model_drift", last_sent_at=now, active=True)
+        return _entry(notice)
 
     async def journal(
         self, conn: asyncpg.Connection, entries: Sequence[JournalEntry], *, event_ids: Sequence[str], now: datetime

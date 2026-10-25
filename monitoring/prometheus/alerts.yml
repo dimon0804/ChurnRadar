@@ -36,6 +36,25 @@ groups:
             Число клиентов в группе высокого риска за час выросло больше чем на 20%.
             Проверьте в ChurnRadar раздел «Клиенты под риском» и причины в карточках.
 
+  # Дрейф признаков: scoring после каждого полного пересчёта считает PSI распределения сил
+  # сигналов против эталона калибровки (riskcore.drift). Серий нет, пока эталона нет или
+  # база меньше 200 платных услуг — тогда и алерт молчит.
+  - name: churn-model
+    rules:
+      - alert: ModelDrift
+        expr: max by (feature) (churn_feature_psi) > 0.25
+        for: 15m
+        labels:
+          severity: warning
+          team: model
+        annotations:
+          summary: "Признак {{ $labels.feature }} ушёл от эталона калибровки: PSI {{ $value | printf \"%.2f\" }}"
+          description: >-
+            Распределение признаков ушло от эталона калибровки, модель устарела: вероятности
+            и ожидаемая потеря могут заметно врать. Перезапустите python -m tools.calibration
+            на свежих данных и выкатите новую model_tables.json. Меньше 0,1 — норма,
+            0,1–0,25 — заметный сдвиг, выше 0,25 — пора перекалибровать.
+
   - name: churn-platform
     rules:
       - alert: ServiceDown

@@ -24,6 +24,8 @@ def feed_path(kind: str, customer_id: int | None) -> str:
         return "/"
     if kind == "stale_data":
         return "/data"
+    if kind == "model_drift":
+        return "/quality"
     return HIGH_RISK_PATH
 
 

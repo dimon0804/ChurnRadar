@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  Activity,
   Bell,
   BellOff,
   CalendarClock,
@@ -40,6 +41,7 @@ const EVENT_ICON: Record<string, { icon: LucideIcon; className: string }> = {
   stale_data: { icon: Clock, className: 'bg-muted text-foreground' },
   digest: { icon: CalendarClock, className: 'bg-muted text-foreground' },
   bulk: { icon: Layers, className: 'bg-risk-high-bg text-risk-high' },
+  model_drift: { icon: Activity, className: 'bg-risk-medium-bg text-risk-medium' },
 }
 const FALLBACK_ICON = { icon: Sigma, className: 'bg-muted text-foreground' }
 

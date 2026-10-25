@@ -184,7 +184,7 @@ async def test_endpoint_maps_superseded_and_timeout() -> None:
         def __init__(self, exc: Exception) -> None:
             self.exc = exc
 
-        async def preview(self, settings):  # type: ignore[no-untyped-def]
+        async def preview(self, settings, baseline=None):  # type: ignore[no-untyped-def]
             raise self.exc
 
     body = {"settings": riskcore.default_settings().to_storage()}
@@ -341,3 +341,26 @@ async def test_snapshot_is_reused_until_next_rescore(db_pool, sample_data, monke
     loads = 0
     await previewer.preview(_storage(short_commitment=0))
     assert loads == 1
+
+
+@pytest.mark.integration
+async def test_compare_two_versions_uses_baseline(db_pool, sample_data) -> None:  # type: ignore[no-untyped-def]
+    """Сравнение версий: «было» по baseline, кэш «было» для ползунков не портится."""
+    async with db_pool.acquire() as conn:
+        await load_snapshot(conn, sample_data, REFERENCE)
+    previewer = pv.Previewer(db_pool)
+    regular = await previewer.preview(_storage(prolong_wait=100))
+
+    heavy = _storage(prolong_wait=100)
+    same = await previewer.preview(heavy, baseline=heavy)
+    assert same["changes_total"] == 0
+    assert same["before"] == same["after"]
+    assert same["before"]["expected_loss"] == regular["after"]["expected_loss"]
+
+    back = await previewer.preview(_storage(), baseline=heavy)
+    assert back["before"] == regular["after"]
+    assert back["after"] == regular["before"]
+
+    # обычный предпросмотр после сравнения по-прежнему считает «было» по текущим настройкам
+    again = await previewer.preview(_storage(prolong_wait=100))
+    assert again["before"] == regular["before"]

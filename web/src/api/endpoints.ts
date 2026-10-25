@@ -32,6 +32,7 @@ import type {
   ReasonDetail,
   RiskDistribution,
   RiskScatter,
+  SettingsCompare,
   SettingsHistory,
   SimulatorCommand,
   SimulatorState,
@@ -141,6 +142,10 @@ export const api = {
     request<ModelSettingsPreview>('/api/v1/model/settings/preview', { method: 'POST', body, signal }),
   settingsHistory: (limit = 50, signal?: AbortSignal) =>
     request<SettingsHistory>('/api/v1/model/settings/history', { query: { limit }, signal }),
+  rollbackSettings: (version: number) =>
+    request<ModelSettings>('/api/v1/model/settings/rollback', { method: 'POST', body: { version } }),
+  compareSettings: (from: number, to: number, signal?: AbortSignal) =>
+    request<SettingsCompare>('/api/v1/model/settings/compare', { query: { from, to }, signal }),
   modelQuality: (signal?: AbortSignal) => request<ModelQuality>('/api/v1/model/quality', { signal }),
 
   putSnapshot: (body: SourceSnapshot) =>
@@ -197,6 +202,7 @@ export const queryKeys = {
   reason: (code: string, scope: string) => ['summary', 'reason', code, scope] as const,
   settings: ['settings'] as const,
   history: ['settings-history'] as const,
+  settingsCompare: (from: number, to: number) => ['settings-history', 'compare', from, to] as const,
   modelQuality: ['model-quality'] as const,
   settingsPreview: (patch: ModelSettingsPatch) => ['settings-preview', patch] as const,
   simulator: ['simulator'] as const,

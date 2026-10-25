@@ -89,7 +89,7 @@ def build_timeline(
     spread_p = 0.0
     spread_loss = 0.0
     for d in decisions:
-        p = d.outcome.probability or 0.0
+        p = d.outcome.loss_probability
         if d.spread:
             spread_p += p / horizon_days
             spread_loss += d.outcome.expected_loss / horizon_days

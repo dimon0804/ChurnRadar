@@ -22,6 +22,16 @@ Aéza case, RND hackathon (DSTU)
 
 ![Panel overview](docs/img/screens/overview.png)
 
+<details><summary>Light theme and phone</summary>
+
+![Overview, light theme](docs/img/screens/overview-light.png)
+
+![Customers, light theme](docs/img/screens/customers-light.png)
+
+<img src="docs/img/screens/overview-mobile.png" alt="Overview on a phone" width="300"> <img src="docs/img/screens/customers-mobile.png" alt="Customers on a phone" width="300">
+
+</details>
+
 The panel itself, the model texts and the docs in `docs/` are in Russian, since the product is
 built for a Russian-speaking marketing team. This README covers everything needed to run and
 evaluate the project.
@@ -227,6 +237,9 @@ replicas.
 </details>
 
 ## Charts and reasons
+
+![Overview charts](docs/img/screens/charts.png)
+![Clicking a reason: filtered customers and the reason panel](docs/img/screens/reasons.png)
 
 The numbers in the panel are backed by charts, and almost everything on them is clickable.
 
@@ -614,6 +627,8 @@ so a deleted seed account comes back. A blocked one stays blocked.
 
 ### Sign-in through Authentik (OIDC and SAML)
 
+![Sign-in through Authentik](docs/img/screens/login-sso.png)
+
 Authentik is the project's main IdP. It starts with the `sso` profile and configures itself
 without any clicking in its admin UI: the blueprint
 [`deploy/authentik/blueprints/churn-radar.yaml`](deploy/authentik/blueprints/churn-radar.yaml)
@@ -704,6 +719,8 @@ system that a company usually already runs. See [docs/deploy.md](docs/deploy.md#
 
 ## Integrations
 
+![Integrations: API tokens and the emailed report](docs/img/screens/integrations.png)
+
 ChurnRadar does not have to be a separate window: Aéza's billing, CRM, helpdesk and BI can read
 from it and write into it machine-to-machine, without a browser. Everything the panel does is
 available through the same API ([`contracts/openapi.yaml`](contracts/openapi.yaml), Swagger at
@@ -770,6 +787,8 @@ field works for Slack and Mattermost), a team Telegram chat and personal e-mail 
 ([Notifications](#notifications)). A helpdesk ticket or a CRM task appears without a human.
 
 ## Audit log and the management report
+
+![Audit log](docs/img/screens/audit.png)
 
 **Audit log.** Everything that changes the system lands in one log (`audit.events`): sign-in,
 sign-out and failed attempts, users and API tokens, model settings, data uploads, e-mails and
@@ -888,6 +907,8 @@ can be rolled back, and two versions can be compared together with the effect on
 
 ## Quality check
 
+![Model quality: lift, ROC AUC, probability reliability](docs/img/screens/quality.png)
+
 The case data has no churn labels, so we tested the model on a synthetic future: generated
 20,000 customers, scored them at moment T and played 30 days forward with two independent
 simulations (the simulator's live stream and a renewal calendar).
@@ -914,6 +935,8 @@ fingerprints stored in the file with the current code, so after a model change C
 rerun the check. If the weights in the settings differ from the tested ones, the page says so.
 
 ## Retention playbooks
+
+![Retention playbooks](docs/img/screens/playbooks.png)
 
 The "Сценарии" (playbooks) page (`/playbooks`) takes routine off the marketer: an "if — then"
 rule fires on its own after every score recalculation.
@@ -948,6 +971,8 @@ playbooks; everyone signed in can view them. Metrics: `playbook_runs_total`,
 `playbook_actions_total{action}`, `playbook_holdout_total`.
 
 ## Marketing metrics
+
+![Marketing: MRR, ARPU, LTV and retention](docs/img/screens/marketing.png)
 
 The "Marketing" page (`/marketing`, open to everyone signed in) shows the numbers a marketer
 expects, computed from the case data and the model forecast. Every card has an "i" icon with the

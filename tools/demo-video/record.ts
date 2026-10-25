@@ -32,8 +32,8 @@ const SSO_USER = env('SSO_USERNAME', 'marketer')
 const SSO_PASSWORD = env('SSO_MARKETER_PASSWORD', env('SSO_PASSWORD', 'marketer'))
 const OUT = resolve(env('OUT', resolve(here, 'out')))
 const HEADLESS = env('HEADLESS', '1') !== '0'
-/** Множитель пауз: 1 — обычный темп, 0.5 — быстрый прогон для отладки. */
-const PACE = Number(env('PACE', '1')) || 1
+/** Множитель пауз между действиями (на время чтения субтитров не влияет): 0.7 — бодрый темп. */
+const PACE = Number(env('PACE', '0.7')) || 0.7
 /** Только эти сцены (через запятую, по id) — для отладки отдельных мест. */
 const ONLY = env('SCENES').split(',').map((s) => s.trim()).filter(Boolean)
 
@@ -87,7 +87,7 @@ async function restoreOverlay() {
 }
 
 function readMs(text: string) {
-  return Math.max(3300, 1500 + text.length * 56)
+  return Math.max(2800, 1200 + text.length * 50)
 }
 
 function closeCue() {
@@ -108,7 +108,7 @@ async function say(text: string) {
   cues.push({ start: now() + 250, end: 0, text })
   overlayState.text = text
   await overlay('say', text)
-  sayUntil = Date.now() + readMs(text) * PACE
+  sayUntil = Date.now() + readMs(text)
 }
 
 async function sayAndWait(text: string) {
@@ -234,7 +234,10 @@ async function visible(locator: Locator, timeout = 2500) {
 async function goto(path: string) {
   const url = /^(https?:|data:)/.test(path) ? path : `${BASE}${path}`
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 })
+  // на слайдах курсор не нужен
+  if (url.startsWith('data:')) overlayState.cursor = null
   await restoreOverlay()
+  if (url.startsWith('data:')) await overlay('cursorHide')
   await pause(700)
 }
 
@@ -542,8 +545,6 @@ const scenes: Scene[] = [
       }
       await unspot()
       await click(campaign.getByRole('button', { name: 'Отмена' }))
-      await say('Сейчас ничего не отправляем, это только предпросмотр.')
-      await settle()
     },
   },
   {
@@ -954,14 +955,14 @@ const scenes: Scene[] = [
         await pause(600)
         const levels = d.getByRole('group', { name: 'Уровень риска' })
         if (await visible(levels, 1500)) await click(levels.getByRole('button', { name: 'Высокий' }))
+        await cursorTo(1100, 300)
         const preview = d.getByTestId('playbook-preview')
-        if (await visible(preview, 4000)) {
-          await pause(800)
+        await d.getByTestId('preview-matched').waitFor({ state: 'visible', timeout: 8000 }).catch(() => {})
+        if (await visible(preview, 1000)) {
+          await pause(600)
           await spot(preview)
         }
-        await say('Пока сценарий не включён в боевом режиме, он только симулирует: видно, сколько клиентов попадёт под правило и сколько уйдёт в контрольную группу.')
-        await settle()
-        await say('Контрольная группа нужна, чтобы потом честно измерить эффект: помогли письма или клиенты остались бы и так.')
+        await say('Пока сценарий не в боевом режиме, он только симулирует: видно, сколько клиентов попадёт под правило и сколько уйдёт в контрольную группу, чтобы честно измерить эффект.')
         await settle()
         await unspot()
         const cancel = d.getByRole('button', { name: 'Отмена' })
@@ -1089,8 +1090,6 @@ const scenes: Scene[] = [
         await settle()
         await unspot()
         await click(d.getByRole('button', { name: 'Отмена' }))
-        await say('Сейчас никого не создаём, только показываем.')
-        await settle()
       }
     },
   },
@@ -1120,19 +1119,22 @@ const scenes: Scene[] = [
         await settle()
         await unspot()
         await click(link)
-        await page.waitForURL(/\/if\/flow\//, { timeout: 30_000 })
+        await page.waitForURL(/\/if\/flow\//, { timeout: 30_000 }).catch(() => {})
         await restoreOverlay()
         await say(`Маркетолог входит своей корпоративной учёткой ${SSO_USER}.`)
         const loginBox = page.getByRole('textbox', { name: /Имя пользователя|Username|Email/i })
-        await need(loginBox, 'форма Authentik', 20_000)
-        await type(loginBox, SSO_USER)
-        await page.keyboard.press('Enter')
-        const pass = page.getByRole('textbox', { name: /Пароль|Password/i })
-        await need(pass, 'поле пароля Authentik', 20_000)
-        await type(pass, SSO_PASSWORD, { secret: true })
-        await page.keyboard.press('Enter')
+        const inPanel = () => page.url().startsWith(BASE) && !new URL(page.url()).pathname.startsWith('/login')
+        // если Authentik уже помнит сессию, он сразу вернёт в панель — форму тогда не показываем
+        if (!inPanel() && (await visible(loginBox, 20_000))) {
+          await type(loginBox, SSO_USER)
+          await page.keyboard.press('Enter')
+          const pass = page.getByRole('textbox', { name: /Пароль|Password/i })
+          await need(pass, 'поле пароля Authentik', 20_000)
+          await type(pass, SSO_PASSWORD, { secret: true })
+          await page.keyboard.press('Enter')
+        }
         const consent = page.getByRole('button', { name: /Continue|Продолжить|Согласиться/i })
-        if (await visible(consent, 4000)) await click(consent)
+        if (!inPanel() && (await visible(consent, 4000))) await click(consent)
         await page.waitForURL((u) => u.href.startsWith(BASE) && !u.pathname.startsWith('/login'), { timeout: 30_000 })
         await restoreOverlay()
         await pause(1500)

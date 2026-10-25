@@ -110,7 +110,7 @@ OUT=./out-prod npm run record
 | `SSO_USERNAME`, `SSO_MARKETER_PASSWORD` | `marketer` / `marketer` | учётка Authentik для сцены SSO |
 | `OUT` | `tools/demo-video/out` | куда класть результат |
 | `SCENES` | все | только эти сцены, через запятую (`login` идёт всегда) |
-| `PACE` | `1` | множитель пауз: `0.5` — вдвое быстрее |
+| `PACE` | `0.7` | множитель пауз между действиями, на чтение субтитров не влияет |
 | `HEADLESS` | `1` | `0` — смотреть запись в окне браузера |
 | `SKIP_ENCODE` | — | `1` — не собирать mp4 |
 | `FFMPEG`, `FFMPEG_DOCKER`, `FFMPEG_IMAGE` | — | свой путь к ffmpeg или принудительно docker |

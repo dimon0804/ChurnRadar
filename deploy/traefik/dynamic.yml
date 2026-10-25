@@ -138,10 +138,12 @@ http:
       middlewares: [strip-identity, auth-page, compress, security-headers]
 
   services:
+    # Активных health check у сервисов нет: за каждым одно имя в DNS docker, и одна медленная
+    # проба (сервис с лимитом 0.5 CPU занят пачкой событий) снимала бы весь сервис на 10 с с
+    # ответом 503. Живость и так проверяет healthcheck docker, реплики балансирует DNS.
     auth:
       loadBalancer:
         servers: [{url: "http://auth:8000"}]
-        healthCheck: {path: /healthz, interval: 10s, timeout: 3s}
     notifier:
       loadBalancer:
         servers: [{url: "http://notifier:8000"}]
@@ -159,7 +161,6 @@ http:
     alerts:
       loadBalancer:
         servers: [{url: "http://alerts:8000"}]
-        healthCheck: {path: /healthz, interval: 10s, timeout: 3s}
     web:
       loadBalancer:
         servers: [{url: "http://web:8080"}]

@@ -58,7 +58,11 @@ class Settings(BaseSettings):
     sso_admin_groups: str = "churn-admins"
     sso_marketer_groups: str = "churn-marketers"
     sso_analyst_groups: str = "churn-analysts"
+    # начальное значение «роли по умолчанию» для SSO; дальше её меняет админ на странице «Вход и регистрация»
     sso_default_role: str = ""
+
+    # аварийный ключ: вход по паролю для администраторов, даже если в панели он выключен
+    auth_break_glass_password_login: bool = False
 
     log_level: str = "info"
 

@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .accounts import clean_email
+from .login_settings import SSO_METHODS
 from .sessions import Session
 from .users import UserRecord
 
@@ -138,8 +139,23 @@ def register_user_routes(
         return user
 
     async def guard_last_admin(st, user: UserRecord) -> None:
-        if user.is_active and "admin" in user.roles and await st.repo.count_active_admins() <= 1:
+        if not (user.is_active and "admin" in user.roles):
+            return
+        if await st.repo.count_active_admins() <= 1:
             raise fail(409, "last_admin", "Это последний активный администратор: сначала назначьте другого")
+        # пароль выключен: должен остаться хотя бы один администратор, который войдёт через SSO
+        policy = st.login_policy
+        value = await policy.current()
+        if value.password_enabled:
+            return
+        sso = tuple(m for m in SSO_METHODS if policy.active(value, m))
+        if user.provider in sso and await st.repo.count_active_admins(sso) <= 1:
+            raise fail(
+                409,
+                "last_sso_admin",
+                "Вход по паролю выключен, а это последний администратор, который входит через SSO. "
+                "Сначала включите вход по паролю или сделайте администратором другого SSO-пользователя",
+            )
 
     async def audit(st, session: Session, action: str, target: UserRecord | None, **details: Any) -> None:
         await st.repo.add_audit(session.username, action, target.username if target else None, details)

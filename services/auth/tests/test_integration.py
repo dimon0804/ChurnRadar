@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import os
 import subprocess
 import sys
@@ -21,7 +23,10 @@ from redis.asyncio import Redis
 
 from app.accounts import SsoDenied, sso_sign_in
 from app.config import Settings
+from app.login_settings import LoginSettings
 from app.main import create_app
+from app.sessions import Session, now
+from app.users import UserRecord
 
 from .conftest import ORIGIN, offline_transport
 
@@ -65,9 +70,10 @@ async def apply_core_audit() -> None:
         await conn.close()
 
 
-@pytest.fixture
-async def app_client():
-    settings = Settings(database_url=DB, redis_url=REDIS, oidc_enabled=False, saml_enabled=False, log_level="warning")
+@contextlib.asynccontextmanager
+async def running_app(**overrides):
+    options = {"oidc_enabled": False, "saml_enabled": False, **overrides}
+    settings = Settings(database_url=DB, redis_url=REDIS, log_level="warning", **options)
     redis = Redis.from_url(REDIS, decode_responses=True)
     await redis.flushdb()
     upstream = httpx.AsyncClient(transport=httpx.MockTransport(offline_transport))
@@ -77,6 +83,9 @@ async def app_client():
         await pool.execute("DELETE FROM auth.users WHERE username NOT IN ('admin', 'marketer', 'analyst')")
         await pool.execute("UPDATE auth.users SET is_active = true, email = NULL")
         await pool.execute("TRUNCATE audit.events, auth.api_tokens")
+        # настройки входа — по умолчанию (всё включено), запись заведётся заново
+        await pool.execute("DELETE FROM auth.login_settings")
+        app.state.ctx.login_policy.invalidate()
         transport = httpx.ASGITransport(app=app, client=("10.0.0.7", 5000))
         async with httpx.AsyncClient(
             transport=transport, base_url="http://auth", headers={"X-Forwarded-Host": "localhost:8080"}
@@ -84,6 +93,19 @@ async def app_client():
             yield c, app.state.ctx
     await upstream.aclose()
     await redis.aclose()
+
+
+@pytest.fixture
+async def app_client():
+    async with running_app() as pair:
+        yield pair
+
+
+@pytest.fixture
+async def sso_app_client():
+    # OIDC настроен в окружении (IdP в тесте не отвечает — для настроек входа это неважно)
+    async with running_app(oidc_enabled=True) as pair:
+        yield pair
 
 
 async def login(c, username, password):
@@ -208,3 +230,91 @@ async def test_three_roles_in_postgres(app_client):
     assert back.json()["user"]["role"] == "analyst"
     with pytest.raises(Exception):  # noqa: B017 — любая ошибка ограничения базы
         await st.repo.update_user(analyst["id"], roles=["boss"])
+
+
+async def sso_admin_cookie(st) -> str:
+    """Администратор, который вошёл через OIDC: учётка в базе и живая сессия в Redis."""
+    user = await st.repo.create_user(
+        UserRecord("", "it-sso-admin", "SSO-админ", ["admin"], "oidc", subject="it-sso-admin-sub")
+    )
+    return await st.sessions.create(Session(user.id, user.username, user.display_name, ["admin"], "oidc", now()))
+
+
+async def test_login_settings_against_postgres_and_redis(sso_app_client):
+    c, st = sso_app_client
+    pool = st.repo.pool
+    await pool.execute("DELETE FROM auth.users WHERE username = 'it-sso-admin'")
+
+    # админ по паролю: выключить пароль не даём, отказ записан в журнал
+    assert (await login(c, "admin", "admin")).status_code == 200
+    denied = await c.patch("/api/v1/auth/login-settings", json={"password_enabled": False}, headers=H)
+    assert denied.status_code == 409 and denied.json()["error"]["code"] == "sso_required"
+    off_all = await c.patch(
+        "/api/v1/auth/login-settings", json={"password_enabled": False, "oidc_enabled": False}, headers=H
+    )
+    assert off_all.json()["error"]["code"] == "no_login_methods"
+    failed = await pool.fetch(
+        "SELECT details->>'error' AS code FROM audit.events "
+        "WHERE action = 'auth.settings.update' AND NOT success ORDER BY id"
+    )
+    assert [r["code"] for r in failed] == ["sso_required", "no_login_methods"]
+
+    # аналитик сидит в панели по паролю
+    c.cookies.clear()
+    assert (await login(c, "analyst", "analyst")).status_code == 200
+    analyst_cookie = c.cookies.get("cr_session")
+
+    # SSO-админ выключает пароль: настройка в базе, парольные сессии сброшены
+    c.cookies.clear()
+    c.cookies.set("cr_session", await sso_admin_cookie(st))
+    resp = await c.patch(
+        "/api/v1/auth/login-settings",
+        json={"password_enabled": False, "sso_default_role": "analyst", "allowed_email_domains": ["Example.com"]},
+        headers=H,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["revoked_sessions"] >= 1
+    row = await pool.fetchrow("SELECT * FROM auth.login_settings")
+    assert row["password_enabled"] is False and row["updated_by"] == "it-sso-admin"
+    assert row["sso_default_role"] == "analyst" and list(row["allowed_email_domains"]) == ["example.com"]
+    entry = await pool.fetchrow(
+        "SELECT actor, object_type, object_id, details::text AS details FROM audit.events "
+        "WHERE action = 'auth.settings.update' AND success"
+    )
+    assert entry["actor"] == "it-sso-admin" and (entry["object_type"], entry["object_id"]) == ("settings", "login")
+    assert json.loads(entry["details"])["changes"]["password_enabled"] == {"from": True, "to": False}
+
+    c.cookies.set("cr_session", analyst_cookie)
+    assert (await c.get("/api/v1/auth/me")).status_code == 401
+    c.cookies.clear()
+    closed = await login(c, "admin", "admin")
+    assert closed.status_code == 403
+    assert closed.json()["error"]["message"] == "Вход по паролю отключён администратором, войдите через SSO"
+    assert (await c.get("/api/v1/auth/providers")).json()["password"] == {"enabled": False}
+
+    # аварийный ключ: админа пускаем, аналитика нет
+    st.settings.auth_break_glass_password_login = True
+    try:
+        assert (await login(c, "analyst", "analyst")).status_code == 403
+        assert (await login(c, "admin", "admin")).status_code == 200
+        assert await pool.fetchval("SELECT count(*) FROM audit.events WHERE action = 'auth.break_glass_login'") == 1
+    finally:
+        st.settings.auth_break_glass_password_login = False
+
+
+async def test_jit_policy_against_postgres(sso_app_client):
+    _, st = sso_app_client
+    pool = st.repo.pool
+    await pool.execute("DELETE FROM auth.users WHERE username LIKE 'it-jit-%'")
+    closed = LoginSettings(sso_auto_provision=False)
+    with pytest.raises(SsoDenied) as exc:
+        await sso_sign_in(st.repo, "oidc", "jit-1", "it-jit-new", "Новый", None, ["analyst"], closed)
+    assert exc.value.code == "not_provisioned"
+    assert await pool.fetchval("SELECT count(*) FROM auth.users WHERE username = 'it-jit-new'") == 0
+
+    picky = LoginSettings(allowed_email_domains=["corp.example"], sso_default_role="marketer")
+    with pytest.raises(SsoDenied) as exc:
+        await sso_sign_in(st.repo, "oidc", "jit-2", "it-jit-out", "Чужой", "x@gmail.com", [], picky)
+    assert exc.value.code == "domain_not_allowed"
+    user = await sso_sign_in(st.repo, "oidc", "jit-3", "it-jit-in", "Свой", "me@corp.example", [], picky)
+    assert user.roles == ["marketer"] and user.provider == "oidc"

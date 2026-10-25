@@ -18,7 +18,11 @@ def _norm(group: str) -> str:
 
 
 def map_roles(settings: Settings, roles: Iterable[str] = (), groups: Iterable[str] = ()) -> list[str]:
-    """Явные роли (admin/marketer/analyst) плюс роли из групп. Пустой список — доступа нет."""
+    """Явные роли (admin/marketer/analyst) плюс роли из групп. Пустой список — группы роли не дали.
+
+    Роль по умолчанию сюда не подмешивается: её задаёт администратор в настройках входа,
+    и применяет её sso_sign_in.
+    """
     found = {str(r).strip().lower() for r in roles} & set(VALID_ROLES)
     names = {_norm(str(g)) for g in groups if str(g).strip()}
     if names & _split(settings.sso_admin_groups):
@@ -27,6 +31,4 @@ def map_roles(settings: Settings, roles: Iterable[str] = (), groups: Iterable[st
         found.add("marketer")
     if names & _split(settings.sso_analyst_groups):
         found.add("analyst")
-    if not found and settings.sso_default_role in VALID_ROLES:
-        found.add(settings.sso_default_role)
     return [r for r in VALID_ROLES if r in found]

@@ -191,5 +191,6 @@ def test_roles_mapping():
     assert ident.username == "1"
     # Keycloak отдаёт группы путями
     assert identity_from_claims({"sub": "1", "groups": ["/churn-analysts"]}, s).roles == ["analyst"]
+    # роль по умолчанию теперь в настройках входа (её применяет sso_sign_in), не в разборе claims
     lenient = Settings(oidc_enabled=False, saml_enabled=False, sso_default_role="analyst")
-    assert identity_from_claims({"sub": "1", "groups": []}, lenient).roles == ["analyst"]
+    assert identity_from_claims({"sub": "1", "groups": []}, lenient).roles == []

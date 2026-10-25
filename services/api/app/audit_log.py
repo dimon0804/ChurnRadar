@@ -59,6 +59,8 @@ ACTION_TITLES = {
     "self.password": "Изменён свой пароль",
     "token.create": "Создан API-токен",
     "token.revoke": "Отозван API-токен",
+    "auth.settings.update": "Изменены способы входа",
+    "auth.break_glass_login": "Аварийный вход по паролю",
     "customer.action.set": "Отметка по клиенту",
     "customer.action.clear": "Снята отметка по клиенту",
     "mail.send": "Письмо клиенту",

@@ -89,6 +89,15 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/User' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: >-
+            Вход по паролю отключён администратором (`password_login_disabled`, «Вход по паролю отключён
+            администратором, войдите через SSO»), учётная запись заблокирована (`account_blocked`)
+            или запрос пришёл с чужого сайта (`csrf_rejected`). При AUTH_BREAK_GLASS_PASSWORD_LOGIN=1
+            по паролю пускают только администраторов.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '422': { $ref: '#/components/responses/ValidationError' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -359,6 +368,65 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/v1/auth/login-settings:
+    get:
+      tags: [users]
+      summary: Способы входа и регистрация через SSO
+      description: >-
+        Только администратор. Флаги oidc/saml действуют поверх окружения: провайдер, не настроенный
+        в env, выключен всегда (`methods.*.configured=false`). `password_disable_blocker` — почему
+        сейчас нельзя выключить вход по паролю (null — можно).
+      operationId: getLoginSettings
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: Текущие настройки
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    patch:
+      tags: [users]
+      summary: Изменить способы входа и регистрацию через SSO
+      description: |
+        Меняются только переданные поля. Изменение пишется в журнал действий (`auth.settings.update`:
+        кто, что было и что стало), отказы тоже. Сессии, выданные выключенным способом, сбрасываются
+        сразу (при AUTH_BREAK_GLASS_PASSWORD_LOGIN=1 парольные сессии администраторов остаются).
+
+        Защита от блокировки (409):
+        * `no_login_methods` — должен остаться хотя бы один способ входа;
+        * `sso_required` — выключить пароль можно, только войдя в панель через включённый SSO
+          учётной записью администратора;
+        * `provider_not_configured` — переключать провайдер, не настроенный в окружении, нельзя.
+      operationId: updateLoginSettings
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginSettingsUpdate' }
+      responses:
+        '200':
+          description: Настройки сохранены
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/LoginSettings' }
+                  - type: object
+                    required: [revoked_sessions]
+                    properties:
+                      revoked_sessions: { type: integer, description: Сколько сессий сброшено }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Изменение заперло бы вход (`no_login_methods`, `sso_required`) или провайдер не настроен
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/v1/auth/logout:
     post:
       tags: [auth]
@@ -383,10 +451,18 @@ paths:
                 type: object
                 required: [password, oidc, saml]
                 properties:
-                  password: { type: boolean }
+                  password:
+                    type: object
+                    description: >-
+                      Включён ли вход по паролю. `admins_only` — пароль выключен, но на сервере стоит
+                      аварийный ключ AUTH_BREAK_GLASS_PASSWORD_LOGIN: форма пустит только администраторов
+                    required: [enabled]
+                    properties:
+                      enabled: { type: boolean }
+                      admins_only: { type: boolean }
                   oidc:
                     type: object
-                    description: Есть, только когда IdP настроен и отвечает
+                    description: Есть, только когда IdP настроен, отвечает и способ не выключен администратором
                     required: [enabled]
                     properties:
                       enabled: { type: boolean }
@@ -394,7 +470,7 @@ paths:
                       login_url: { type: string, examples: ['/api/v1/auth/oidc/login'] }
                   saml:
                     type: object
-                    description: Есть, только когда метаданные IdP загружены
+                    description: Есть, только когда метаданные IdP загружены и способ не выключен администратором
                     required: [enabled]
                     properties:
                       enabled: { type: boolean }
@@ -412,7 +488,7 @@ paths:
           in: query
           schema: { type: string, default: / }
       responses:
-        '302': { description: Редирект на провайдера OIDC }
+        '302': { description: 'Редирект на провайдера OIDC, либо на /login?error=method_disabled, если администратор выключил OIDC' }
         '404': { description: OIDC не настроен }
 
   /api/v1/auth/oidc/callback:
@@ -453,7 +529,7 @@ paths:
           in: query
           schema: { type: string, default: / }
       responses:
-        '302': { description: Редирект на IdP с SAMLRequest }
+        '302': { description: 'Редирект на IdP с SAMLRequest, либо на /login?error=method_disabled, если администратор выключил SAML' }
         '404': { description: SAML не настроен или IdP недоступен }
 
   /api/v1/auth/saml/acs:
@@ -479,7 +555,10 @@ paths:
         '303':
           description: >-
             Сессия создана и редирект в панель, либо редирект на /login?error=sso
-            (ответ не прошёл проверку) или /login?error=forbidden (у пользователя нет роли)
+            (ответ не прошёл проверку), /login?error=forbidden (у пользователя нет роли),
+            /login?error=not_provisioned (автосоздание выключено, а пользователя не завели заранее),
+            /login?error=domain_not_allowed (почта не из разрешённых доменов) или
+            /login?error=method_disabled (SAML выключен администратором)
 
   /api/v1/customers:
     get:
@@ -2400,6 +2479,60 @@ components:
         email: { type: [string, 'null'], maxLength: 254 }
         role: { type: string, enum: [admin, marketer, analyst] }
         status: { type: string, enum: [active, blocked] }
+
+    LoginMethodState:
+      type: object
+      required: [configured, available, active]
+      properties:
+        configured: { type: boolean, description: Провайдер настроен в окружении auth }
+        available: { type: boolean, description: IdP отвечает прямо сейчас }
+        active: { type: boolean, description: Включён администратором и настроен }
+        display_name: { type: string }
+
+    LoginSettings:
+      type: object
+      required: [password_enabled, oidc_enabled, saml_enabled, sso_auto_provision, sso_default_role, allowed_email_domains, updated_at, updated_by, methods, break_glass, session_method, password_disable_blocker, sso_admins]
+      properties:
+        password_enabled: { type: boolean }
+        oidc_enabled: { type: boolean, description: Флаг администратора; действует, только если OIDC настроен }
+        saml_enabled: { type: boolean, description: Флаг администратора; действует, только если SAML настроен }
+        sso_auto_provision:
+          type: boolean
+          description: Создавать пользователя при первом входе через SSO; false — пускать только заведённых заранее
+        sso_default_role:
+          type: string
+          enum: [none, analyst, marketer]
+          description: Роль новому SSO-пользователю, если группы IdP роли не дали; none — не пускать
+        allowed_email_domains:
+          type: array
+          items: { type: string, examples: [example.com] }
+          description: Автосоздание только для почты из этих доменов (точное совпадение); пусто — любой
+        updated_at: { type: [string, 'null'], format: date-time }
+        updated_by: { type: [string, 'null'] }
+        methods:
+          type: object
+          required: [password, oidc, saml]
+          properties:
+            password: { $ref: '#/components/schemas/LoginMethodState' }
+            oidc: { $ref: '#/components/schemas/LoginMethodState' }
+            saml: { $ref: '#/components/schemas/LoginMethodState' }
+        break_glass: { type: boolean, description: На сервере включён AUTH_BREAK_GLASS_PASSWORD_LOGIN }
+        session_method: { type: string, enum: [password, oidc, saml], description: Как вошёл тот, кто смотрит }
+        password_disable_blocker:
+          type: [string, 'null']
+          description: Почему сейчас нельзя выключить вход по паролю; null — можно
+        sso_admins: { type: integer, description: Активные администраторы, привязанные к включённому SSO }
+
+    LoginSettingsUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        password_enabled: { type: boolean }
+        oidc_enabled: { type: boolean }
+        saml_enabled: { type: boolean }
+        sso_auto_provision: { type: boolean }
+        sso_default_role: { type: string, enum: [none, analyst, marketer] }
+        allowed_email_domains: { type: array, maxItems: 50, items: { type: string } }
 
     AuditEntry:
       type: object

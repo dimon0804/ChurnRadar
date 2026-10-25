@@ -189,6 +189,9 @@ auth:
     PUBLIC_URL: http://localhost:8080
     COOKIE_SECURE: "false"
     # OIDC_* и SAML_* собираются из блока sso ниже
+    # аварийный ключ: "true" пускает администраторов по паролю, даже если на странице
+    # «Вход и регистрация» пароль выключен. Держать "false"; включили, починили, выключили
+    AUTH_BREAK_GLASS_PASSWORD_LOGIN: "false"
 
 notifier:
   enabled: true

@@ -37,9 +37,15 @@ def upstream_transport():
 
 
 @pytest.fixture
-async def client(settings, repo, redis, upstream_transport):
+def login_settings_repo():
+    """None — настройки входа по умолчанию (всё включено); тесты подменяют своим хранилищем."""
+    return None
+
+
+@pytest.fixture
+async def client(settings, repo, redis, upstream_transport, login_settings_repo):
     upstream = httpx.AsyncClient(transport=upstream_transport)
-    app = create_app(settings, repo=repo, redis=redis, http=upstream)
+    app = create_app(settings, repo=repo, redis=redis, http=upstream, login_settings_repo=login_settings_repo)
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app=app, client=("10.0.0.5", 5000))
         async with httpx.AsyncClient(

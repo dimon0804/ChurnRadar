@@ -22,6 +22,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import audit, permissions
 from .accounts import SsoDenied, clean_email, sso_sign_in
 from .config import Settings, get_settings
+from .login_settings import (
+    LoginPolicy,
+    LoginSettingsRepo,
+    MemoryLoginSettingsRepo,
+    PostgresLoginSettingsRepo,
+)
+from .login_settings_api import register_login_settings_routes
 from .observability import LOGINS, VERIFY, RequestContextMiddleware, request_id_var, setup_logging
 from .oidc import OidcClient, OidcError, pkce_pair
 from .roles import map_roles
@@ -43,6 +50,8 @@ from .users_api import register_user_routes
 log = logging.getLogger("auth")
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+PASSWORD_OFF_MESSAGE = "Вход по паролю отключён администратором, войдите через SSO"  # noqa: S105 — текст, не пароль
+METHOD_OFF_MESSAGE = "Этот способ входа отключён администратором, войдите заново"
 
 hasher = PasswordHasher()
 # verified against when the username is unknown, so response time does not reveal valid logins
@@ -79,6 +88,7 @@ class State:
     saml_replay: ReplayGuard
     saml: SamlClient
     tokens: TokenService
+    login_policy: LoginPolicy
 
 
 class EmailCache:
@@ -136,6 +146,7 @@ def create_app(
     redis: Redis | None = None,
     http: httpx.AsyncClient | None = None,
     tokens_repo: TokenRepo | None = None,
+    login_settings_repo: LoginSettingsRepo | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     setup_logging(settings.log_level)
@@ -153,9 +164,12 @@ def create_app(
         else:
             state.repo = repo
         token_repo = tokens_repo or (PostgresTokenRepo(pool) if pool is not None else MemoryTokenRepo())
-        state.tokens = TokenService(
-            token_repo, state.redis, rate_limit_per_min=settings.api_token_rate_limit_per_min
+        state.tokens = TokenService(token_repo, state.redis, rate_limit_per_min=settings.api_token_rate_limit_per_min)
+        settings_repo = login_settings_repo or (
+            PostgresLoginSettingsRepo(pool) if pool is not None else MemoryLoginSettingsRepo()
         )
+        state.login_policy = LoginPolicy(settings_repo, settings)
+        await state.login_policy.load()
         state.http = http or httpx.AsyncClient()
         state.sessions = SessionStore(state.redis, settings.session_ttl_seconds)
         state.limiter = LoginRateLimiter(state.redis, settings.login_max_attempts, settings.login_window_seconds)
@@ -243,6 +257,10 @@ def create_app(
         session = await st.sessions.get(token) if token else None
         if session is None:
             raise ApiError(401, "unauthorized", "Нужно войти в систему")
+        if not await st.login_policy.session_allowed(session.auth_method, session.roles):
+            # способ входа выключили после того, как сессия была выдана
+            await st.sessions.delete(token)
+            raise ApiError(401, "login_method_disabled", METHOD_OFF_MESSAGE)
         return session
 
     register_user_routes(
@@ -262,6 +280,14 @@ def create_app(
         same_origin=same_origin,
         api_error=ApiError,
     )
+    register_login_settings_routes(
+        app,
+        ctx=ctx,
+        current_session=current_session,
+        extract_token=extract_token,
+        same_origin=same_origin,
+        api_error=ApiError,
+    )
 
     # ---- public auth API -------------------------------------------------------------
 
@@ -269,6 +295,10 @@ def create_app(
     async def login(body: LoginRequest, request: Request, st: Ctx):
         if request.headers.get("origin") and not same_origin(request):
             raise ApiError(403, "csrf_rejected", "Запрос пришёл с чужого сайта")
+        policy = await st.login_policy.current()
+        if not policy.password_enabled and not st.login_policy.break_glass:
+            LOGINS.labels("password", "disabled").inc()
+            raise ApiError(403, "password_login_disabled", PASSWORD_OFF_MESSAGE)
         ip = client_ip(request)
         retry = await st.limiter.retry_after(ip, body.username)
         if retry:
@@ -298,6 +328,15 @@ def create_app(
             # пароль верный, поэтому честно говорим, в чём дело
             LOGINS.labels("password", "blocked").inc()
             raise ApiError(403, "account_blocked", "Учётная запись заблокирована. Обратитесь к администратору")
+        if not st.login_policy.password_allowed(policy, user.roles):
+            # пароль выключен, аварийный ключ пускает только администраторов
+            LOGINS.labels("password", "disabled").inc()
+            raise ApiError(403, "password_login_disabled", PASSWORD_OFF_MESSAGE)
+        if not policy.password_enabled:
+            log.warning("break-glass password login", extra={"fields": {"username": user.username}})
+            await st.repo.add_audit(
+                user.username, "auth.break_glass_login", user.username, {"method": "password"}, object_type="user"
+            )
 
         await st.limiter.reset(ip, body.username)
         if user.password_hash and hasher.check_needs_rehash(user.password_hash):
@@ -332,14 +371,21 @@ def create_app(
 
     @app.get("/api/v1/auth/providers")
     async def providers(st: Ctx):
+        policy = await st.login_policy.current()
         oidc_up, saml_up = await asyncio.gather(st.oidc.available(), st.saml.available())
+        oidc_up = oidc_up and policy.oidc_enabled
+        saml_up = saml_up and policy.saml_enabled
+        password: dict = {"enabled": policy.password_enabled}
+        if not policy.password_enabled and st.login_policy.break_glass:
+            # аварийный вход: форма нужна, но пустит она только администраторов
+            password = {"enabled": True, "admins_only": True}
         oidc: dict = {"enabled": oidc_up}
         if oidc_up:
             oidc.update(display_name=settings.oidc_display_name, login_url="/api/v1/auth/oidc/login")
         saml: dict = {"enabled": saml_up}
         if saml_up:
             saml.update(display_name=settings.saml_display_name, login_url="/api/v1/auth/saml/login")
-        return {"password": True, "oidc": oidc, "saml": saml}
+        return {"password": password, "oidc": oidc, "saml": saml}
 
     async def start_sso_session(
         st: State,
@@ -354,8 +400,13 @@ def create_app(
         status_code: int = 302,
     ) -> Response:
         """Same session as after a password login, then back to the panel."""
+        policy = await st.login_policy.current()
+        if not st.login_policy.active(policy, method):
+            # админ выключил способ, пока человек был у IdP
+            LOGINS.labels(method, "disabled").inc()
+            return RedirectResponse("/login?error=method_disabled", status_code=status_code)
         try:
-            user = await sso_sign_in(st.repo, method, subject, username, display, clean_email(email), roles)
+            user = await sso_sign_in(st.repo, method, subject, username, display, clean_email(email), roles, policy)
         except SsoDenied as exc:
             log.warning(
                 "sso login denied",
@@ -379,6 +430,9 @@ def create_app(
 
     @app.get("/api/v1/auth/oidc/login")
     async def oidc_login(st: Ctx, next: str = "/"):
+        if settings.oidc_enabled and not await st.login_policy.method_on("oidc"):
+            LOGINS.labels("oidc", "disabled").inc()
+            return RedirectResponse("/login?error=method_disabled", status_code=302)
         if not await st.oidc.available():
             raise ApiError(404, "oidc_disabled", "Вход через SSO сейчас недоступен")
         state_token = secrets.token_urlsafe(24)
@@ -395,6 +449,9 @@ def create_app(
     async def oidc_callback(
         request: Request, st: Ctx, code: str | None = None, state: str | None = None, error: str | None = None
     ):
+        if not await st.login_policy.method_on("oidc"):
+            LOGINS.labels("oidc", "disabled").inc()
+            return RedirectResponse("/login?error=method_disabled", status_code=302)
         saved = await st.oidc_states.pop(state) if state else None
         if error or not code or saved is None:
             LOGINS.labels("oidc", "failure").inc()
@@ -429,6 +486,9 @@ def create_app(
 
     @app.get("/api/v1/auth/saml/login")
     async def saml_login(st: Ctx, next: str = "/"):
+        if settings.saml_enabled and not await st.login_policy.method_on("saml"):
+            LOGINS.labels("saml", "disabled").inc()
+            return RedirectResponse("/login?error=method_disabled", status_code=302)
         request_id = new_request_id()
         try:
             url = await st.saml.login_url(request_id)
@@ -451,6 +511,9 @@ def create_app(
             LOGINS.labels("saml", "failure").inc()
             return RedirectResponse("/login?error=sso", status_code=303)
 
+        if not await st.login_policy.method_on("saml"):
+            LOGINS.labels("saml", "disabled").inc()
+            return RedirectResponse("/login?error=method_disabled", status_code=303)
         if not saml_response:
             return reject("no SAMLResponse")
         try:
@@ -500,6 +563,16 @@ def create_app(
                 base = f"{proto}://{host}" if host else settings.public_url.rstrip("/")
                 return RedirectResponse(f"{base}/login?next={quote(uri, safe='')}", status_code=302)
             return error_response(401, "unauthorized", "Нужно войти в систему")
+        if not await st.login_policy.session_allowed(session.auth_method, session.roles):
+            # способ входа выключен после выдачи сессии: она больше не действует
+            await st.sessions.delete(token)
+            VERIFY.labels("method_disabled").inc()
+            if redirect:
+                host = request.headers.get("x-forwarded-host")
+                proto = request.headers.get("x-forwarded-proto", "http")
+                base = f"{proto}://{host}" if host else settings.public_url.rstrip("/")
+                return RedirectResponse(f"{base}/login?error=method_disabled", status_code=302)
+            return error_response(401, "login_method_disabled", METHOD_OFF_MESSAGE)
 
         if method in UNSAFE_METHODS:
             if kind == "cookie" and not same_origin(request):

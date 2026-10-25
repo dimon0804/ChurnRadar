@@ -43,6 +43,7 @@ MATRIX = [
     ("POST", "/api/v1/alerts/notifications/read", "analyst"),
     ("DELETE", "/api/v1/alerts/preferences/users/anna", "admin"),
     ("POST", "/api/v1/auth/users", "admin"),
+    ("PATCH", "/api/v1/auth/login-settings", "admin"),
     ("PATCH", "/api/v1/auth/me", "analyst"),
     ("POST", "/api/v1/unknown/thing", "admin"),
 ]

@@ -4,12 +4,14 @@ import hashlib
 import json
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 
 from redis.asyncio import Redis
 
 SESSION_PREFIX = "cr:sess:"
 USER_SESSIONS_PREFIX = "cr:usess:"
+METHOD_SESSIONS_PREFIX = "cr:msess:"
 RATE_PREFIX = "cr:rl:login:"
 OIDC_STATE_PREFIX = "cr:oidc:"
 SAML_REQUEST_PREFIX = "cr:saml:req:"
@@ -49,13 +51,45 @@ class SessionStore:
         token = secrets.token_urlsafe(32)
         key = _key(token)
         index = USER_SESSIONS_PREFIX + session.user_id
+        by_method = METHOD_SESSIONS_PREFIX + session.auth_method
         async with self.redis.pipeline(transaction=True) as pipe:
             pipe.set(key, json.dumps(asdict(session)), ex=self.ttl)
             # список сессий пользователя: при блокировке или смене роли их надо сбросить разом
             pipe.sadd(index, key)
             pipe.expire(index, self.ttl * 2)
+            # и список по способу входа: админ выключил пароль — сбрасываем все парольные сессии
+            pipe.sadd(by_method, key)
+            pipe.expire(by_method, self.ttl * 2)
             await pipe.execute()
         return token
+
+    async def revoke_method(
+        self,
+        method: str,
+        *,
+        keep: Callable[[Session], bool] | None = None,
+        keep_token: str | None = None,
+    ) -> int:
+        """Drop every session issued by this login method, except those `keep` spares."""
+        index = METHOD_SESSIONS_PREFIX + method
+        keys = set(await self.redis.smembers(index))
+        if keep_token:
+            keys.discard(_key(keep_token))
+        dropped, stale = [], []
+        for key in keys:
+            raw = await self.redis.get(key)
+            if raw is None:
+                stale.append(key)
+                continue
+            session = Session(**json.loads(raw))
+            if keep is not None and keep(session):
+                continue
+            dropped.append(key)
+        if dropped:
+            await self.redis.delete(*dropped)
+        if dropped or stale:
+            await self.redis.srem(index, *dropped, *stale)
+        return len(dropped)
 
     async def revoke_user(self, user_id: str, *, keep_token: str | None = None) -> int:
         """Drop every session of the user (optionally except the current one)."""

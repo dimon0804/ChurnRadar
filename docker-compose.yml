@@ -164,6 +164,8 @@ services:
       SSO_MARKETER_GROUPS: ${SSO_MARKETER_GROUPS:-churn-marketers}
       SSO_ANALYST_GROUPS: ${SSO_ANALYST_GROUPS:-churn-analysts}
       SSO_DEFAULT_ROLE: ${SSO_DEFAULT_ROLE:-}
+      # аварийный ключ: админы входят по паролю, даже если в панели он выключен (README, «Способы входа»)
+      AUTH_BREAK_GLASS_PASSWORD_LOGIN: ${AUTH_BREAK_GLASS_PASSWORD_LOGIN:-false}
       # API-токены интеграций: запросов в минуту на токен (если у токена нет своего лимита)
       API_TOKEN_RATE_LIMIT_PER_MIN: ${API_TOKEN_RATE_LIMIT_PER_MIN:-600}
     depends_on:

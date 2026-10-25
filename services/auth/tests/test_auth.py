@@ -111,7 +111,7 @@ async def test_session_ttl_slides(client, redis):
 
 async def test_providers_without_idp(client):
     resp = await client.get("/api/v1/auth/providers")
-    assert resp.json() == {"password": True, "oidc": {"enabled": False}, "saml": {"enabled": False}}
+    assert resp.json() == {"password": {"enabled": True}, "oidc": {"enabled": False}, "saml": {"enabled": False}}
 
 
 async def test_oidc_login_404_when_disabled(client):

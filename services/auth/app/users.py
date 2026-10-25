@@ -105,7 +105,7 @@ class UserRepo(Protocol):
 
     async def list_users(self, query: str = "") -> list[UserRecord]: ...
 
-    async def count_active_admins(self) -> int: ...
+    async def count_active_admins(self, providers: tuple[str, ...] | None = None) -> int: ...
 
     async def touch_login(self, user_id: str) -> None: ...
 
@@ -257,8 +257,15 @@ class PostgresUserRepo:
         )
         return [_row_to_user(r) for r in rows]
 
-    async def count_active_admins(self) -> int:
-        return int(await self.pool.fetchval("SELECT count(*) FROM auth.users WHERE is_active AND 'admin' = ANY(roles)"))
+    async def count_active_admins(self, providers: tuple[str, ...] | None = None) -> int:
+        """Активные администраторы; providers — только привязанные к этим способам входа."""
+        return int(
+            await self.pool.fetchval(
+                "SELECT count(*) FROM auth.users WHERE is_active AND 'admin' = ANY(roles) "
+                "AND ($1::text[] IS NULL OR provider = ANY($1::text[]))",
+                list(providers) if providers is not None else None,
+            )
+        )
 
     async def touch_login(self, user_id: str) -> None:
         await self.pool.execute("UPDATE auth.users SET last_login_at = now() WHERE id = $1::uuid", user_id)
@@ -380,8 +387,12 @@ class MemoryUserRepo:
         ]
         return sorted(found, key=lambda u: (u.username.lower(), u.provider))
 
-    async def count_active_admins(self) -> int:
-        return sum(1 for u in self.users.values() if u.is_active and "admin" in u.roles)
+    async def count_active_admins(self, providers: tuple[str, ...] | None = None) -> int:
+        return sum(
+            1
+            for u in self.users.values()
+            if u.is_active and "admin" in u.roles and (providers is None or u.provider in providers)
+        )
 
     async def touch_login(self, user_id: str) -> None:
         if user_id in self.users:

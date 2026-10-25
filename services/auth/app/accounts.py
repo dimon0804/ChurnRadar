@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from .login_settings import LoginSettings
 from .users import UserRecord, UserRepo
 
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]+$")
@@ -31,6 +32,7 @@ async def sso_sign_in(
     display_name: str,
     email: str | None,
     roles: list[str],
+    policy: LoginSettings | None = None,
 ) -> UserRecord:
     """JIT provisioning for OIDC/SAML.
 
@@ -38,9 +40,13 @@ async def sso_sign_in(
       set it by hand; a user blocked in the panel stays out even if the IdP lets him in;
     * pre-created by an admin as "SSO only": the first login claims that record (by username)
       and keeps the role the admin chose;
-    * unknown: created on the spot, role from IdP groups; no matching group — no access.
+    * unknown: created on the spot, role from IdP groups; no matching group — the default role
+      from the login settings, or no access. With auto-provisioning off nobody new gets in, and
+      the allowed email domains (if set) limit who may be created.
     """
+    policy = policy or LoginSettings()
     email = email or None
+    roles = roles or policy.default_roles
     user = await repo.find_sso_user(provider, subject)
     if user is not None:
         if not user.is_active:
@@ -73,6 +79,10 @@ async def sso_sign_in(
         await repo.touch_login(pending.id)
         return claimed or pending
 
+    if not policy.sso_auto_provision:
+        raise SsoDenied("not_provisioned", "auto-provisioning is off and the user was not created in advance")
+    if not policy.domain_allowed(email):
+        raise SsoDenied("domain_not_allowed", "email domain is not in the allowed list")
     if not roles:
         raise SsoDenied("forbidden", "no panel role in IdP groups")
     created = await repo.create_user(

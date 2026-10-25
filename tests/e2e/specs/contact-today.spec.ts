@@ -1,7 +1,7 @@
 import { expect, test, type APIRequestContext } from '@playwright/test'
 import { loginApi, loginUi, originHeaders } from './helpers'
 
-// «С кем связаться сегодня»: порядок по деньгам, отметки «Решено»/«Отложено», выгрузка CSV.
+// «С кем связаться сегодня»: срочные сверху, дальше по деньгам, отметки «Решено»/«Отложено», выгрузка CSV.
 // Спек сам снимает все отметки, которые поставил, — стенд остаётся как был.
 test.describe.configure({ mode: 'serial' })
 
@@ -59,18 +59,20 @@ test('очередь: только клиенты с риском, сначал�
   expect(q.queue_total + q.marked_total).toBe(atRisk.length)
 })
 
-test('блок на обзоре: топ-5 по деньгам, «Решено» убирает клиента, «Вернуть» — возвращает', async ({ page, request }) => {
+test('блок на обзоре: топ-5: срочные, дальше по деньгам, «Решено» убирает клиента, «Вернуть» — возвращает', async ({ page, request }) => {
   await loginApi(request, MARKETER)
   const top = (await queue(request)).items.slice(0, 5)
 
   await loginUi(page, MARKETER)
   const block = page.getByTestId('contact-today')
-  await expect(block.getByText('Сортируем по деньгам, которые можно спасти')).toBeVisible()
+  await expect(block.getByText(/Сначала срочные.*дальше по деньгам, которые можно спасти/)).toBeVisible()
   const rows = block.getByTestId('contact-today-row')
   await expect(rows).toHaveCount(top.length)
-  await expect(rows.first().getByRole('link')).toHaveText(top[0]!.email)
-  const shown = (await block.getByTestId('contact-today-loss').allInnerTexts()).map((t) => Number(t.replace(/\D/g, '')))
-  expect(shown).toEqual([...shown].sort((a, b) => b - a))
+  // порядок тот же, что у API: срочные сверху, дальше по ожидаемой потере (сам порядок проверен выше)
+  await expect(rows.getByRole('link')).toHaveText(top.map((c) => c.email))
+  for (const [i, c] of top.entries()) {
+    await expect(rows.nth(i).getByText('Срочно', { exact: true })).toHaveCount(c.urgent ? 1 : 0)
+  }
   await expect(block).not.toContainText(/звон/i)
 
   // «Решено» по первому — уходит из списка

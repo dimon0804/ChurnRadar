@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test'
-import { loginApi, loginUi, originHeaders } from './helpers'
+import { compose, composeServices, loginApi, loginUi, originHeaders } from './helpers'
 
 // Персональные уведомления: порог в настройках → событие в базе → письмо в Mailpit и запись под колокольчиком.
 test.describe.configure({ mode: 'serial' })
@@ -17,6 +17,18 @@ async function mailsTo(request: APIRequestContext, address: string): Promise<Mai
   return body.messages.filter((m) => m.To.some((t) => t.Address === address))
 }
 
+/**
+ * Сервис уведомлений не повторяет «перешёл в высокий риск» по одному клиенту чаще раза в 6 часов
+ * (ALERT_CUSTOMER_COOLDOWN_MIN), а в кейсе всего 10 клиентов: без сброса второй прогон за день
+ * не получил бы ни одного такого письма. Забываем, кому уже писали, — состояние стенда то же.
+ */
+function forgetCustomerAlerts() {
+  if (composeServices().includes('mock-core')) return
+  const user = process.env.POSTGRES_USER ?? 'churn'
+  const db = process.env.POSTGRES_DB ?? 'churn'
+  compose('exec', '-T', 'postgres', 'psql', '-U', user, '-d', db, '-c', 'UPDATE alerts.customer_state SET last_alert_at = NULL')
+}
+
 async function restore(request: APIRequestContext) {
   await loginApi(request)
   await request.post('/api/v1/model/settings/reset', { headers: originHeaders })
@@ -28,6 +40,7 @@ async function restore(request: APIRequestContext) {
 
 test.beforeAll(async ({ request }) => {
   await restore(request)
+  forgetCustomerAlerts()
 })
 
 test.afterAll(async ({ request }) => {

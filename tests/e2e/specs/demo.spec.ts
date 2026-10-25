@@ -1,7 +1,19 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
 import { loginUi } from './helpers'
 
 // Пульт демонстрации: только чтение, состояние стенда не меняет.
+
+/** Номер шага по списку в пульте: шаги добавляются, поэтому ни номер, ни общее число не зашиваем. */
+async function stepLabel(panel: Locator, title: string, offset = 0) {
+  const labels = await panel
+    .locator('ol')
+    .first()
+    .getByRole('button', { name: /^Показать: / })
+    .evaluateAll((els) => els.map((el) => el.getAttribute('aria-label') ?? ''))
+  const index = labels.findIndex((l) => l === `Показать: ${title}`)
+  expect(index, `шаг «${title}» есть в сценарии`).toBeGreaterThanOrEqual(0)
+  return `Шаг ${index + 1 + offset} из ${labels.length}`
+}
 
 test('пульт открывается по Shift+D, но не из поля ввода', async ({ page }) => {
   await loginUi(page)
@@ -33,11 +45,13 @@ test('шаг сценария ведёт на нужную страницу и �
   await page.goto('/?demo=1')
   const panel = page.getByTestId('demo-panel')
   await expect(panel).toBeVisible()
+  const tableStep = await stepLabel(panel, 'Таблица клиентов: фильтр и сортировка')
+  const cardStep = await stepLabel(panel, 'Таблица клиентов: фильтр и сортировка', 1)
 
   await panel.getByRole('button', { name: /^Показать: Таблица клиентов/ }).click()
   await expect(page).toHaveURL(/\/customers\?level=high$/)
   const cue = page.getByTestId('demo-cue')
-  await expect(cue).toContainText('Шаг 4 из')
+  await expect(cue).toContainText(tableStep)
   await expect(cue).toContainText('Что сказать')
   await expect(page.locator('[data-demo-spotlight] > div').first()).toBeVisible()
 
@@ -47,7 +61,7 @@ test('шаг сценария ведёт на нужную страницу и �
   await cue.getByRole('button', { name: /^Дальше/ }).click()
   await expect(page).toHaveURL(/\/customers\/\d+\?level=high$/)
   await expect(page.getByRole('dialog').getByRole('heading', { name: 'Почему' })).toBeVisible()
-  await expect(cue).toContainText('Шаг 5 из')
+  await expect(cue).toContainText(cardStep)
 })
 
 test('шаги «С кем связаться» и «Качество модели» подсвечивают нужные блоки', async ({ page }) => {
@@ -55,13 +69,16 @@ test('шаги «С кем связаться» и «Качество модел
   await page.goto('/customers?demo=1')
   const panel = page.getByTestId('demo-panel')
   const spotlight = page.locator('[data-demo-spotlight] > div').first()
+  await expect(panel).toBeVisible()
+  const contactStep = await stepLabel(panel, 'С кем связаться сегодня')
+  const qualityStep = await stepLabel(panel, 'Качество модели: проверяем, что она не гадает')
 
   await panel.getByRole('button', { name: /^Показать: С кем связаться сегодня/ }).click()
   await expect(page).toHaveURL(/\/$/)
   await expect(page.getByTestId('contact-today')).toBeVisible()
   await expect(page.getByTestId('contact-today-mass')).toBeVisible()
   const cue = page.getByTestId('demo-cue')
-  await expect(cue).toContainText('Шаг 2 из 12')
+  await expect(cue).toContainText(contactStep)
   await expect(spotlight).toBeVisible()
 
   // после шага открыта подсказка, а не пульт: открываем пульт заново
@@ -70,7 +87,7 @@ test('шаги «С кем связаться» и «Качество модел
   await expect(page).toHaveURL(/\/quality$/)
   await expect(page.getByTestId('quality-lift')).toBeVisible()
   await expect(page.getByTestId('quality-auc')).toBeVisible()
-  await expect(page.getByTestId('demo-cue')).toContainText('Шаг 8 из 12')
+  await expect(page.getByTestId('demo-cue')).toContainText(qualityStep)
   await expect(spotlight).toBeVisible()
 })
 

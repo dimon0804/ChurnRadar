@@ -41,6 +41,21 @@ async function actionOf(request: APIRequestContext, id: number): Promise<Action>
   return ((await res.json()) as { action: Action }).action
 }
 
+/**
+ * Ждёт, пока пересчёт догонит текущую версию настроек модели. Спек перед нами (уведомления)
+ * в конце сбрасывает настройки, и пересчёт идёт в фоне: без ожидания сервер и диалог считают
+ * правило на разных стадиях пересчёта (6 и 5 клиентов высокого риска).
+ */
+async function waitForScoring(request: APIRequestContext) {
+  const settings = (await (await request.get('/api/v1/model/settings')).json()) as { version: number }
+  await expect
+    .poll(
+      async () => ((await (await request.get('/api/v1/analytics/summary')).json()) as { model_version: number }).model_version,
+      { timeout: 60_000, intervals: [1000] },
+    )
+    .toBeGreaterThanOrEqual(settings.version)
+}
+
 test.afterAll(async ({ request, playwright }) => {
   await loginApi(request)
   const left = await findPlaybook(request)
@@ -64,6 +79,7 @@ test.afterAll(async ({ request, playwright }) => {
 
 test('сценарий в режиме симуляции: видно, сколько клиентов попадает под правило', async ({ page, request }) => {
   await loginApi(request)
+  await waitForScoring(request)
   const res = await request.post('/api/v1/playbooks/preview', { data: RULE, headers: originHeaders })
   expect(res.status()).toBe(200)
   const preview = (await res.json()) as { matched: number; treated: number; control: number; sample: Sample[] }

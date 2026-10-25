@@ -124,23 +124,36 @@ test('клиент с письмом ушёл из очереди и попад�
   expect(((await stats.json()) as { sent: number }).sent).toBeGreaterThan(0)
 })
 
-test('рассылка выбранным: предпросмотр количества и примера, без отправки', async ({ page }) => {
+test('рассылка выбранным: предпросмотр количества и примера, без отправки', async ({ page, request }) => {
+  // сколько клиентов высокого риска — берём у сервера: после калибровки модели их число в кейсе меняется
+  await loginApi(request, MARKETER)
+  const high = await request.get('/api/v1/customers', { params: { level: 'high', page_size: '200' } })
+  const ids = ((await high.json()) as { items: { id: number }[] }).items.map((c) => c.id)
+  expect(ids).toContain(CUSTOMER)
+  const preview = await request.post('/api/v1/mail/campaigns/preview', {
+    data: { customer_ids: ids, skip_days: 7 },
+    headers: originHeaders,
+  })
+  expect(preview.status()).toBe(200)
+  const expected = (await preview.json()) as { to_send: number; skipped_recent: number }
+  // клиенту 9 только что писали — его пропустим
+  expect(expected.skipped_recent).toBeGreaterThanOrEqual(1)
+  expect(expected.to_send + expected.skipped_recent).toBeLessThanOrEqual(ids.length)
+
   await loginUi(page, MARKETER)
   await page.goto('/customers?level=high&sort=expected_loss&order=desc')
-  await expect(page.getByRole('checkbox', { name: /^Выбрать клиента/ })).toHaveCount(4)
+  await expect(page.getByRole('checkbox', { name: /^Выбрать клиента/ })).toHaveCount(ids.length)
   await page.getByRole('checkbox', { name: 'Выбрать всех на странице' }).check()
   const bar = page.getByTestId('selection-bar')
-  await expect(bar).toContainText('Выбрано: 4')
+  await expect(bar).toContainText(`Выбрано: ${ids.length}`)
   await bar.getByRole('button', { name: 'Написать выбранным' }).click()
   const dialog = page.getByTestId('campaign-dialog')
-  // клиенту 9 только что писали — его пропустим
-  await expect(dialog.getByTestId('campaign-summary')).toContainText('Уйдёт 3')
-  await expect(dialog.getByTestId('campaign-summary')).toContainText('1 клиента пропустим')
+  await expect(dialog.getByTestId('campaign-summary')).toContainText(`Уйдёт ${expected.to_send}`)
+  await expect(dialog.getByTestId('campaign-summary')).toContainText(`${expected.skipped_recent} клиент`)
   await expect(dialog.getByTestId('letter-preview')).toBeVisible()
   await dialog.getByRole('button', { name: 'Отмена' }).click()
   await expect(dialog).toHaveCount(0)
 })
-
 
 test('шаблон на /mail показан на настоящем клиенте, подпись — из настроек писем', async ({ page, request }) => {
   await loginApi(request)

@@ -57,7 +57,8 @@ async function featureContribution(request: APIRequestContext, customerId: numbe
   return c.features?.find((f) => f.code === code)?.contribution ?? 0
 }
 
-test.beforeAll(async ({ request }) => {
+// у каждого теста свой request-контекст: вход из beforeAll до него не доходит
+test.beforeEach(async ({ request }) => {
   await loginApi(request)
 })
 

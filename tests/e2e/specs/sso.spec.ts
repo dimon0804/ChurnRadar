@@ -53,7 +53,8 @@ test('SAML: admin из группы churn-admins входит администр
   const me = await (await page.request.get('/api/v1/auth/me')).json()
   expect(me).toMatchObject({ roles: ['admin'], auth_method: 'saml' })
   await expect(page.getByRole('navigation', { name: 'Разделы' }).getByRole('link', { name: 'Модель' })).toBeVisible()
-  await expect(page.getByRole('navigation', { name: 'Разделы' }).getByRole('link', { name: 'Пользователи' })).toBeVisible()
+  await page.getByRole('navigation', { name: 'Разделы' }).getByRole('button', { name: 'Администрирование' }).click()
+  await expect(page.getByRole('menuitem', { name: /^Пользователи/ })).toBeVisible()
 })
 
 test('SAML: analyst из группы churn-analysts входит аналитиком и клиентам не пишет', async ({ page }) => {

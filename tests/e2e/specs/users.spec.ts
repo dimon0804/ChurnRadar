@@ -24,7 +24,9 @@ test('админ создаёт аналитика, блокирует и уда
   const adminCtx = await browser.newContext()
   const admin = await adminCtx.newPage()
   await loginUi(admin)
-  await admin.getByRole('navigation', { name: 'Разделы' }).getByRole('link', { name: 'Пользователи' }).click()
+  // служебные разделы администратора — в меню «Администрирование» в шапке
+  await admin.getByRole('navigation', { name: 'Разделы' }).getByRole('button', { name: 'Администрирование' }).click()
+  await admin.getByRole('menuitem', { name: /^Пользователи/ }).click()
   await expect(admin.getByRole('heading', { name: 'Пользователи', level: 1 })).toBeVisible()
 
   // создание

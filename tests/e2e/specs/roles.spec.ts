@@ -61,6 +61,7 @@ test('маркетолог пишет клиенту, но не видит мо�
   for (const hidden of ['Модель', 'Данные', 'Пользователи']) {
     await expect(nav.getByRole('link', { name: hidden })).toHaveCount(0)
   }
+  await expect(nav.getByRole('button', { name: /^Администрирование/ })).toHaveCount(0)
 
   await page.goto(`/customers/${CUSTOMER}`)
   const panel = page.getByTestId('customer-action')

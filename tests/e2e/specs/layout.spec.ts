@@ -16,6 +16,22 @@ const PAGES: { path: string; heading: string }[] = [
   { path: '/profile', heading: 'Профиль' },
 ]
 
+const MAIN_NAV = ['Обзор', 'Клиенты', 'Маркетинг', 'Модель', 'Качество модели', 'Письма', 'Сценарии']
+const ADMIN_NAV = ['Данные', 'Пользователи', 'Интеграции', 'Журнал действий']
+
+/** Подписи основных разделов видны целиком (не только иконки и не обрезаны). */
+async function expectMainLabelsVisible(page: Page) {
+  const nav = page.getByRole('navigation', { name: 'Разделы' })
+  for (const name of MAIN_NAV) {
+    const link = nav.getByRole('link', { name, exact: true })
+    await expect(link).toBeInViewport()
+    const label = link.getByText(name, { exact: true })
+    await expect(label).toBeVisible()
+    const clipped = await label.evaluate((el) => el.scrollWidth > el.clientWidth + 1 || el.getBoundingClientRect().width < 8)
+    expect(clipped, `подпись «${name}» обрезана`).toBe(false)
+  }
+}
+
 const WIDTHS = [
   { name: 'телефон', width: 390, height: 844 },
   { name: 'ноутбук', width: 1280, height: 800 },
@@ -85,6 +101,7 @@ for (const size of WIDTHS) {
           await expect(page.getByTestId('nav-menu')).toBeInViewport()
         } else {
           await expect(page.getByRole('navigation', { name: 'Разделы' }).getByRole('link', { name: 'Клиенты' })).toBeInViewport()
+          await expect(page.getByRole('navigation', { name: 'Разделы' }).getByRole('button', { name: /^Администрирование/ })).toBeInViewport()
         }
       })
     }
@@ -111,19 +128,42 @@ for (const size of WIDTHS) {
   })
 }
 
-test.describe('вёрстка: широкий экран 1920px', () => {
-  test.use({ viewport: { width: 1920, height: 1080 } })
+for (const size of [
+  { name: 'ноутбук', width: 1280, height: 800 },
+  { name: 'широкий экран', width: 1920, height: 1080 },
+]) {
+  test.describe(`вёрстка: шапка администратора ${size.width}px`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } })
 
-  // на 2xl у администратора появляются подписи всех восьми разделов — раньше последний наезжал на «онлайн»
-  test('подписи разделов не наезжают на правую часть шапки', async ({ page }) => {
-    await loginApi(page.request)
-    await page.goto('/')
-    await expect(page.getByRole('heading', { level: 1, name: 'Обзор' })).toBeVisible()
-    const { hits, outside } = await headerOverlaps(page)
-    expect(hits, 'элементы шапки наезжают друг на друга').toEqual([])
-    expect(outside).toEqual([])
+    // служебные разделы свёрнуты в «Администрирование», поэтому подписи основных помещаются целиком
+    test('подписи разделов видны и не наезжают на правую часть шапки', async ({ page }) => {
+      await loginApi(page.request)
+      await page.goto('/')
+      await expect(page.getByRole('heading', { level: 1, name: 'Обзор' })).toBeVisible()
+      await expectMainLabelsVisible(page)
+      const { hits, outside } = await headerOverlaps(page)
+      expect(hits, 'элементы шапки наезжают друг на друга').toEqual([])
+      expect(outside).toEqual([])
+    })
+
+    test('меню «Администрирование» ведёт в служебные разделы и подсвечивает текущий', async ({ page }) => {
+      await loginApi(page.request)
+      await page.goto('/')
+      const nav = page.getByRole('navigation', { name: 'Разделы' })
+      for (const name of ADMIN_NAV) await expect(nav.getByRole('link', { name, exact: true })).toHaveCount(0)
+
+      await nav.getByRole('button', { name: /^Администрирование/ }).click()
+      const menu = page.getByRole('menu')
+      await expect(menu.getByRole('menuitem')).toHaveCount(ADMIN_NAV.length)
+      for (const [i, name] of ADMIN_NAV.entries()) await expect(menu.getByRole('menuitem').nth(i)).toContainText(name)
+      await menu.getByRole('menuitem', { name: /^Журнал действий/ }).click()
+      await expect(page.getByRole('heading', { level: 1, name: 'Журнал действий' })).toBeVisible()
+      await expect(menu).toHaveCount(0)
+      await expect(nav.getByRole('button', { name: /^Администрирование/ })).toHaveAccessibleName(/Журнал действий/)
+      await expectMainLabelsVisible(page)
+    })
   })
-})
+}
 
 test.describe('вёрстка: меню на телефоне', () => {
   test.use({ viewport: { width: 390, height: 844 } })
@@ -135,6 +175,10 @@ test.describe('вёрстка: меню на телефоне', () => {
     await page.getByTestId('nav-menu').click()
     const drawer = page.getByTestId('nav-drawer')
     await expect(drawer).toBeVisible()
+    // в панели все разделы, служебные — отдельной группой «Администрирование»
+    for (const name of MAIN_NAV) await expect(drawer.getByRole('link', { name, exact: true })).toBeVisible()
+    const admin = drawer.getByRole('group', { name: 'Администрирование' })
+    for (const name of ADMIN_NAV) await expect(admin.getByRole('link', { name, exact: true })).toBeVisible()
     await drawer.getByRole('link', { name: 'Клиенты' }).click()
     await expect(drawer).toBeHidden()
     await expect(page.getByRole('heading', { level: 1, name: 'Клиенты' })).toBeVisible()

@@ -13,6 +13,7 @@ import {
   Moon,
   Plug,
   ScrollText,
+  Settings2,
   ShieldCheck,
   SlidersHorizontal,
   Sun,
@@ -52,6 +53,8 @@ interface NavItem {
   icon: ReactNode
   adminOnly?: boolean
   end?: boolean
+  /** короткое пояснение под пунктом выпадающего меню */
+  hint?: string
 }
 
 const ROLE_ACCESS: Record<Role, string> = {
@@ -68,11 +71,21 @@ const NAV: NavItem[] = [
   { to: '/quality', label: 'Качество модели', icon: <ShieldCheck /> },
   { to: '/mail', label: 'Письма', icon: <Mail /> },
   { to: '/playbooks', label: 'Сценарии', icon: <Workflow /> },
-  { to: '/data', label: 'Данные', icon: <Database />, adminOnly: true },
-  { to: '/users', label: 'Пользователи', icon: <UserCog />, adminOnly: true },
-  { to: '/integrations', label: 'Интеграции', icon: <Plug />, adminOnly: true },
-  { to: '/audit', label: 'Журнал действий', icon: <ScrollText />, adminOnly: true },
 ]
+
+const ADMIN_GROUP = 'Администрирование'
+
+/** Служебные разделы администратора: в шапке — одно выпадающее меню, в бургере — отдельная группа. */
+const ADMIN_NAV: NavItem[] = [
+  { to: '/data', label: 'Данные', hint: 'загрузка снимка и источники', icon: <Database /> },
+  { to: '/users', label: 'Пользователи', hint: 'учётные записи и роли', icon: <UserCog /> },
+  { to: '/integrations', label: 'Интеграции', hint: 'токены API и отчёт на почту', icon: <Plug /> },
+  { to: '/audit', label: 'Журнал действий', hint: 'кто, что и когда менял', icon: <ScrollText /> },
+]
+
+function isActivePath(pathname: string, item: NavItem) {
+  return item.end ? pathname === item.to : pathname === item.to || pathname.startsWith(`${item.to}/`)
+}
 
 /** Квадратные кнопки-иконки шапки (40px, скругление 11px), как в макете. */
 export const HEADER_ICON_BTN =
@@ -141,7 +154,7 @@ function initials(name: string): string {
   return letters.join('') || '?'
 }
 
-/** showName — подпись с именем рядом с аватаром; у администратора на неё не хватает места рядом с восемью разделами. */
+/** showName — подпись с именем рядом с аватаром; у администратора на неё не хватает места рядом с разделами. */
 function UserMenu({ showName = true }: { showName?: boolean }) {
   const { user, role: topRole, logout } = useAuth()
   const name = user.display_name?.trim() || user.username
@@ -218,7 +231,28 @@ function UserMenu({ showName = true }: { showName?: boolean }) {
 }
 
 /** На телефоне и планшете разделы уезжают в выдвижную панель: в шапке остаются бургер, колокольчик и профиль. */
-function MobileNav({ items }: { items: NavItem[] }) {
+function MobileNavLink({ item, onNavigate }: { item: NavItem; onNavigate: () => void }) {
+  return (
+    <NavLink
+      to={item.to}
+      end={item.end}
+      onClick={onNavigate}
+      className={({ isActive }) =>
+        cn(
+          'flex h-11 items-center gap-3 rounded-[10px] border px-3 text-sm font-[650] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4',
+          isActive
+            ? 'border-brand/60 bg-brand-soft text-foreground [&_svg]:text-brand'
+            : 'border-transparent text-muted-foreground hover:bg-surface-2 hover:text-foreground',
+        )
+      }
+    >
+      <span aria-hidden>{item.icon}</span>
+      {item.label}
+    </NavLink>
+  )
+}
+
+function MobileNav({ items, adminItems }: { items: NavItem[]; adminItems: NavItem[] }) {
   const [open, setOpen] = useState(false)
   return (
     <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
@@ -254,26 +288,22 @@ function MobileNav({ items }: { items: NavItem[] }) {
               <X className="size-4" />
             </DialogPrimitive.Close>
           </div>
-          <nav aria-label="Разделы" className="min-h-0 flex-1 space-y-1 overflow-y-auto p-3">
-            {items.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                onClick={() => setOpen(false)}
-                className={({ isActive }) =>
-                  cn(
-                    'flex h-11 items-center gap-3 rounded-[10px] border px-3 text-sm font-[650] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4',
-                    isActive
-                      ? 'border-brand/60 bg-brand-soft text-foreground [&_svg]:text-brand'
-                      : 'border-transparent text-muted-foreground hover:bg-surface-2 hover:text-foreground',
-                  )
-                }
-              >
-                <span aria-hidden>{item.icon}</span>
-                {item.label}
-              </NavLink>
-            ))}
+          <nav aria-label="Разделы" className="min-h-0 flex-1 overflow-y-auto p-3">
+            <div className="space-y-1">
+              {items.map((item) => (
+                <MobileNavLink key={item.to} item={item} onNavigate={() => setOpen(false)} />
+              ))}
+            </div>
+            {adminItems.length > 0 && (
+              <div role="group" aria-labelledby="nav-admin-title" className="mt-3 space-y-1 border-t border-border pt-3">
+                <p id="nav-admin-title" className="px-3 pb-1 text-[11px] font-bold tracking-[0.06em] text-muted-foreground uppercase">
+                  {ADMIN_GROUP}
+                </p>
+                {adminItems.map((item) => (
+                  <MobileNavLink key={item.to} item={item} onNavigate={() => setOpen(false)} />
+                ))}
+              </div>
+            )}
           </nav>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
@@ -281,20 +311,74 @@ function MobileNav({ items }: { items: NavItem[] }) {
   )
 }
 
+/** Последний пункт «таблетки»: служебные разделы администратора одним выпадающим меню. */
+function AdminMenu({ items }: { items: NavItem[] }) {
+  const { pathname } = useLocation()
+  const current = items.find((item) => isActivePath(pathname, item))
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          title={current ? `${ADMIN_GROUP}: ${current.label}` : ADMIN_GROUP}
+          aria-label={current ? `${ADMIN_GROUP}, открыт раздел «${current.label}»` : ADMIN_GROUP}
+          data-nav-active={current ? '' : undefined}
+          data-testid="nav-admin"
+          className={cn(
+            'group relative inline-flex h-[38px] shrink-0 items-center gap-1.5 rounded-[10px] px-2.5 text-sm font-[650] whitespace-nowrap transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            current ? 'text-foreground' : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground',
+            'data-[state=open]:text-foreground',
+            !current && 'data-[state=open]:bg-surface-2',
+          )}
+        >
+          <Settings2 aria-hidden className={cn('size-4', current && 'text-brand')} />
+          {/* подпись группы — только на очень широком экране: место в первую очередь у основных разделов */}
+          <span className="max-[1536px]:sr-only">{ADMIN_GROUP}</span>
+          <ChevronDown
+            aria-hidden
+            className="size-3.5 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180"
+          />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="min-w-64">
+        <DropdownMenuLabel className="text-[11px] font-bold tracking-[0.06em] text-muted-foreground uppercase">{ADMIN_GROUP}</DropdownMenuLabel>
+        {items.map((item) => {
+          const active = isActivePath(pathname, item)
+          return (
+            <DropdownMenuItem
+              key={item.to}
+              asChild
+              className={cn('h-auto min-h-9 py-1.5', active && 'bg-brand-soft [&_svg]:text-brand')}
+            >
+              <NavLink to={item.to} end={item.end}>
+                {item.icon}
+                <span className="flex min-w-0 flex-col leading-tight">
+                  <span className={cn(active && 'font-semibold')}>{item.label}</span>
+                  {item.hint && <span className="text-xs text-muted-foreground">{item.hint}</span>}
+                </span>
+              </NavLink>
+            </DropdownMenuItem>
+          )
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 /** Навигация-«таблетка» с плавно скользящей подложкой под активным разделом. */
-function DesktopNav({ items }: { items: NavItem[] }) {
+function DesktopNav({ items, adminItems }: { items: NavItem[]; adminItems: NavItem[] }) {
   const navRef = useRef<HTMLElement>(null)
   const indicatorRef = useRef<HTMLSpanElement>(null)
   const { pathname } = useLocation()
-  // у администратора пунктов вдвое больше: подписи влезают только на широком экране
-  const many = items.length > 6
+  // у администратора рядом ещё «Модель» и меню администрирования: иконки рядом с подписями не помещаются
+  const many = adminItems.length > 0
 
   useLayoutEffect(() => {
     const nav = navRef.current
     const indicator = indicatorRef.current
     if (!nav || !indicator) return
     const place = () => {
-      const active = nav.querySelector<HTMLElement>('a[aria-current="page"]')
+      const active = nav.querySelector<HTMLElement>('a[aria-current="page"], [data-nav-active]')
       if (!active || active.offsetWidth === 0) {
         indicator.style.opacity = '0'
         return
@@ -307,7 +391,7 @@ function DesktopNav({ items }: { items: NavItem[] }) {
     const ro = new ResizeObserver(place)
     ro.observe(nav)
     return () => ro.disconnect()
-  }, [pathname, items.length])
+  }, [pathname, items.length, adminItems.length])
 
   return (
     <nav
@@ -331,17 +415,23 @@ function DesktopNav({ items }: { items: NavItem[] }) {
             cn(
               'nav-pill-link relative inline-flex h-[38px] shrink-0 items-center gap-2 rounded-[10px] px-[11px] text-sm font-[650] whitespace-nowrap transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4',
               isActive ? 'text-foreground [&_svg]:text-brand' : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground',
-              many ? 'min-[1400px]:px-2.5' : 'min-[1440px]:px-[13px]',
+              many ? 'xl:px-2.5' : 'min-[1440px]:px-[13px]',
             )
           }
         >
-          {/* узко — только иконки; шире — подписи; совсем широко (и разделов немного) — и то и другое */}
-          <span aria-hidden className={many ? 'min-[1400px]:hidden' : 'xl:max-[1440px]:hidden'}>
+          {/* узко — только иконки; от 1280 — подписи; совсем широко (и разделов немного) — и то и другое */}
+          <span aria-hidden className={many ? 'xl:hidden' : 'xl:max-[1440px]:hidden'}>
             {item.icon}
           </span>
-          <span className={many ? 'max-[1400px]:sr-only' : 'max-xl:sr-only'}>{item.label}</span>
+          <span className="max-xl:sr-only">{item.label}</span>
         </NavLink>
       ))}
+      {adminItems.length > 0 && (
+        <>
+          <span aria-hidden className="mx-0.5 h-5 w-px shrink-0 bg-border" />
+          <AdminMenu items={adminItems} />
+        </>
+      )}
     </nav>
   )
 }
@@ -349,6 +439,7 @@ function DesktopNav({ items }: { items: NavItem[] }) {
 export function AppShell() {
   const { isAdmin } = useAuth()
   const items = NAV.filter((item) => !item.adminOnly || isAdmin)
+  const adminItems = isAdmin ? ADMIN_NAV : []
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -360,18 +451,18 @@ export function AppShell() {
       </a>
       <header className="sticky top-0 z-30 border-b border-border bg-[color-mix(in_srgb,var(--background)_88%,transparent)] backdrop-blur-[18px]">
         <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-2 px-3.5 sm:gap-3 md:px-6 lg:h-[70px] lg:gap-[22px] xl:px-7">
-          <MobileNav items={items} />
+          <MobileNav items={items} adminItems={adminItems} />
           <NavLink to="/" className="shrink-0 rounded-[11px] outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="ChurnRadar, обзор">
             <Logo className="[&>span:last-child]:max-sm:sr-only" />
           </NavLink>
           <div className="flex min-w-0 flex-1 justify-center max-lg:hidden">
-            <DesktopNav items={items} />
+            <DesktopNav items={items} adminItems={adminItems} />
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2.5">
             <LiveIndicator />
             <AlertsBell />
             <ThemeToggle />
-            <UserMenu showName={items.length <= 6} />
+            <UserMenu showName={adminItems.length === 0} />
           </div>
         </div>
       </header>

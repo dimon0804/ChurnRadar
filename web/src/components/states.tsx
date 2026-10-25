@@ -20,7 +20,7 @@ export function EmptyState({
 }) {
   return (
     <div className={cn('flex flex-col items-center justify-center px-6 py-12 text-center', className)}>
-      <div className="mb-3 flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground [&_svg]:size-5">
+      <div className="mb-3 flex size-11 items-center justify-center rounded-[13px] bg-brand-soft text-brand [&_svg]:size-5">
         {icon ?? <SearchX />}
       </div>
       <p className="text-sm font-medium text-foreground">{title}</p>

@@ -9,7 +9,8 @@ import { OverviewCharts } from '@/components/charts/overview-charts'
 import { ChurnChart } from '@/components/churn-chart'
 import { DataClockBadge, useDataClock } from '@/components/data-clock'
 import { KpiCard, KpiSkeleton } from '@/components/kpi-card'
-import { PageHeader, RecalcNote } from '@/components/page-header'
+import { OverviewHero } from '@/components/overview-hero'
+import { RecalcNote } from '@/components/page-header'
 import { RISK_BAR, RiskGlyph, RISK_TEXT } from '@/components/risk'
 import { EmptyState, ErrorState } from '@/components/states'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -193,7 +194,7 @@ function TopReasons({ s }: { s: Summary }) {
                   </p>
                   <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted">
                     <div
-                      className="h-full rounded-full bg-foreground/35 transition-[width] duration-500"
+                      className="h-full rounded-full bg-brand transition-[width] duration-500"
                       style={{ width: `${(r.count / max) * 100}%` }}
                     />
                   </div>
@@ -246,15 +247,16 @@ export default function OverviewPage() {
 
   return (
     <>
-      <PageHeader
-        title="Обзор"
+      <OverviewHero
+        eyebrow="Центр мониторинга"
+        title="Обзор рисков"
         description="Кто может уйти, почему и сколько денег под угрозой."
         meta={
           s && (
-            <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+            <>
               <DataClockBadge clock={clock} />
               <RecalcNote scoredAt={s.scored_at} modelVersion={s.model_version} />
-            </div>
+            </>
           )
         }
       />

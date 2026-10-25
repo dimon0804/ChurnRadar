@@ -269,7 +269,7 @@ function LevelChips({
         type="button"
         aria-pressed={selected.length === 0}
         onClick={onClear}
-        className={cn(chip, selected.length === 0 ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card text-muted-foreground hover:text-foreground')}
+        className={cn(chip, selected.length === 0 ? 'border-brand bg-brand-soft text-foreground' : 'border-border bg-card text-muted-foreground hover:text-foreground')}
       >
         Все
       </button>

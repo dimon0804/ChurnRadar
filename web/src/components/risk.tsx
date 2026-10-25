@@ -77,7 +77,7 @@ export function RiskBadge({
       <span
         className={cn(
           'inline-flex items-center gap-1.5 rounded-full border border-dashed border-risk-unknown/40 font-medium whitespace-nowrap text-muted-foreground',
-          size === 'sm' ? 'h-6 px-2 text-xs' : 'h-7 px-2.5 text-[13px]',
+          size === 'sm' ? 'h-6 px-[9px] text-[11px]' : 'h-7 px-2.5 text-xs',
           className,
         )}
         title="Все услуги клиента удалены или заблокированы: оценивать уход уже нечего, можно предложить вернуться"
@@ -92,8 +92,8 @@ export function RiskBadge({
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full font-medium whitespace-nowrap',
-        size === 'sm' ? 'h-6 px-2 text-xs' : 'h-7 px-2.5 text-[13px]',
+        'inline-flex items-center gap-1.5 rounded-full font-bold whitespace-nowrap',
+        size === 'sm' ? 'h-6 px-[9px] text-[11px]' : 'h-7 px-2.5 text-xs',
         TEXT[level],
         BG[level],
         className,
@@ -124,7 +124,7 @@ export function ScoreBar({
     <div className={cn('flex items-center gap-2.5', className)}>
       <span
         className={cn(
-          'inline-flex h-6 min-w-9 items-center justify-center rounded-md px-1.5 text-[13px] font-semibold num',
+          'inline-flex h-6 min-w-9 items-center justify-center rounded-[7px] px-1.5 text-[13px] font-bold num',
           TEXT[level],
           BG[level],
         )}
@@ -132,7 +132,7 @@ export function ScoreBar({
       >
         {formatScore(score)}
       </span>
-      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted" aria-hidden>
+      <div className="h-[5px] w-[45px] overflow-hidden rounded-full bg-input" aria-hidden>
         {known && (
           <div
             className={cn('h-full rounded-full transition-[width] duration-500 ease-out', RISK_BAR[level])}

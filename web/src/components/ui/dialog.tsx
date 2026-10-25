@@ -21,19 +21,19 @@ export function DialogContent({
 }) {
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/30 data-[state=closed]:animate-overlay-out data-[state=open]:animate-overlay-in dark:bg-black/50" />
+      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-[var(--overlay)] backdrop-blur-[7px] data-[state=closed]:animate-overlay-out data-[state=open]:animate-overlay-in" />
       <DialogPrimitive.Content
         className={cn(
-          'fixed top-1/2 left-1/2 z-50 flex max-h-[min(760px,calc(100dvh-32px))] w-[min(640px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-card shadow-pop outline-none data-[state=open]:animate-pop-in',
+          'fixed top-1/2 left-1/2 z-50 flex max-h-[min(760px,calc(100dvh-32px))] w-[min(640px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border border-border bg-card shadow-pop outline-none data-[state=open]:animate-pop-in',
           // на телефоне — на весь экран: так удобнее печатать и не наезжает клавиатура
           'max-sm:inset-0 max-sm:h-dvh max-sm:max-h-dvh max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 max-sm:pb-[env(safe-area-inset-bottom)]',
           className,
         )}
         {...props}
       >
-        <div className="flex items-start gap-3 border-b border-border px-4 py-4 sm:px-6">
+        <div className="flex items-start gap-3 border-b border-border px-4 py-4 sm:px-[23px] sm:py-5">
           <div className="min-w-0 flex-1">
-            <DialogPrimitive.Title className="text-base font-semibold">{title}</DialogPrimitive.Title>
+            <DialogPrimitive.Title className="text-[17px] font-[750] tracking-[-0.01em]">{title}</DialogPrimitive.Title>
             {description ? (
               <DialogPrimitive.Description className="mt-1 text-[13px] leading-5 text-muted-foreground">
                 {description}
@@ -43,14 +43,14 @@ export function DialogContent({
             )}
           </div>
           <DialogPrimitive.Close
-            className="-mr-2 inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="-mr-1 inline-flex size-9 shrink-0 items-center justify-center rounded-[11px] border border-border bg-card text-muted-foreground transition-colors hover:border-brand/60 hover:bg-brand-soft hover:text-foreground"
             aria-label="Закрыть"
           >
             <X className="size-4" />
           </DialogPrimitive.Close>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">{children}</div>
-        {footer && <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-4 py-3 sm:px-6">{footer}</div>}
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-[23px] sm:py-5">{children}</div>
+        {footer && <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-4 py-3 sm:px-[23px] sm:py-4">{footer}</div>}
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   )
@@ -60,8 +60,8 @@ export function Textarea({ className, ...props }: ComponentProps<'textarea'>) {
   return (
     <textarea
       className={cn(
-        'flex w-full min-w-0 rounded-md border border-input bg-card px-3 py-2 text-sm leading-6 text-foreground shadow-card transition-[border-color,box-shadow] outline-none placeholder:text-subtle-foreground',
-        'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20 focus-visible:outline-none',
+        'flex w-full min-w-0 rounded-[11px] border border-border bg-surface-2 px-3 py-2 text-sm leading-6 text-foreground transition-[border-color,box-shadow] outline-none placeholder:text-subtle-foreground hover:border-input',
+        'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/25 focus-visible:outline-none',
         'disabled:cursor-not-allowed disabled:opacity-50',
         className,
       )}

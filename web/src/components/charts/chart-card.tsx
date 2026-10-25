@@ -25,7 +25,7 @@ export const AXIS_TICK = { fontSize: 12 }
 
 export function ViewToggle({ value, onChange, label }: { value: 'chart' | 'table'; onChange: (v: 'chart' | 'table') => void; label: string }) {
   return (
-    <div className="inline-flex shrink-0 rounded-md border border-border p-0.5" role="group" aria-label={label}>
+    <div className="inline-flex shrink-0 gap-[7px]" role="group" aria-label={label}>
       {(
         [
           ['chart', 'График', BarChart3],
@@ -38,8 +38,8 @@ export function ViewToggle({ value, onChange, label }: { value: 'chart' | 'table
           onClick={() => onChange(key)}
           aria-pressed={value === key}
           className={cn(
-            'inline-flex h-7 items-center gap-1.5 rounded px-2 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-            value === key ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
+            'inline-flex h-8 items-center gap-1.5 rounded-[9px] border px-[11px] text-xs font-[650] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            value === key ? 'border-brand bg-brand-soft text-foreground' : 'border-border bg-surface-2 text-muted-foreground hover:border-brand hover:bg-brand-soft hover:text-foreground',
           )}
         >
           <Icon className="size-3.5" aria-hidden />

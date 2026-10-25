@@ -12,7 +12,7 @@ export function DropdownMenuContent({ className, ...props }: ComponentProps<type
         sideOffset={6}
         align="end"
         className={cn(
-          'z-50 min-w-52 overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-pop animate-pop-in',
+          'z-50 min-w-56 overflow-hidden rounded-[14px] border border-border bg-popover p-1.5 text-popover-foreground shadow-pop animate-pop-in',
           className,
         )}
         {...props}
@@ -25,7 +25,7 @@ export function DropdownMenuItem({ className, ...props }: ComponentProps<typeof 
   return (
     <DropdownPrimitive.Item
       className={cn(
-        'flex h-8 cursor-pointer items-center gap-2 rounded-md px-2 text-[13px] outline-none select-none data-[highlighted]:bg-accent [&_svg]:size-4 [&_svg]:text-muted-foreground',
+        'flex h-9 cursor-pointer items-center gap-2.5 rounded-[9px] px-2.5 text-[13px] font-medium outline-none select-none transition-colors data-[highlighted]:bg-brand-soft [&_svg]:size-4 [&_svg]:text-muted-foreground data-[highlighted]:[&_svg]:text-brand',
         className,
       )}
       {...props}

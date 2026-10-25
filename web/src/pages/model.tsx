@@ -229,7 +229,7 @@ function HorizonCard({ s, onChange }: { s: ModelSettings; onChange: (days: numbe
               onClick={() => onChange(d)}
               className={cn(
                 'h-7 rounded-full border px-2.5 text-xs font-medium transition-colors outline-none num focus-visible:ring-2 focus-visible:ring-ring',
-                s.horizon_days === d ? 'border-primary bg-primary text-primary-foreground' : 'border-border text-muted-foreground hover:text-foreground',
+                s.horizon_days === d ? 'border-brand bg-brand-soft text-foreground' : 'border-border text-muted-foreground hover:text-foreground',
               )}
             >
               {d} {plural(d, ['день', 'дня', 'дней'])}

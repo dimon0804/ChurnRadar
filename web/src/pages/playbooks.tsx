@@ -238,7 +238,7 @@ function Editor({
                   onClick={() => toggleLevel(level)}
                   className={cn(
                     'h-7 rounded-full border px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                    d.levels.includes(level) ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-accent',
+                    d.levels.includes(level) ? 'border-brand bg-brand-soft text-foreground' : 'border-border hover:bg-accent',
                   )}
                 >
                   {RISK_LABEL[level]}

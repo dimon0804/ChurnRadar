@@ -122,17 +122,17 @@ export function AlertsBell() {
       <Tooltip content={label} side="bottom">
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon"
           onClick={() => onOpenChange(true)}
           aria-label={label}
           aria-haspopup="dialog"
-          className="relative text-muted-foreground"
+          className="relative size-10 rounded-[11px] border border-border bg-card text-foreground hover:border-brand/60 hover:bg-brand-soft [&_svg]:size-[17px]"
           data-testid="alerts-bell"
         >
           <Bell />
           {unread > 0 && (
             <span
-              className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-risk-high-bar px-1 text-[10px] leading-none font-semibold text-white num"
+              className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-risk-high-bar px-1 text-[10px] leading-none font-bold text-white num ring-2 ring-background dark:text-[#262626]"
               aria-hidden
             >
               {badgeText(unread)}

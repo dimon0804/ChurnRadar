@@ -3009,7 +3009,7 @@
     "reference_services": 37450,
     "isotonic_points": 80
   },
-  "elapsed_s": 82.1,
+  "elapsed_s": 99.4,
   "robustness": [
     {
       "label": "seed 42 (основной)",

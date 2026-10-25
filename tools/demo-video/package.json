@@ -1,0 +1,20 @@
+{
+  "name": "churn-radar-demo-video",
+  "private": true,
+  "type": "module",
+  "description": "Запись видео-демо ChurnRadar с субтитрами и подсветкой",
+  "author": "dimon0804 <dimongamedeveloper@yandex.ru>",
+  "scripts": {
+    "record": "node --experimental-strip-types --no-warnings record.ts",
+    "encode": "node --experimental-strip-types --no-warnings encode.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.52.0",
+    "@types/node": "22.15.3",
+    "typescript": "5.8.3"
+  }
+}

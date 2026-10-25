@@ -241,9 +241,21 @@ async function goto(path: string) {
 /** Переход по пункту меню в шапке, если его нет — прямой адрес. */
 async function nav(name: string, path: string) {
   const link = page.getByRole('navigation', { name: 'Разделы' }).getByRole('link', { name, exact: true })
-  if (await visible(link, 3000)) {
+  const admin = page.getByRole('button', { name: /^Администрирование/ })
+  if (await visible(link, 2500)) {
     await click(link)
     await page.waitForURL((u) => u.pathname.startsWith(path), { timeout: 10_000 }).catch(() => {})
+  } else if (await visible(admin, 1500)) {
+    // служебные разделы спрятаны в выпадающее меню «Администрирование»
+    await click(admin)
+    const item = page.getByRole('menuitem', { name: new RegExp(`^${name}`) })
+    if (await visible(item, 2500)) {
+      await click(item)
+      await page.waitForURL((u) => u.pathname.startsWith(path), { timeout: 10_000 }).catch(() => {})
+    } else {
+      await page.keyboard.press('Escape')
+      await goto(path)
+    }
   } else {
     await goto(path)
   }

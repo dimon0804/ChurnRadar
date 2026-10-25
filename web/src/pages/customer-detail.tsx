@@ -26,6 +26,8 @@ import {
   formatScore,
   formatShare,
   plural,
+  spendableBalance,
+  balanceLabel,
 } from '@/lib/format'
 import { formatMonths, formatTenure } from '@/lib/marketing'
 import {
@@ -36,7 +38,7 @@ import {
   TX_TYPE_LABEL,
 } from '@/lib/labels'
 import { clockFromReference, clockFromServices } from '@/lib/data-clock'
-import { isChurned, shortReasonTitle } from '@/lib/reasons'
+import { FOCUS_LABEL, isChurned, shortReasonTitle } from '@/lib/reasons'
 import { reasonHref } from '@/lib/url-state'
 import { cn } from '@/lib/utils'
 import { useLive } from '@/providers/live'
@@ -196,7 +198,7 @@ function Money({ c }: { c: CustomerDetail }) {
       <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-sm md:grid-cols-4">
         {(
           [
-            ['Баланс', c.balance],
+            [balanceLabel(c), spendableBalance(c).total],
             ['Бонусы', c.bonus_balance],
             ['Доступно к выводу', c.withdraw_balance],
             ['Пополнено всего', c.total_replenished],
@@ -275,7 +277,7 @@ function NextAction({ c }: { c: CustomerDetail }) {
   if (!main) return null
   const rest = recs.filter((r) => !(r.code === main.code && r.title === main.title))
   return (
-    <Section title="Что сделать">
+    <Section title="Что сделать" aside={<span className="text-xs text-muted-foreground">{FOCUS_LABEL.action} — сверху</span>}>
       <div className="rounded-xl border border-chart-forecast/30 bg-card px-4 py-3.5" data-testid="next-action">
         <div className="flex gap-3">
           <Target className="mt-0.5 size-4 shrink-0 text-chart-forecast" aria-hidden />

@@ -23,7 +23,18 @@ import asyncpg
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from svckit.errors import ApiError
 
-from app.queries import BIGINT_MAX, iso_z, order_by, where_clause
+from app.queries import (
+    BIGINT_MAX,
+    DEADLINE_SQL,
+    MAIN_REASON_CODE_SQL,
+    MAIN_REASON_SQL,
+    NEXT_ACTION_SQL,
+    URGENT_SQL,
+    deadline_fields,
+    iso_z,
+    order_by,
+    where_clause,
+)
 
 LEVEL_RANK = {"unknown": 0, "low": 1, "medium": 2, "high": 3}
 LEVEL_TITLE = {
@@ -213,10 +224,14 @@ CANDIDATE_SQL = "cs.risk_level <> 'unknown' AND cs.expected_loss > 0"
 
 _LIST_COLUMNS = (
     "cs.customer_id, cs.email, cs.risk_level, cs.risk_score, cs.expected_loss, "
-    "COALESCE(NULLIF(cs.reasons -> 0 ->> 'label', ''), cs.reasons -> 0 ->> 'title') AS main_reason, "
-    "cs.reasons -> 0 ->> 'code' AS main_reason_code, "
-    "COALESCE(cs.detail -> 'next_action', cs.detail -> 'recommendations' -> 0) AS next_action"
+    f"{MAIN_REASON_SQL} AS main_reason, {MAIN_REASON_CODE_SQL} AS main_reason_code, "
+    f"{NEXT_ACTION_SQL} AS next_action, {DEADLINE_SQL} AS deadline_days"
 )
+# Срочных поднимаем наверх очереди, дальше — по деньгам, которые можно спасти.
+QUEUE_ORDER = f"{URGENT_SQL} DESC, cs.expected_loss DESC, cs.customer_id ASC"
+# Массовая рассылка по умолчанию — только высокий и средний риск: низкому писать незачем.
+DEFAULT_CAMPAIGN_LEVELS = ("high", "medium")
+QUEUE_LEVELS = ("high", "medium", "low")
 
 
 def queue_item(row: asyncpg.Record, now: datetime) -> dict[str, Any]:
@@ -229,6 +244,7 @@ def queue_item(row: asyncpg.Record, now: datetime) -> dict[str, Any]:
         "main_reason": row["main_reason"],
         "main_reason_code": row["main_reason_code"],
         "next_action": row["next_action"],
+        **deadline_fields(row.get("deadline_days")),
         "action": action_out(row, now),
     }
 
@@ -252,13 +268,18 @@ async def contact_today(
         rows = await conn.fetch(
             f"SELECT {_LIST_COLUMNS}, {ACTION_COLUMNS} FROM scoring.customer_scores cs "
             f"LEFT JOIN scoring.customer_actions a ON a.customer_id = cs.customer_id "
-            f"WHERE {queue_condition(marked)} ORDER BY cs.expected_loss DESC, cs.customer_id ASC LIMIT $1",
+            f"WHERE {queue_condition(marked)} ORDER BY {QUEUE_ORDER} LIMIT $1",
             limit,
         )
+        visible = f"NOT COALESCE({hidden}, false)"
         counts = await conn.fetchrow(
-            f"SELECT count(*) FILTER (WHERE NOT COALESCE({hidden}, false)) AS queue, "
+            f"SELECT count(*) FILTER (WHERE {visible}) AS queue, "
             f"count(*) FILTER (WHERE a.status IS NOT NULL AND {hidden}) AS marked, "
-            f"COALESCE(sum(cs.expected_loss) FILTER (WHERE NOT COALESCE({hidden}, false)), 0) AS queue_loss "
+            f"COALESCE(sum(cs.expected_loss) FILTER (WHERE {visible}), 0) AS queue_loss, "
+            f"count(*) FILTER (WHERE {visible} AND cs.risk_level = 'high') AS q_high, "
+            f"count(*) FILTER (WHERE {visible} AND cs.risk_level = 'medium') AS q_medium, "
+            f"count(*) FILTER (WHERE {visible} AND cs.risk_level = 'low') AS q_low, "
+            f"count(*) FILTER (WHERE {visible} AND {URGENT_SQL}) AS q_urgent "
             "FROM scoring.customer_scores cs LEFT JOIN scoring.customer_actions a ON a.customer_id = cs.customer_id "
             f"WHERE {CANDIDATE_SQL}"
         )
@@ -267,16 +288,23 @@ async def contact_today(
         "queue_total": counts["queue"],
         "queue_expected_loss": int(counts["queue_loss"]),
         "marked_total": counts["marked"],
+        "queue_by_level": {level: counts[f"q_{level}"] for level in QUEUE_LEVELS},
+        "urgent_total": counts["q_urgent"],
     }
 
 
-async def queue_ids(conn: asyncpg.Connection, limit: int) -> list[int]:
-    """Вся очередь (без отмеченных) по деньгам — для рассылки «всем в очереди»."""
+async def queue_ids(
+    conn: asyncpg.Connection, limit: int, levels: list[str] | tuple[str, ...] = DEFAULT_CAMPAIGN_LEVELS
+) -> list[int]:
+    """Очередь (без отмеченных) выбранных уровней риска в том же порядке, что на обзоре, —
+    для рассылки «всем в очереди»."""
     rows = await conn.fetch(
         "SELECT cs.customer_id FROM scoring.customer_scores cs "
         "LEFT JOIN scoring.customer_actions a ON a.customer_id = cs.customer_id "
-        f"WHERE {queue_condition(False)} ORDER BY cs.expected_loss DESC, cs.customer_id ASC LIMIT $1",
+        f"WHERE {queue_condition(False)} AND cs.risk_level = ANY($2::text[]) "
+        f"ORDER BY {QUEUE_ORDER} LIMIT $1",
         limit,
+        list(levels),
     )
     return [r["customer_id"] for r in rows]
 
@@ -429,8 +457,9 @@ CSV_HEADER = [
     "Ожидаемая потеря, €",
     "Баланс, €",
     "Пополнения всего, €",
-    "Главная причина",
-    "Что сделать",
+    "Срочно",
+    "Главная причина риска",
+    "Самое выгодное действие",
     "Статус",
 ]
 _FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
@@ -463,6 +492,7 @@ def csv_row(row: asyncpg.Record | dict[str, Any], now: datetime) -> list[str]:
         euros(row["expected_loss"]),
         euros(row["balance"]),
         euros(row["total_replenished"]),
+        "да" if deadline_fields(row.get("deadline_days"))["urgent"] else "",
         safe_text(row["main_reason"]),
         safe_text(next_action.get("title") if isinstance(next_action, dict) else None),
         status_text(action),
@@ -503,8 +533,7 @@ async def export_rows(
     sql = (
         "SELECT cs.*, " + ACTION_COLUMNS + " FROM ("
         "SELECT customer_id, email, balance, total_replenished, risk_score, risk_level, expected_loss, "
-        "COALESCE(NULLIF(reasons -> 0 ->> 'label', ''), reasons -> 0 ->> 'title') AS main_reason, "
-        "COALESCE(detail -> 'next_action', detail -> 'recommendations' -> 0) AS next_action "
+        f"{MAIN_REASON_SQL} AS main_reason, {NEXT_ACTION_SQL} AS next_action, {DEADLINE_SQL} AS deadline_days "
         f"FROM scoring.customer_scores{where}) cs "
         "LEFT JOIN scoring.customer_actions a ON a.customer_id = cs.customer_id"
         f"{outer} ORDER BY {_qualified(order_by(sort, order))} LIMIT {EXPORT_MAX_ROWS}"

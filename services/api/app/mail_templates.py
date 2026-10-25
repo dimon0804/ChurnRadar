@@ -21,9 +21,10 @@ PLACEHOLDERS: dict[str, str] = {
     "service": "Услуга, к которой относится причина (например, service-0019)",
     "date": "Ключевая дата: когда кончатся деньги на балансе или оплаченный срок услуги",
     "amount": "Цена услуги за период оплаты, например «€8,50 в месяц»",
-    "balance": "Баланс клиента",
-    "company": "Название компании из настройки SMTP_FROM_NAME",
+    "balance": "Баланс клиента, как в карточке: с бонусами, если они разблокированы",
+    "company": "Название компании из настроек писем (по умолчанию ChurnRadar)",
 }
+DEFAULT_COMPANY = "ChurnRadar"
 
 # подстановка, когда данных нет: тексты написаны так, чтобы фраза оставалась связной
 FALLBACK: dict[str, str] = {
@@ -143,6 +144,20 @@ MONTHS_GEN = (
 )
 
 
+class MailSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    company: str = Field(min_length=1, max_length=100)
+
+
+class TemplatePreview(BaseModel):
+    """Черновик шаблона из редактора: показываем его на настоящем клиенте."""
+
+    model_config = ConfigDict(extra="forbid")
+    subject: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=10_000)
+    customer_id: int | None = Field(default=None, ge=1)
+
+
 class TemplatePatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     subject: str = Field(min_length=1, max_length=200)
@@ -210,6 +225,17 @@ TERM_TEXT = {
 }
 
 
+def funds_text(customer: dict[str, Any]) -> str:
+    """Баланс так же, как в карточке и в объяснениях модели: «€49,47 (вкл. бонусы €6,15)»."""
+    balance = customer.get("balance")
+    if balance is None:
+        return ""
+    bonus = int(customer.get("bonus_balance") or 0) if customer.get("bonus_state") == "unlocked" else 0
+    if bonus > 0:
+        return f"{money_text(int(balance) + bonus)} (вкл. бонусы {money_text(bonus)})"
+    return money_text(balance)
+
+
 def price_text(service: dict[str, Any] | None) -> str:
     """«€8,55 в час»: цена за период оплаты, без периода сумма вводит в заблуждение."""
     if not service or not service.get("price"):
@@ -238,6 +264,30 @@ def _parse(value: Any) -> datetime | None:
         return None
 
 
+def reason_codes(customer: dict[str, Any]) -> set[str]:
+    """Все причины риска клиента: главные и по каждой услуге."""
+    codes = {r.get("code") for r in customer.get("reasons") or [] if isinstance(r, dict)}
+    for service in (customer.get("detail") or {}).get("services") or []:
+        if isinstance(service, dict):
+            codes.update(r.get("code") for r in service.get("reasons") or [] if isinstance(r, dict))
+    codes.discard(None)
+    return codes  # type: ignore[return-value]
+
+
+def applicable(code: str, customer: dict[str, Any]) -> bool:
+    """Подходит ли шаблон клиенту по его настоящей причине.
+
+    Шаблон причины («Пополните баланс до …», «включите автопродление») утверждает факт о
+    клиенте. Если у клиента такой причины нет — например, денег на продление хватает, —
+    письмо по нему вводило бы в заблуждение. Общий шаблон подходит всем, «вернуться» — ушедшим.
+    """
+    if code == GENERAL:
+        return True
+    if code == WIN_BACK:
+        return customer.get("risk_level") == "unknown"
+    return code in reason_codes(customer)
+
+
 def choose_template(
     reasons: list[dict[str, Any]], risk_level: str, codes: set[str]
 ) -> str:
@@ -251,7 +301,11 @@ def choose_template(
 def context(
     customer: dict[str, Any], template_code: str, now: datetime, company: str
 ) -> dict[str, str]:
-    """Значения подстановок по оценке клиента. Даты в прошлом не подставляем."""
+    """Значения подстановок по оценке клиента — одна функция для предпросмотра и отправки.
+
+    Дата не раньше сегодняшней по опорному времени данных: срок, который уже наступил,
+    становится «сегодня», а не датой из прошлого.
+    """
     detail = customer.get("detail") or {}
     services = {
         s.get("id"): s for s in detail.get("services") or [] if isinstance(s, dict)
@@ -272,18 +326,65 @@ def context(
     if date is None and service is not None:
         date = _parse(service.get("expires_at"))
     if date is not None and date <= now:
-        date = None
+        date = now
     return {
         "email": customer.get("email") or "",
         "service": (service or {}).get("name") or "",
         "date": date_text(date),
         "amount": price_text(service),
-        "balance": money_text(customer.get("balance")),
-        "company": company,
+        "balance": funds_text(customer),
+        "company": company.strip() or DEFAULT_COMPANY,
     }
 
 
 # --- хранение ----------------------------------------------------------------------------
+
+_SETTINGS_SQL = "SELECT company, updated_at, updated_by FROM scoring.mail_settings WHERE id = 1"
+
+
+def settings_out(row: asyncpg.Record | dict[str, Any] | None) -> dict[str, Any]:
+    if row is None:
+        return {"company": DEFAULT_COMPANY, "updated_at": None, "updated_by": None}
+    return {
+        "company": row["company"] or DEFAULT_COMPANY,
+        "updated_at": iso_z(row["updated_at"]),
+        "updated_by": row["updated_by"],
+    }
+
+
+async def load_settings(conn: asyncpg.Connection) -> dict[str, Any]:
+    return settings_out(await conn.fetchrow(_SETTINGS_SQL))
+
+
+async def company(conn: asyncpg.Connection) -> str:
+    """Название компании для подписи писем ({{company}})."""
+    return str((await load_settings(conn))["company"])
+
+
+async def get_settings(pool: asyncpg.Pool) -> dict[str, Any]:
+    async with pool.acquire() as conn:
+        return await load_settings(conn)
+
+
+async def put_settings(pool: asyncpg.Pool, update: MailSettingsUpdate, user: str | None) -> dict[str, Any]:
+    name = update.company.strip()
+    if not name:
+        raise ApiError(
+            422,
+            "validation_error",
+            "Название компании не может быть пустым",
+            [{"field": "company", "message": "Не может быть пустым", "type": "empty"}],
+        )
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO scoring.mail_settings (id, company, updated_at, updated_by) VALUES (1, $1, now(), $2) "
+            "ON CONFLICT (id) DO UPDATE SET company = EXCLUDED.company, updated_at = EXCLUDED.updated_at, "
+            "updated_by = EXCLUDED.updated_by RETURNING company, updated_at, updated_by",
+            name,
+            user,
+        )
+    return settings_out(row)
+
 
 
 async def ensure_defaults(conn: asyncpg.Connection) -> None:

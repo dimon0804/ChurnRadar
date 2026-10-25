@@ -173,6 +173,22 @@ def funds_run_out(
     return shortfall_moment(plans, spendable)
 
 
+# Промокод или бонус не больше месячной выручки клиента и не больше пятой части того,
+# что действие сбережёт: иначе скидка стоит дороже, чем мы спасаем.
+OFFER_MRR_SHARE = 1.0
+OFFER_SAVING_SHARE = 0.20
+
+
+def offer_size(wanted: float, monthly_revenue: float, saving: float = float("inf")) -> int:
+    """Размер промокода или бонуса, евроценты, вниз до целого евро.
+
+    wanted — сколько хотелось бы дать (нехватка денег, доля от пополнения); дальше
+    ограничиваем месячной выручкой клиента и долей ожидаемого сбережения.
+    """
+    cap = min(wanted, monthly_revenue * OFFER_MRR_SHARE, saving * OFFER_SAVING_SHARE)
+    return int(max(cap, 0.0) // 100) * 100
+
+
 def format_eur(cents: float) -> str:
     amount = round(cents) / 100
     whole, fraction = f"{amount:,.2f}".split(".")

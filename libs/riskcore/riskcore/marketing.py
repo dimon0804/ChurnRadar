@@ -17,8 +17,13 @@
   Дата ухода — из истории статусов, а если смены статуса никто не видел, оценка как в ingest:
   окончание оплаты + 5 дней, не позже опорного момента.
 * LTV прогнозный = ARPU × маржа / месячный отток клиентов. Средний срок жизни = 1 / отток,
-  но не больше LIFETIME_CAP_MONTHS: при оттоке около нуля формула даёт бесконечность.
+  но не больше LIFETIME_CAP_MONTHS (3 года): при оттоке около нуля формула даёт бесконечность,
+  а обещать выручку дальше трёх лет по оценке на 30 дней нечестно.
   Здесь LTV — выручка (маржа 100%); маржу и CAC применяет apply_economics.
+* Что даст удержание — прирост выручки за RETENTION_HORIZON_MONTHS (12) месяцев, а не LTV на
+  всю жизнь. Удержанный клиент получает отток сегмента «низкий риск» (если такого сегмента нет —
+  средний прогнозный по базе). Выручка клиента за n месяцев при оттоке c:
+  MRR × (1 + (1 − c) + … + (1 − c)^(n−1)) = MRR × (1 − (1 − c)^n) / c.
 * LTV фактический — сколько клиент уже заплатил: сумма проведённых транзакций за услуги.
 """
 
@@ -45,8 +50,10 @@ if TYPE_CHECKING:
 
 DAYS_PER_MONTH = 30
 SECONDS_PER_DAY = 86_400
-# Срок жизни при оттоке около нуля ограничиваем пятью годами.
-LIFETIME_CAP_MONTHS = 60.0
+# Срок жизни при оттоке около нуля ограничиваем тремя годами.
+LIFETIME_CAP_MONTHS = 36.0
+# Эффект удержания считаем за год: дальше прогноз на 30 дней ничего не говорит.
+RETENTION_HORIZON_MONTHS = 12
 # Топ-10% клиентов по MRR для концентрации выручки.
 TOP_SHARE = 0.10
 LEVELS = ("high", "medium", "low", "unknown")
@@ -78,6 +85,19 @@ def ltv(monthly_revenue: float, monthly_churn: float, margin: float = DEFAULT_MA
     """LTV = выручка в месяц × маржа × ожидаемый срок жизни (1 / отток, с потолком)."""
     lifetime, _ = expected_lifetime(monthly_churn)
     return monthly_revenue * margin * lifetime
+
+
+def revenue_over(
+    monthly_revenue: float, monthly_churn: float, months: int = RETENTION_HORIZON_MONTHS
+) -> float:
+    """Ожидаемая выручка клиента за months месяцев: MRR × (1 − (1 − c)^n) / c.
+
+    Первый месяц клиент платит точно, каждый следующий — если не ушёл раньше.
+    """
+    c = min(max(monthly_churn, 0.0), 1.0)
+    if c <= 0.0:
+        return monthly_revenue * months
+    return monthly_revenue * (1.0 - (1.0 - c) ** months) / c
 
 
 def payback_months(cac: float | None, arpu: float, margin: float) -> float | None:
@@ -288,36 +308,50 @@ def _fact_churn(customers: Sequence[_Customer]) -> dict[str, Any]:
 def _retention(
     levels: tuple[str, ...], customers: Sequence[_Customer], target: float | None, source: str
 ) -> dict[str, Any]:
+    """Сколько выручки за год даст удержание клиентов этих уровней.
+
+    Сейчас клиент с оттоком c принесёт за 12 месяцев MRR × (1 − (1 − c)^12) / c. Удержанный —
+    столько же, но с оттоком target. Если отток клиента и так не выше target, прироста нет.
+    """
     chosen = [c for c in customers if c.level in levels and c.paying]
-    now = sum(c.ltv for c in chosen)
+    now = sum(revenue_over(c.mrr, c.monthly_churn or 0.0) for c in chosen)
     out: dict[str, Any] = {
         "levels": list(levels),
         "customers": len(chosen),
         "mrr": round(sum(c.mrr for c in chosen)),
-        "ltv_now": round(now),
-        "ltv_retained": None,
-        "ltv_uplift": None,
+        "horizon_months": RETENTION_HORIZON_MONTHS,
+        "revenue_now": round(now),
+        "revenue_retained": None,
+        "revenue_uplift": None,
         "saved_mrr": None,
         "target_monthly_churn": target,
         "target_source": source,
     }
     if target is None:
         return out
-    lifetime, _ = expected_lifetime(target)
-    uplift = sum(c.mrr * max(lifetime - c.lifetime, 0.0) for c in chosen)
+    retained = sum(revenue_over(c.mrr, min(c.monthly_churn or 0.0, target)) for c in chosen)
     saved = sum(c.mrr * max((c.monthly_churn or 0.0) - target, 0.0) for c in chosen)
-    out.update({"ltv_retained": round(now + uplift), "ltv_uplift": round(uplift), "saved_mrr": round(saved)})
+    out.update(
+        {
+            "revenue_retained": round(retained),
+            "revenue_uplift": round(retained - now),
+            "saved_mrr": round(saved),
+        }
+    )
     return out
 
 
-def _retention_target(fact: dict[str, Any], segments: dict[str, dict[str, Any]]) -> tuple[float | None, str]:
-    """К какому оттоку вернётся удержанный клиент: к фактическому по истории, иначе к оттоку
-    клиентов низкого риска. Если нет ни того, ни другого — сценарий не считаем."""
-    if fact["customers_left"] > 0 and fact["monthly_churn"] is not None:
-        return float(fact["monthly_churn"]), "fact"
+def _retention_target(
+    customer_churn: float | None, segments: dict[str, dict[str, Any]]
+) -> tuple[float | None, str]:
+    """К какому оттоку вернётся удержанный клиент: к оттоку клиентов низкого риска, а если их
+    нет — к среднему прогнозному по базе. Исторический отток сюда не берём: на коротком окне
+    данных он почти нулевой и обещает клиентам вечную жизнь."""
     low = segments["low"]
     if low["customers"] and low["monthly_churn"] is not None:
         return float(low["monthly_churn"]), "low_risk"
+    if customer_churn is not None:
+        return float(customer_churn), "base"
     return None, "none"
 
 
@@ -347,7 +381,7 @@ def build_marketing(
     by_level = {level: [c for c in customers if c.level == level] for level in LEVELS}
     segments = {level: _segment(level, group) for level, group in by_level.items()}
     fact = _fact_churn(customers)
-    target, source = _retention_target(fact, segments)
+    target, source = _retention_target(customer_churn, segments)
 
     paid_total = sum(c.paid for c in customers)
     payments = sum(c.payments for c in customers)
@@ -452,10 +486,8 @@ def apply_economics(
         {**row, "ltv": _scale(row["ltv"], margin), "ltv_avg": _scale(row["ltv_avg"], margin)}
         for row in base.get("segments", [])
     ]
-    out["retention_scenarios"] = [
-        {**row, **{k: _scale(row.get(k), margin) for k in ("ltv_now", "ltv_retained", "ltv_uplift")}}
-        for row in base.get("retention_scenarios", [])
-    ]
+    # сценарии удержания — выручка за год, маржа к ним не применяется
+    out["retention_scenarios"] = [dict(row) for row in base.get("retention_scenarios", [])]
     ltv_value = float(out.get("ltv") or 0)
     out["unit_economics"] = {
         "margin": margin,

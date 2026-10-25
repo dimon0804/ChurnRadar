@@ -264,6 +264,24 @@ def create_app(*, with_lifespan: bool = True) -> FastAPI:
     ) -> dict[str, Any]:
         return await mail_templates.save_template(pool, code, patch, user.name)
 
+    @app.post("/api/v1/mail/preview/{code}", tags=["mail"])
+    async def preview_mail_template(
+        code: str, _: CurrentUser, pool: Pool, draft: Annotated[mail_templates.TemplatePreview, Body()]
+    ) -> dict[str, Any]:
+        return await mailer.preview_template(pool, code, draft)
+
+    @app.get("/api/v1/mail/settings", tags=["mail"])
+    async def get_mail_settings(_: CurrentUser, pool: Pool) -> dict[str, Any]:
+        return await mail_templates.get_settings(pool)
+
+    @app.put("/api/v1/mail/settings", tags=["mail"])
+    async def put_mail_settings(
+        user: AdminUser, pool: Pool, update: Annotated[mail_templates.MailSettingsUpdate, Body()]
+    ) -> dict[str, Any]:
+        state = await mail_templates.put_settings(pool, update, user.name)
+        log.info("mail_settings_changed", company=state["company"], user=user.name)
+        return state
+
     @app.post("/api/v1/mail/templates/{code}/reset", tags=["mail"])
     async def reset_mail_template(code: str, user: AdminUser, pool: Pool) -> dict[str, Any]:
         return await mail_templates.reset_template(pool, code, user.name)

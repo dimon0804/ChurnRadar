@@ -122,9 +122,36 @@ def test_context_values():
     }
     # для другой причины — дата окончания услуги
     assert mt.context(CUSTOMER, "suspended", REF, "x")["date"] == "18 ноября"
-    # прошедшие даты не подставляем — останется «конца оплаченного срока»
+    # дата из прошлого не подставляется: срок уже наступил — значит «сегодня»
     late = datetime(2026, 12, 1, tzinfo=UTC)
-    assert mt.context(CUSTOMER, "suspended", late, "x")["date"] == ""
+    assert mt.context(CUSTOMER, "suspended", late, "x")["date"] == "1 декабря"
+    # пустое название компании — подпись по умолчанию
+    assert mt.context(CUSTOMER, "suspended", REF, "  ")["company"] == "ChurnRadar"
+
+
+def test_balance_in_letter_matches_card_with_bonuses():
+    """Жюри: баланс в двух местах не совпадал (€49,47 и €43,32) — одно было с бонусами."""
+    customer = {**CUSTOMER, "balance": 4_332, "bonus_balance": 615, "bonus_state": "unlocked"}
+    assert mt.context(customer, "insufficient_funds", REF, "x")["balance"] == "€49,47 (вкл. бонусы €6,15)"
+    locked = {**customer, "bonus_state": "locked"}
+    assert mt.context(locked, "insufficient_funds", REF, "x")["balance"] == "€43,32"
+
+
+def test_template_applies_only_to_real_reason():
+    """Совет «пополните баланс до …» клиенту, у которого денег хватает, не предлагаем."""
+    assert mt.applicable("insufficient_funds", CUSTOMER)
+    rich = {**CUSTOMER, "reasons": [{"code": "suspended", "service_id": 19}], "detail": {"services": []}}
+    assert not mt.applicable("insufficient_funds", rich)
+    assert mt.applicable("suspended", rich)
+    assert mt.applicable("general", rich)
+    assert not mt.applicable("win_back", rich)
+    assert mt.applicable("win_back", {**rich, "risk_level": "unknown"})
+    # причина может быть только у услуги, не в топе клиента
+    nested = {
+        **rich,
+        "detail": {"services": [{"id": 19, "reasons": [{"code": "failed_payments"}]}]},
+    }
+    assert mt.applicable("failed_payments", nested)
 
 
 def test_rendered_letter_reads_well():
@@ -216,3 +243,28 @@ async def test_unknown_template_is_422(client, app):
         headers=MARKETER,
     )
     assert resp.status_code == 422
+
+
+
+def test_mass_campaign_defaults_to_high_and_medium():
+    """Жюри: «Написать всем · 84» уходило почти всей базе. По умолчанию — только высокий и средний риск."""
+    req = mailer.CampaignRequest(worklist=True)
+    assert req.queue_levels == ["high", "medium"]
+    assert mailer.CampaignRequest(worklist=True, levels=["low", "low"]).queue_levels == ["low"]
+    with pytest.raises(ValidationError):
+        mailer.CampaignRequest(worklist=True, levels=[])
+    with pytest.raises(ValidationError):
+        mailer.CampaignRequest(worklist=True, levels=["unknown"])
+    with pytest.raises(ValidationError):
+        mailer.CampaignRequest(customer_ids=[1], levels=["high"])
+
+
+def test_forced_template_falls_back_to_real_reason_in_campaign():
+    templates = {t.code: {"subject": t.subject, "body": t.body} for t in mt.DEFAULTS}
+    rich = {**CUSTOMER, "reasons": [{"code": "suspended", "service_id": 19}]}
+    rich["detail"] = {**CUSTOMER["detail"], "services": [{**s, "reasons": []} for s in CUSTOMER["detail"]["services"]]}
+    code, subject, _ = mailer._compose(rich, templates, "insufficient_funds", REF, "X", strict=True)
+    assert code == "suspended" and "Пополните" not in subject
+    # из карточки сотрудник выбирает шаблон сам и видит текст до отправки
+    code, _, _ = mailer._compose(rich, templates, "insufficient_funds", REF, "X")
+    assert code == "insufficient_funds"

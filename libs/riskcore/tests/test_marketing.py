@@ -21,6 +21,7 @@ from riskcore import (
 )
 from riskcore.marketing import (
     LIFETIME_CAP_MONTHS,
+    RETENTION_HORIZON_MONTHS,
     exit_moment,
     expected_lifetime,
     ltv,
@@ -28,6 +29,7 @@ from riskcore.marketing import (
     monthly_rate,
     payback_months,
     payments_of,
+    revenue_over,
 )
 
 from .factories import AS_OF, make_service, make_tx
@@ -49,8 +51,10 @@ def test_monthly_rate_converts_horizon_to_30_days():
 def test_lifetime_is_inverse_churn_with_cap():
     assert expected_lifetime(0.10) == (pytest.approx(10.0), False)
     assert expected_lifetime(0.5) == (pytest.approx(2.0), False)
-    # при оттоке 1% формула дала бы 100 месяцев — ограничиваем пятью годами
+    # при оттоке 1% формула дала бы 100 месяцев — ограничиваем тремя годами
+    assert LIFETIME_CAP_MONTHS == 36
     assert expected_lifetime(0.01) == (LIFETIME_CAP_MONTHS, True)
+    assert expected_lifetime(0.03) == (pytest.approx(100 / 3), False)  # 33 мес. — ещё под потолком
     assert expected_lifetime(0.0) == (LIFETIME_CAP_MONTHS, True)
 
 
@@ -263,30 +267,59 @@ def test_segments_add_up(base):
     assert sum(r["ltv"] for r in rows.values()) == base["ltv_total"]
 
 
-def test_retention_scenario_returns_to_fact_churn(base):
+def test_revenue_over_twelve_months_by_hand():
+    assert RETENTION_HORIZON_MONTHS == 12
+    # без оттока — ровно 12 месячных платежей
+    assert revenue_over(1_000, 0.0) == pytest.approx(12_000)
+    # отток 50%: 1 + 0,5 + 0,25 + … ≈ 2 месяца выручки
+    assert revenue_over(1_000, 0.5) == pytest.approx(1_000 * (1 - 0.5**12) / 0.5)
+    # уходит наверняка — платит только первый месяц
+    assert revenue_over(1_000, 1.0) == pytest.approx(1_000)
+
+
+def test_retention_scenario_targets_low_risk_churn_over_a_year(base):
     high, at_risk = base["retention_scenarios"]
-    target = 30 / 1205  # фактический отток — 2,49% в месяц, срок 40,2 мес.
-    assert high["target_source"] == "fact"
-    assert high["target_monthly_churn"] == pytest.approx(target)
-    assert high["ltv_uplift"] == round(10_000 * (1 / target - 2))
-    assert high["ltv_retained"] == high["ltv_now"] + high["ltv_uplift"]
-    assert high["saved_mrr"] == round(10_000 * (0.5 - target))
+    # отток низкого риска — 10% в месяц; исторический отток (2,5%) больше не берём
+    assert high["target_source"] == "low_risk"
+    assert high["target_monthly_churn"] == pytest.approx(0.10)
+    assert high["horizon_months"] == 12
+    now = 10_000 * (1 - 0.5**12) / 0.5
+    kept = 10_000 * (1 - 0.9**12) / 0.1
+    assert high["revenue_now"] == round(now)
+    assert high["revenue_retained"] == round(kept)
+    assert high["revenue_uplift"] == round(kept) - round(now)
+    assert high["saved_mrr"] == round(10_000 * (0.5 - 0.1))
     assert at_risk["levels"] == ["high", "medium"] and at_risk["customers"] == 2
-    assert at_risk["ltv_uplift"] == round(10_000 * (1 / target - 2) + 4_000 * (1 / target - 5))
+    medium_gain = 4_000 * ((1 - 0.9**12) / 0.1 - (1 - 0.8**12) / 0.2)
+    assert at_risk["revenue_uplift"] == pytest.approx(kept - now + medium_gain, abs=2)
 
 
-def test_retention_falls_back_to_low_risk_then_none():
+def test_retention_uplift_is_plausible_not_lifetime():
+    """Жюри: «LTV вырастет ×45». Год выручки при оттоке низкого риска не может быть больше 12 MRR."""
     results = [
-        _result(1, "high", 50.0, 10_000, [("month", True, "active", 10_000)]),
-        _result(2, "low", 10.0, 2_000, [("month", True, "active", 2_000)]),
+        _result(1, "high", 60.0, 8_400, [("month", True, "active", 8_400)]),
+        _result(2, "low", 0.3, 5_000, [("month", True, "active", 5_000)]),
     ]
     high, _ = build_marketing(results, [], 30, AS_OF)["retention_scenarios"]
-    assert high["target_source"] == "low_risk"
-    assert high["ltv_uplift"] == round(10_000 * (10 - 2))
+    assert high["revenue_retained"] <= 12 * 8_400
+    assert high["revenue_uplift"] < 12 * 8_400 - high["revenue_now"] + 1
 
-    lonely = build_marketing(results[:1], [], 30, AS_OF)["retention_scenarios"][0]
-    assert lonely["target_source"] == "none"
-    assert lonely["ltv_uplift"] is None and lonely["ltv_retained"] is None
+
+def test_retention_falls_back_to_base_then_none():
+    results = [
+        _result(1, "high", 50.0, 10_000, [("month", True, "active", 10_000)]),
+        _result(2, "medium", 20.0, 2_000, [("month", True, "active", 2_000)]),
+    ]
+    high, _ = build_marketing(results, [], 30, AS_OF)["retention_scenarios"]
+    # низкого риска нет — средний отток по базе (50% + 20%) / 2
+    assert high["target_source"] == "base"
+    assert high["target_monthly_churn"] == pytest.approx(0.35)
+    kept = round(10_000 * (1 - 0.65**12) / 0.35)
+    assert high["revenue_uplift"] == kept - round(10_000 * (1 - 0.5**12) / 0.5)
+
+    empty = build_marketing([], [], 30, AS_OF)["retention_scenarios"][0]
+    assert empty["target_source"] == "none"
+    assert empty["revenue_uplift"] is None and empty["revenue_retained"] is None
 
 
 def test_history_dates_override_estimate():
@@ -321,8 +354,8 @@ def test_margin_and_cac_applied_on_top(base):
     assert out["ltv"] == 10_000  # €250 × 40%
     assert out["ltv_total"] == 40_000
     assert out["segments"][0]["ltv"] == 8_000
-    uplift = base["retention_scenarios"][0]["ltv_uplift"]
-    assert out["retention_scenarios"][0]["ltv_uplift"] == round(uplift * 0.4)
+    # прирост выручки за год маржой не масштабируется: это выручка, так и подписано
+    assert out["retention_scenarios"] == base["retention_scenarios"]
     economics = out["unit_economics"]
     assert economics["ltv_cac"] == pytest.approx(2.0)
     # €50 / (€66,67 × 40%) = 1,875 мес.

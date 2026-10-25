@@ -25,6 +25,8 @@ API_RULES = [
         "POST", r"/api/v1/mail/templates/(?P<code>[^/]+)/reset", "mail.template.reset", "mail_template",
         object_group="code",
     ),
+    rule("PUT", r"/api/v1/mail/settings", "mail.settings.update", "settings"),
+    skip("POST", r"/api/v1/mail/preview/[^/]+"),
     skip("POST", r"/api/v1/mail/campaigns/preview"),
     rule("POST", r"/api/v1/mail/campaigns", "mail.campaign.create", "campaign"),
     rule("PUT", r"/api/v1/analytics/marketing/settings", "marketing.settings.update", "settings"),

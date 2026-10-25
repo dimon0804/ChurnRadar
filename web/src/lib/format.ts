@@ -167,3 +167,30 @@ export function formatCompact(value: number | null | undefined): string {
   if (abs >= 10_000) return `${sign}${formatDecimal(abs / 1_000, abs >= 100_000 ? 0 : 1)}${NBSP}тыс.`
   return formatDecimal(value, abs < 10 ? 1 : 0)
 }
+
+/** Баланс, который тратится на продления: свои деньги плюс разблокированные бонусы. */
+export function spendableBalance(c: { balance: number; bonus_balance?: number | null; bonus_state?: string | null }): {
+  total: number
+  bonus: number
+} {
+  const bonus = c.bonus_state === 'unlocked' ? Math.max(c.bonus_balance ?? 0, 0) : 0
+  return { total: c.balance + bonus, bonus }
+}
+
+/** Единая подпись баланса: «Баланс (вкл. бонусы €6,15)» — так же, как в объяснениях модели и письмах. */
+export function balanceLabel(c: { balance: number; bonus_balance?: number | null; bonus_state?: string | null }): string {
+  const { bonus } = spendableBalance(c)
+  return bonus > 0 ? `Баланс (вкл. бонусы ${formatMoney(bonus)})` : 'Баланс'
+}
+
+/**
+ * Предложения через пробел, ровно с одной точкой в конце каждого. «0,6 мес.» + «.» не превращается
+ * в «мес..»: если фраза уже кончается сокращением с точкой (или ?, !), вторую точку не ставим.
+ */
+export function sentences(...parts: ReadonlyArray<string | null | undefined | false>): string {
+  return parts
+    .map((p) => (typeof p === 'string' ? p.trim() : ''))
+    .filter((p) => p.length > 0)
+    .map((p) => (/[.!?…]$/.test(p) ? p : `${p}.`))
+    .join(' ')
+}

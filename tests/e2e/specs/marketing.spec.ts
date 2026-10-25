@@ -80,7 +80,11 @@ test('/metrics и страница «Маркетинг» показывают �
     await expect(glossary.getByText(term, { exact: true })).toBeVisible()
   }
   await expect(page.getByTestId('mkt-segments').getByRole('table')).toBeVisible()
-  await expect(page.getByTestId('mkt-retention')).toContainText(/удержим|удерживать некого|Не с чем сравнить/)
+  const retention = page.getByTestId('mkt-retention')
+  await expect(retention).toContainText(/удержим|удерживать некого|Не с чем сравнить/)
+  // эффект удержания — выручка за 12 месяцев, а не LTV на всю жизнь
+  await expect(retention).not.toContainText('LTV базы вырастет')
+  await expect(retention).not.toContainText('LTV этих клиентов')
 })
 
 test('админ задаёт CAC и маржу: появляются LTV/CAC и окупаемость', async ({ page, request }) => {
@@ -104,6 +108,8 @@ test('админ задаёт CAC и маржу: появляются LTV/CAC и
   expect(ratio).toBeCloseTo(after.ltv / 2500, 6)
   await expect(page.getByTestId('mkt-ltv-cac').locator('[data-role=value]')).toHaveText(/×$/)
   await expect(page.getByTestId('mkt-ltv-cac')).toContainText('Окупается за')
+  await expect(page.getByTestId('mkt-ltv-cac')).toContainText('CAC задан администратором')
+  await expect(page.getByTestId('mkt-ltv-cac')).not.toContainText('..')
 
   const metrics = await (await request.get('/metrics', { headers: { Authorization: `Bearer ${METRICS_TOKEN}` } })).text()
   expect(Number(metrics.match(/^churn_ltv_eur\s+(\S+)/m)?.[1])).toBeCloseTo(after.ltv / 100, 2)

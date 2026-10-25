@@ -17,7 +17,7 @@ import {
   snoozeUpdate,
   statsLine,
 } from './contact-today'
-import { insertAt, renderTemplate, SAMPLE_VALUES, unknownPlaceholders } from './mail'
+import { insertAt, previewCaption, renderTemplate, unknownPlaceholders } from './mail'
 import { DEFAULT_CUSTOMERS_STATE } from './url-state'
 
 const NOW = new Date('2026-10-24T12:00:00Z')
@@ -47,6 +47,8 @@ function item(over: Partial<ContactTodayItem> = {}): ContactTodayItem {
     main_reason: 'Не хватит денег на продление',
     main_reason_code: 'insufficient_funds',
     next_action: { code: 'insufficient_funds', title: 'Напомнить пополнить баланс', expected_saving: 120000 },
+    deadline_days: null,
+    urgent: false,
     action: null,
     ...over,
   }
@@ -155,7 +157,17 @@ describe('журнал и сводки', () => {
 
 describe('шаблоны в редакторе', () => {
   it('предпросмотр с примером и проверка подстановок', () => {
-    expect(renderTemplate('До {{date}}, {{ service }}, {{oops}}', SAMPLE_VALUES)).toBe('До 24 октября, service-0019, {{oops}}')
+    const values = { date: '24 октября', service: 'storage-00019' }
+    expect(renderTemplate('До {{date}}, {{ service }}, {{oops}}', values)).toBe('До 24 октября, storage-00019, {{oops}}')
+  })
+
+  it('says whose data the template preview shows and whether it fits', () => {
+    const base = { customer_id: 9, to: 'user-0009@example.test', subject: 's', text: 't' }
+    expect(previewCaption({ ...base, applicable: true })).toBe(
+      'Так письмо увидит клиент (настоящие данные: клиент 9, user-0009@example.test)',
+    )
+    expect(previewCaption({ ...base, applicable: false })).toContain('Такой причины у него нет')
+    expect(previewCaption({ ...base, customer_id: null, to: null, applicable: false })).toContain('заглушки')
     expect(unknownPlaceholders('{{date}} {{oops}} {{x}} {{oops}}', ['date'])).toEqual(['oops', 'x'])
   })
 

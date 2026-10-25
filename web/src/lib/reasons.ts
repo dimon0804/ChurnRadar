@@ -26,6 +26,27 @@ export const FEATURE_TITLE: Record<string, string> = {
   cancel_page_views: 'Смотрел страницу удаления',
 }
 
+/**
+ * Подписи двух разных понятий — одни и те же на обзоре, в таблице и в карточке:
+ * главная причина риска — с наибольшим вкладом в score (reasons[0]),
+ * самое выгодное действие — с наибольшим денежным эффектом (next_action).
+ */
+export const FOCUS_LABEL = {
+  reason: 'Главная причина риска',
+  action: 'Самое выгодное действие',
+} as const
+
+/** Самое выгодное действие клиента: от сервера, а для клиентов без оценки — из словаря. */
+export function bestAction<T extends { code: string; title: string }>(
+  nextAction: T | null | undefined,
+  mainReason?: { code: string } | null,
+): T | { code: string; title: string } | null {
+  if (nextAction) return nextAction
+  const code = mainReason?.code
+  const title = code ? UNKNOWN_ACTION[code] : undefined
+  return code && title ? { code, title } : null
+}
+
 /** Что делать с клиентами без оценки — сервер отдаёт это только в карточке, в списке действия нет. */
 const UNKNOWN_ACTION: Record<string, string> = {
   all_services_gone: 'Предложить вернуться',

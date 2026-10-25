@@ -439,11 +439,11 @@ async def test_contact_today_marks_and_export(client):
     # CSV: те же фильтры и сортировка, что у списка, плюс статус
     rows = _csv(await client.get("/api/v1/customers/export.csv?level=high,medium&sort=expected_loss&order=desc", headers=ANALYST))
     assert rows[0] == ["ID", "Email", "Уровень риска", "Риск, баллы", "Ожидаемая потеря, €", "Баланс, €",
-                       "Пополнения всего, €", "Главная причина", "Что сделать", "Статус"]
+                       "Пополнения всего, €", "Срочно", "Главная причина риска", "Самое выгодное действие", "Статус"]
     assert [r[0] for r in rows[1:]] == ["1", "4", "7", "3"]
     assert rows[1] == ["1", "anna@example.test", "Высокий", "80,0", "40,00", "5,00", "90,00",
-                       "Услуга ждёт оплаты", "Написать клиенту", "Решено"]
-    assert rows[2][9].startswith("Отложено до ")
+                       "", "Услуга ждёт оплаты", "Написать клиенту", "Решено"]
+    assert rows[2][10].startswith("Отложено до ")
     by_search = _csv(await client.get("/api/v1/customers/export.csv?search=other.test", headers=ANALYST))
     assert [r[0] for r in by_search[1:]] == ["7"]
     worklist = _csv(await client.get("/api/v1/customers/export.csv?worklist=true&sort=expected_loss", headers=ANALYST))

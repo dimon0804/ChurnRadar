@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import re
+from datetime import timedelta
+
 import pytest
 
 from riskcore import merge_settings, noisy_or, score_customers
+from riskcore.money import format_eur, offer_size
+from riskcore.text import format_deadline, format_funds
 
 from .factories import AS_OF, make_account, make_service, make_tx
 from .test_scoring import RISKY_CUSTOMER, score_one
@@ -86,6 +91,92 @@ def test_prolong_wait_action_names_deadline_and_promo():
     [result] = score_customers([account], [service], [], merge_settings(None), AS_OF)
     action = result.detail["next_action"]
     assert action["code"] == "prolong_wait"
-    assert action["title"].startswith("Срочно написать")
+    # срочность — отдельный флаг по сроку, в тексте действия слова «Срочно» нет
+    assert action["title"].startswith("Написать: service-0001")
     assert "через 3 дн." in action["title"]
-    assert "промокод" in action["detail"] and "€40" in action["detail"]
+    assert "Не хватает €40" in action["detail"]
+
+
+def _promo_cents(text: str) -> int:
+    match = re.search(r"промокод €([\d ]+)(?:,(\d\d))?", text)
+    assert match, text
+    return int(match.group(1).replace(" ", "")) * 100 + int(match.group(2) or 0)
+
+
+def test_promo_is_capped_by_monthly_revenue_and_saving():
+    """Жюри: клиенту с MRR €84 предлагали промокод на €436,48 — всю годовую нехватку."""
+    account = make_account(balance=0, total_replenished=10_000)
+    service = make_service(
+        status="prolong_wait", auto_prolong=False, payment_term="year", price=43_648, expires_in_days=-1
+    )
+    [result] = score_customers([account], [service], [], merge_settings(None), AS_OF)
+    action = result.detail["next_action"]
+    assert action["code"] == "prolong_wait"
+    monthly = result.horizon_revenue * 30 / 30
+    saving = action["expected_saving"]
+    promo = _promo_cents(action["detail"])
+    assert 0 < promo <= monthly
+    assert promo <= saving * 0.2
+    # видно, окупается ли действие: «промокод €X сохранит ожидаемо €Y»
+    assert f"Промокод {format_eur(promo)} сохранит ожидаемо {format_eur(saving)}" in action["detail"]
+    assert "промокод €436" not in action["detail"]
+
+
+def test_offer_size_rule():
+    # хотели €436, клиент платит €84 в месяц, действие сбережёт €300 → не больше €60 (20%)
+    assert offer_size(43_648, 8_400, 30_000) == 6_000
+    # MRR меньше 20% сбережения → потолок — месяц выручки
+    assert offer_size(43_648, 2_550, 30_000) == 2_500
+    # просили немного — даём сколько просили, вниз до евро
+    assert offer_size(1_250, 8_400, 30_000) == 1_200
+    assert offer_size(5_000, 8_400, 300) == 0
+
+
+def test_insufficient_funds_bonus_has_roi_and_is_capped():
+    account = make_account(balance=100, total_replenished=3_000)
+    services = [make_service(id=1, price=20_000, expires_in_days=3)]
+    [result] = score_customers([account], services, [make_tx(1)], merge_settings(None), AS_OF)
+    action = next(r for r in result.detail["recommendations"] if r["code"] == "insufficient_funds")
+    assert action["title"] == "Нет денег на продление: напомнить пополнить баланс до 22.10.2026"
+    match = re.search(r"бонус €(\d+)", action["detail"])
+    assert match, action["detail"]
+    bonus = int(match.group(1)) * 100
+    assert bonus <= result.horizon_revenue and bonus <= action["expected_saving"] * 0.2
+    assert f"бонус {format_eur(bonus)} сохранит ожидаемо" in action["detail"]
+
+
+def test_overdue_renewal_says_deadline_passed_not_a_past_date():
+    """Жюри: «пополнить баланс до 24.10.2026», когда этот момент уже прошёл."""
+    account = make_account(balance=0, total_replenished=3_000)
+    services = [make_service(id=1, price=2_000, expires_in_days=-0.5)]
+    [result] = score_customers([account], services, [make_tx(1)], merge_settings(None), AS_OF)
+    texts = [r["title"] for r in result.detail["recommendations"]] + [r["action"] for r in result.reasons]
+    funds = [t for t in texts if t.startswith("Нет денег на продление")]
+    assert funds, texts
+    for text in funds:
+        assert "срочно, срок уже наступил" in text
+        assert "18.10.2026" not in text
+
+
+def test_autoprolong_expired_has_no_past_deadline():
+    account = make_account()
+    services = [make_service(id=1, auto_prolong=False, expires_in_days=-3)]
+    [result] = score_customers([account], services, [make_tx(1)], merge_settings(None), AS_OF)
+    action = next(r for r in result.detail["recommendations"] if r["code"] == "autoprolong_off_expiring")
+    assert action["title"].startswith("Включить автопродление: срочно, срок уже наступил")
+
+
+def test_format_deadline_never_in_the_past():
+    assert format_deadline(AS_OF + timedelta(days=2), AS_OF) == ("21.10.2026", False)
+    assert format_deadline(AS_OF - timedelta(days=2), AS_OF) == ("19.10.2026", True)
+
+
+def test_balance_in_explanations_names_bonuses():
+    """Жюри: в карточке €43,32, в объяснении €49,47 — второе с бонусами, но об этом нигде не сказано."""
+    assert format_funds(4_332, 615) == "€49,47 (вкл. бонусы €6,15)"
+    assert format_funds(4_332, 0) == "€43,32"
+    account = make_account(balance=4_332, bonus_balance=615, bonus_state="unlocked", total_replenished=3_000)
+    services = [make_service(id=1, price=20_000, expires_in_days=3)]
+    [result] = score_customers([account], services, [make_tx(1)], merge_settings(None), AS_OF)
+    explanation = next(r["title"] for r in result.reasons if r["code"] == "insufficient_funds")
+    assert "На балансе €49,47 (вкл. бонусы €6,15)" in explanation

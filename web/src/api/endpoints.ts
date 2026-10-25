@@ -15,7 +15,11 @@ import type {
   EmailSent,
   MailStats,
   MailTemplate,
+  MailSettings,
+  MailSettingsUpdate,
   MailTemplatePatch,
+  MailTemplatePreview,
+  MailTemplatePreviewRequest,
   MailTemplates,
   LoginRequest,
   Marketing,
@@ -117,6 +121,10 @@ export const api = {
     request<MailTemplate>(`/api/v1/mail/templates/${encodeURIComponent(code)}`, { method: 'PUT', body }),
   resetMailTemplate: (code: string) =>
     request<MailTemplate>(`/api/v1/mail/templates/${encodeURIComponent(code)}/reset`, { method: 'POST' }),
+  previewMailTemplate: (code: string, body: MailTemplatePreviewRequest, signal?: AbortSignal) =>
+    request<MailTemplatePreview>(`/api/v1/mail/preview/${encodeURIComponent(code)}`, { method: 'POST', body, signal }),
+  mailSettings: (signal?: AbortSignal) => request<MailSettings>('/api/v1/mail/settings', { signal }),
+  putMailSettings: (body: MailSettingsUpdate) => request<MailSettings>('/api/v1/mail/settings', { method: 'PUT', body }),
   previewCampaign: (body: CampaignRequest, signal?: AbortSignal) =>
     request<CampaignPreview>('/api/v1/mail/campaigns/preview', { method: 'POST', body, signal }),
   createCampaign: (body: CampaignRequest) =>
@@ -176,6 +184,9 @@ export const queryKeys = {
   // письма меняют очередь и статистику; после пересчёта «помогло» тоже может измениться
   mailStats: ['customers', 'mail-stats'] as const,
   mailTemplates: ['mail-templates'] as const,
+  // под префиксом customers: после пересчёта пример письма берёт свежие данные клиента
+  mailPreview: (code: string, subject: string, body: string) => ['customers', 'mail-preview', code, subject, body] as const,
+  mailSettings: ['mail-settings'] as const,
   campaigns: ['mail-campaigns'] as const,
   campaign: (id: number) => ['mail-campaigns', id] as const,
   summary: ['summary'] as const,

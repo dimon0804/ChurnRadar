@@ -6,7 +6,7 @@ from datetime import datetime
 from ..base import Recommendation, ServiceFeature, Signal
 from ..context import ServiceContext
 from ..registry import register
-from ..text import format_date, format_eur
+from ..text import OVERDUE, format_deadline, format_eur, offer_amount
 
 # Бонус к пополнению, который предлагаем, чтобы клиент закрыл нехватку.
 TOPUP_BONUS_SHARE = 0.10
@@ -41,7 +41,9 @@ class InsufficientFunds(ServiceFeature):
         # обычным пополнением, а пустой баланс при крупных продлениях почти наверняка означает отказ.
         value = min(max(funds.shortfall / funds.upcoming_renewals_cost, 0.0), 1.0)
         name = ctx.service.name
-        date = format_date(funds.shortfall_at)
+        date, overdue = format_deadline(funds.shortfall_at, ctx.as_of)
+        # продление, которое уже должно было пройти, тоже «наступило»: ждать некогда
+        overdue = overdue or ctx.service.expires_at <= ctx.as_of
         bonus = math.ceil(funds.shortfall * TOPUP_BONUS_SHARE / 100) * 100
         return Signal(
             value=value,
@@ -50,21 +52,28 @@ class InsufficientFunds(ServiceFeature):
                 "service": name,
                 "date": date,
                 "shortfall": format_eur(funds.shortfall),
-                "bonus": format_eur(bonus),
+                "overdue": "1" if overdue else "",
+                "offer_wanted": str(bonus),
+                "mrr": str(round(ctx.account_ctx.monthly_revenue)),
                 "horizon": str(ctx.horizon_days),
             },
         )
 
     def recommend(self, signal: Signal) -> Recommendation:
-        return Recommendation(
-            code=self.code,
-            title=f"Нет денег на продление: напомнить пополнить баланс до {signal.facts['date']}",
-            detail=(
-                f"Не хватает {signal.facts['shortfall']} на продления за {signal.facts['horizon']} дн. "
-                f"Предложить бонус {signal.facts['bonus']} при пополнении на эту сумму, "
-                f"иначе {signal.facts['service']} не продлится."
-            ),
+        facts = signal.facts
+        if facts.get("overdue"):
+            title = f"Нет денег на продление: {OVERDUE}, напомнить пополнить баланс"
+        else:
+            title = f"Нет денег на продление: напомнить пополнить баланс до {facts['date']}"
+        detail = (
+            f"Не хватает {facts['shortfall']} на продления за {facts['horizon']} дн., "
+            f"иначе {facts['service']} не продлится."
         )
+        bonus, saving = offer_amount(facts)
+        if bonus:
+            detail += f" Предложить бонус {bonus} при пополнении на эту сумму"
+            detail += f": бонус {bonus} сохранит ожидаемо {saving}." if saving else "."
+        return Recommendation(code=self.code, title=title, detail=detail)
 
 
 def _explain(ctx: ServiceContext, shortfall_at: datetime, cost: int, uncovered: int) -> str:
@@ -78,16 +87,16 @@ def _explain(ctx: ServiceContext, shortfall_at: datetime, cost: int, uncovered: 
     account = ctx.account_ctx
     name = ctx.service.name
     horizon = ctx.horizon_days
-    date = format_date(shortfall_at)
+    date, _ = format_deadline(shortfall_at, ctx.as_of)
     paid = sum(plan.cost_before(shortfall_at) for plan in account.renewal_plans)
     if paid <= 0:
         text = (
-            f"На балансе {format_eur(funds.spendable)}: не хватит уже на продление {date}, "
+            f"На балансе {account.funds_text}: не хватит уже на продление {date}, "
             f"оплатить {name} будет нечем."
         )
     else:
         text = (
-            f"На балансе {format_eur(funds.spendable)}: на автопродления хватит до {date}, "
+            f"На балансе {account.funds_text}: на автопродления хватит до {date}, "
             f"дальше {name} оплатить будет нечем"
         )
         if uncovered < cost and not ctx.revenue_capped:

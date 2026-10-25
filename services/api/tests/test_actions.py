@@ -226,6 +226,7 @@ def test_csv_row_and_render():
         "1384,97",
         "915,06",
         "10000,00",
+        "",
         "На балансе мало денег",
         "Напомнить пополнить",
         "Решено",
@@ -234,10 +235,15 @@ def test_csv_row_and_render():
         _row(risk_score=None, risk_level="unknown", next_action=None, main_reason=None),
         NOW,
     )
-    assert unknown[2:4] == ["Нет оценки", ""] and unknown[7:] == ["", "", ""]
+    assert unknown[2:4] == ["Нет оценки", ""] and unknown[7:] == ["", "", "", ""]
+    # срочно — до срока не больше двух дней, при любом уровне риска
+    urgent = actions.csv_row(_row(risk_level="medium", deadline_days=1.0), NOW)
+    assert urgent[7] == "да"
+    assert actions.csv_row(_row(deadline_days=2.5), NOW)[7] == ""
 
     data = actions.render_csv([row]).decode("utf-8")
     assert data.startswith("﻿ID;Email;Уровень риска;Риск, баллы;Ожидаемая потеря, €;")
+    assert ";Срочно;Главная причина риска;Самое выгодное действие;Статус" in data
     lines = data.lstrip("﻿").split("\r\n")
     assert lines[1].endswith(";Напомнить пополнить;Решено")
     assert lines[2] == ""
@@ -296,7 +302,7 @@ async def test_export_csv_endpoint(client, app):
     )
     assert resp.content.startswith(b"\xef\xbb\xbf")
     lines = resp.content.decode("utf-8-sig").split("\r\n")
-    assert lines[0].split(";")[0] == "ID" and len(lines[0].split(";")) == 10
+    assert lines[0].split(";")[0] == "ID" and len(lines[0].split(";")) == 11
     assert [line.split(";")[0] for line in lines[1:3]] == ["9", "1"]
     sql = app.state.pool.conn.queries[-1]
     assert "ORDER BY cs.expected_loss DESC, cs.customer_id ASC" in sql
@@ -408,3 +414,22 @@ async def test_mark_unknown_customer_is_404(client, app):
     )
     assert resp.status_code == 404
     assert pool.conn.executed == []
+
+
+
+def test_urgent_flag_is_deadline_not_level():
+    """Жюри: «Срочно» стояло у среднего риска по тексту действия. Срочность — отдельный флаг по сроку."""
+    from app.queries import URGENT_DAYS, deadline_fields
+
+    assert URGENT_DAYS == 2
+    assert deadline_fields(1.0) == {"deadline_days": 1.0, "urgent": True}
+    assert deadline_fields(-3.0) == {"deadline_days": 0.0, "urgent": True}
+    assert deadline_fields(2.01) == {"deadline_days": 2.01, "urgent": False}
+    assert deadline_fields(None) == {"deadline_days": None, "urgent": False}
+    item = actions.queue_item(_row(risk_level="medium", deadline_days=0.5, main_reason_code="prolong_wait"), NOW)
+    assert item["urgent"] is True and item["risk_level"] == "medium"
+
+
+def test_queue_puts_urgent_first():
+    assert actions.QUEUE_ORDER.startswith("COALESCE(")
+    assert actions.QUEUE_ORDER.index(" DESC") < actions.QUEUE_ORDER.index("expected_loss")

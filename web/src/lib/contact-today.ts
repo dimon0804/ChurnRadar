@@ -168,6 +168,27 @@ export function campaignSummary(p: CampaignPreview, skipDays: number): string {
   return parts.join('; ')
 }
 
+export type MassLevel = 'high' | 'medium' | 'low'
+export type QueueByLevel = Record<MassLevel, number>
+export const MASS_LEVELS: readonly MassLevel[] = ['high', 'medium', 'low']
+/** Массовая рассылка по умолчанию — высокий и средний риск: клиентам низкого риска писать незачем. */
+export const DEFAULT_MASS_LEVELS: readonly MassLevel[] = ['high', 'medium']
+
+/** Сколько клиентов очереди на выбранных уровнях. */
+export function massCount(byLevel: QueueByLevel | null | undefined, levels: readonly MassLevel[] = DEFAULT_MASS_LEVELS): number {
+  if (!byLevel) return 0
+  return levels.reduce((sum, level) => sum + (byLevel[level] ?? 0), 0)
+}
+
+/** «Срочно: удаление через 1 дн.» — срок по риску не дальше двух дней. null — не срочно. */
+export function urgentText(item: { urgent?: boolean; deadline_days?: number | null }): string | null {
+  if (!item.urgent) return null
+  const days = item.deadline_days
+  if (typeof days !== 'number' || days < 0.5) return 'Срочно: срок сегодня'
+  const whole = Math.ceil(days)
+  return `Срочно: срок через ${countLabel(whole, ['день', 'дня', 'дней'])}`
+}
+
 /** Подписи шаблонов на случай, если список шаблонов ещё не загрузился. */
 export const TEMPLATE_TITLE: Record<string, string> = {
   insufficient_funds: 'Не хватит денег на продление',

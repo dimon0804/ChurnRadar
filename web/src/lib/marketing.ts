@@ -1,10 +1,10 @@
 import type { Marketing, RetentionScenario } from '@/api/types'
-import { countLabel, DASH, formatDecimal, formatMoney, formatShare, NBSP, plural } from './format'
+import { countLabel, DASH, formatDate, formatDecimal, formatMoney, formatShare, NBSP, plural } from './format'
 
 /** Деньги без центов: на маркетинговой странице копейки только мешают. */
 export const eur = (cents: number | null | undefined) => formatMoney(cents, { cents: false })
 
-/** «1,5 мес.», «больше 60 мес.» — для срока жизни клиента. */
+/** «1,5 мес.», «больше 36 мес.» — для срока жизни клиента. */
 export function formatMonths(months: number | null | undefined, capped = false): string {
   if (typeof months !== 'number' || !Number.isFinite(months)) return DASH
   if (capped) return `больше ${formatDecimal(months, 0)}${NBSP}мес.`
@@ -71,22 +71,36 @@ export function scenarioTitle(s: RetentionScenario): string {
   return `клиентов ${words.join(' и ')} риска`
 }
 
-/** «Если удержим клиентов высокого риска, LTV базы вырастет на €37 507». Без процента: на маленькой базе он выходит в сотни процентов и сбивает. */
+/** «Если удержим клиентов высокого риска (3 клиента), за 12 месяцев получим ещё €1 240 выручки». */
 export function retentionSentence(s: RetentionScenario): string {
   if (s.customers === 0) return `Сейчас нет ${scenarioTitle(s)}, удерживать некого.`
-  if (s.ltv_uplift === null || s.target_monthly_churn === null) {
-    return `Не с чем сравнить: в истории нет ушедших клиентов и нет клиентов низкого риска, поэтому не знаем, каким станет отток ${scenarioTitle(s)} после удержания.`
+  if (s.revenue_uplift === null || s.target_monthly_churn === null) {
+    return `Не с чем сравнить: нет оценённых клиентов, поэтому не знаем, каким станет отток ${scenarioTitle(s)} после удержания.`
   }
-  return `Если удержим ${scenarioTitle(s)} (${countLabel(s.customers, ['клиент', 'клиента', 'клиентов'])}), LTV базы вырастет на ${eur(s.ltv_uplift)}.`
+  return `Если удержим ${scenarioTitle(s)} (${countLabel(s.customers, ['клиент', 'клиента', 'клиентов'])}), за ${s.horizon_months}${NBSP}мес. получим ещё ${eur(s.revenue_uplift)} выручки.`
+}
+
+/** «Выручка этих клиентов за 12 мес.: €374 сейчас → €1 614, если удержим». */
+export function retentionRevenueLine(s: RetentionScenario): string | null {
+  if (s.revenue_uplift === null || s.revenue_retained === null || s.customers === 0) return null
+  return `Выручка этих клиентов за ${s.horizon_months}${NBSP}мес.: ${eur(s.revenue_now)} при нынешнем оттоке → ${eur(s.revenue_retained)}, если удержим.`
 }
 
 export function targetSentence(s: RetentionScenario): string {
   if (s.target_monthly_churn === null) return ''
-  const source =
-    s.target_source === 'fact'
-      ? 'к обычному оттоку по истории'
-      : 'к оттоку клиентов низкого риска'
-  return `«Удержать» здесь значит вернуть их отток ${source}: ${formatShare(s.target_monthly_churn)} в месяц. Тогда каждый месяц мы перестанем терять ${eur(s.saved_mrr)} регулярной выручки.`
+  const source = s.target_source === 'low_risk' ? 'как у клиентов низкого риска' : 'как в среднем по базе (клиентов низкого риска сейчас нет)'
+  return (
+    `«Удержать» здесь значит снизить их отток до ${formatShare(s.target_monthly_churn)} в месяц, ${source}. ` +
+    `Тогда в первый же месяц мы перестанем терять ${eur(s.saved_mrr)} регулярной выручки. ` +
+    `Считаем только на год вперёд: выручка клиента за ${s.horizon_months}${NBSP}мес. = MRR × (1 − (1 − отток)^${s.horizon_months}) ÷ отток.`
+  )
+}
+
+/** «CAC задан администратором 19.10.2026» — откуда в панели стоимость привлечения. */
+export function cacSourceText(m: Marketing): string | null {
+  if (!m.unit_economics.cac) return null
+  const at = m.settings.updated_at ? ` ${formatDate(m.settings.updated_at)}` : ''
+  return `CAC задан администратором${at}`
 }
 
 /** Пояснения к карточкам: формула и смысл на примере, с числами базы. */
@@ -123,6 +137,7 @@ export function kpiHints(m: Marketing) {
       (m.unit_economics.cac
         ? `Payback (окупаемость) — за сколько месяцев клиент вернёт стоимость привлечения: CAC ÷ (ARPU × маржа) = ${eur(m.unit_economics.cac)} ÷ ${eur(m.arpu * margin)}.`
         : 'Стоимости привлечения в данных нет, её задаёт администратор в блоке «Экономика привлечения» ниже.'),
+    cacSource: cacSourceText(m),
   }
 }
 

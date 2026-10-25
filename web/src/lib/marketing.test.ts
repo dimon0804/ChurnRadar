@@ -12,6 +12,7 @@ import {
   parsePercent,
   ratioVerdict,
   retentionSentence,
+  retentionRevenueLine,
   targetSentence,
 } from './marketing'
 
@@ -22,12 +23,13 @@ function scenario(overrides: Partial<RetentionScenario> = {}): RetentionScenario
     levels: ['high'],
     customers: 4,
     mrr: 312_189,
-    ltv_now: 430_143,
-    ltv_retained: 4_180_842,
-    ltv_uplift: 3_750_699,
+    horizon_months: 12,
+    revenue_now: 37_400,
+    revenue_retained: 161_400,
+    revenue_uplift: 124_000,
     saved_mrr: 204_514,
     target_monthly_churn: 0.0747,
-    target_source: 'fact',
+    target_source: 'low_risk',
     ...overrides,
   }
 }
@@ -125,21 +127,27 @@ describe('inputs', () => {
 })
 
 describe('retention', () => {
-  it('says how much LTV grows if we keep high-risk customers', () => {
+  it('says how much revenue a year of retention brings, not lifetime LTV', () => {
     const text = s(retentionSentence(scenario()))
-    expect(text).toBe('Если удержим клиентов высокого риска (4 клиента), LTV базы вырастет на €37 507.')
+    expect(text).toBe('Если удержим клиентов высокого риска (4 клиента), за 12 мес. получим ещё €1 240 выручки.')
+    expect(text).not.toContain('LTV')
+    expect(s(retentionRevenueLine(scenario()) ?? '')).toBe(
+      'Выручка этих клиентов за 12 мес.: €374 при нынешнем оттоке → €1 614, если удержим.',
+    )
   })
 
-  it('names both levels and explains the target churn', () => {
+  it('names both levels and explains the target churn and the formula', () => {
     const both = scenario({ levels: ['high', 'medium'], customers: 6 })
     expect(s(retentionSentence(both))).toContain('клиентов высокого и среднего риска (6 клиентов)')
-    expect(s(targetSentence(both))).toContain('к обычному оттоку по истории: 7,5 % в месяц')
+    expect(s(targetSentence(both))).toContain('до 7,5 % в месяц, как у клиентов низкого риска')
     expect(s(targetSentence(both))).toContain('€2 045')
-    expect(targetSentence(scenario({ target_source: 'low_risk' }))).toContain('к оттоку клиентов низкого риска')
+    expect(s(targetSentence(both))).toContain('MRR × (1 − (1 − отток)^12) ÷ отток')
+    expect(targetSentence(scenario({ target_source: 'base' }))).toContain('как в среднем по базе')
   })
 
   it('is honest when there is nothing to compare with or nobody to keep', () => {
-    const none = scenario({ ltv_uplift: null, ltv_retained: null, saved_mrr: null, target_monthly_churn: null, target_source: 'none' })
+    const none = scenario({ revenue_uplift: null, revenue_retained: null, saved_mrr: null, target_monthly_churn: null, target_source: 'none' })
+    expect(retentionRevenueLine(none)).toBeNull()
     expect(retentionSentence(none)).toMatch(/^Не с чем сравнить/)
     expect(targetSentence(none)).toBe('')
     expect(retentionSentence(scenario({ customers: 0 }))).toMatch(/удерживать некого/)

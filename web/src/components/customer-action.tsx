@@ -172,7 +172,7 @@ export function CustomerActionPanel({ id, email, atRisk }: { id: number; email: 
             <li key={`${h.changed_at}-${i}`} className="flex gap-2 text-[13px] leading-5">
               <span className="mt-2 size-1.5 shrink-0 rounded-full bg-subtle-foreground/60" aria-hidden />
               <span className="min-w-0 flex-1">{logLine(h)}</span>
-              <span className="shrink-0 text-xs text-subtle-foreground num">
+              <span className="max-w-[45%] min-w-0 text-right text-xs [overflow-wrap:anywhere] text-subtle-foreground num">
                 {formatDateTime(h.changed_at)}
                 {h.changed_by ? ` · ${h.changed_by}` : ''}
               </span>

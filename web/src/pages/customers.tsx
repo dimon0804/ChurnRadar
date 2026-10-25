@@ -710,7 +710,7 @@ export default function CustomersPage() {
                       value={String(state.pageSize)}
                       onValueChange={(v) => update({ ...state, pageSize: Number(v), page: 1 })}
                       options={PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
-                      className="w-16"
+                      className="w-[76px]"
                     />
                   </label>
                   <div className="flex items-center gap-1">

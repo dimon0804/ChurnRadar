@@ -519,7 +519,8 @@ export default function ModelPage() {
           {/* в режиме «Что если» панель высокая: на телефоне не прилипает, чтобы не закрывать ползунки */}
           <div
             className={cn(
-              whatIf ? 'relative md:sticky' : 'sticky',
+              // не relative: вместе с top-14 оно сдвигало панель на 56px вниз, на первую карточку
+              whatIf ? 'static md:sticky' : 'sticky',
               'top-14 z-20 -mx-4 mb-4 border-b border-border bg-background/90 px-4 py-2.5 backdrop-blur-md md:-mx-6 md:px-6',
             )}
           >

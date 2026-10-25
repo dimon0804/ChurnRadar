@@ -1,7 +1,8 @@
 import { expect, test, type Page } from '@playwright/test'
 import { loginApi } from './helpers'
+import { layoutProblems } from './layout-check'
 
-// Вёрстка не разъезжается на телефоне и ноутбуке. Тест только читает: ничего не меняет в данных.
+// Вёрстка не разъезжается от телефона до широкого экрана. Тест только читает: ничего не меняет в данных.
 
 const PAGES: { path: string; heading: string }[] = [
   { path: '/', heading: 'Обзор' },
@@ -14,6 +15,21 @@ const PAGES: { path: string; heading: string }[] = [
   { path: '/users', heading: 'Пользователи' },
   { path: '/data', heading: 'Данные' },
   { path: '/profile', heading: 'Профиль' },
+  { path: '/playbooks', heading: 'Сценарии' },
+  { path: '/integrations', heading: 'Интеграции' },
+  { path: '/audit', heading: 'Журнал действий' },
+]
+
+/** Диалоги и выезжающие панели: открываются без изменений в данных. */
+const DIALOGS: { name: string; path: string; open: (page: Page) => Promise<void> }[] = [
+  { name: 'карточка клиента', path: '/customers/9', open: async () => {} },
+  {
+    name: 'письмо клиенту',
+    path: '/customers/9',
+    open: async (page) => page.getByRole('dialog').getByRole('button', { name: /^Написать/ }).first().click(),
+  },
+  { name: 'новый сценарий', path: '/playbooks', open: async (page) => page.getByRole('button', { name: 'Новый сценарий' }).click() },
+  { name: 'новый пользователь', path: '/users', open: async (page) => page.getByRole('button', { name: 'Добавить пользователя' }).click() },
 ]
 
 const MAIN_NAV = ['Обзор', 'Клиенты', 'Маркетинг', 'Модель', 'Качество модели', 'Письма', 'Сценарии']
@@ -34,7 +50,9 @@ async function expectMainLabelsVisible(page: Page) {
 
 const WIDTHS = [
   { name: 'телефон', width: 390, height: 844 },
+  { name: 'планшет', width: 768, height: 1024 },
   { name: 'ноутбук', width: 1280, height: 800 },
+  { name: 'широкий экран', width: 1920, height: 1080 },
 ]
 
 async function horizontalOverflow(page: Page) {
@@ -82,7 +100,7 @@ for (const size of WIDTHS) {
     })
 
     for (const p of PAGES) {
-      test(`${p.heading}: без горизонтального скролла и наложений в шапке`, async ({ page }) => {
+      test(`${p.heading}: без горизонтального скролла и наложений`, async ({ page }) => {
         await page.goto(p.path)
         await expect(page.getByRole('heading', { level: 1, name: p.heading })).toBeVisible()
         // даём графикам и таблицам дорисоваться
@@ -90,6 +108,8 @@ for (const size of WIDTHS) {
 
         const { scroll, client } = await horizontalOverflow(page)
         expect(scroll, `страница шире экрана на ${scroll - client}px`).toBeLessThanOrEqual(client)
+        // кнопки, ссылки и поля всей страницы не наезжают друг на друга и не вылезают из карточек
+        expect(await layoutProblems(page), 'вёрстка разъехалась').toEqual([])
 
         const { hits, outside } = await headerOverlaps(page)
         expect(hits, 'элементы шапки наезжают друг на друга').toEqual([])
@@ -103,6 +123,20 @@ for (const size of WIDTHS) {
           await expect(page.getByRole('navigation', { name: 'Разделы' }).getByRole('link', { name: 'Клиенты' })).toBeInViewport()
           await expect(page.getByRole('navigation', { name: 'Разделы' }).getByRole('button', { name: /^Администрирование/ })).toBeInViewport()
         }
+      })
+    }
+
+    for (const d of DIALOGS) {
+      test(`диалог «${d.name}»: без наложений и вылезаний`, async ({ page }) => {
+        await page.goto(d.path)
+        await page.locator('main').waitFor()
+        await page.waitForTimeout(600)
+        await d.open(page)
+        await expect(page.getByRole('dialog').last()).toBeVisible()
+        await page.waitForTimeout(700)
+        expect(await layoutProblems(page, 'dialog'), 'вёрстка диалога разъехалась').toEqual([])
+        const { scroll, client } = await horizontalOverflow(page)
+        expect(scroll).toBeLessThanOrEqual(client)
       })
     }
 

@@ -25,13 +25,16 @@ export function Select({
       <SelectPrimitive.Trigger
         aria-label={ariaLabel}
         className={cn(
-          'inline-flex h-9 items-center justify-between gap-2 rounded-[9px] border border-border bg-surface-2 px-3 text-[13px] font-medium text-foreground outline-none num transition-colors',
+          'inline-flex h-9 min-w-0 items-center justify-between gap-2 rounded-[9px] border border-border bg-surface-2 px-3 text-[13px] font-medium text-foreground outline-none num transition-colors',
           'hover:border-brand/60 focus-visible:ring-[3px] focus-visible:ring-ring/25',
           className,
         )}
       >
-        <SelectPrimitive.Value />
-        <SelectPrimitive.Icon>
+        {/* длинное значение в одну строку с многоточием, а не переносом посередине кнопки */}
+        <span className="min-w-0 flex-1 truncate text-left">
+          <SelectPrimitive.Value />
+        </span>
+        <SelectPrimitive.Icon className="shrink-0">
           <ChevronDown className="size-3.5 text-muted-foreground" />
         </SelectPrimitive.Icon>
       </SelectPrimitive.Trigger>

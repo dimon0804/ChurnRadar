@@ -274,7 +274,7 @@ function CreateDialog({
         <RoleField value={role} onChange={setRole} />
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium">Как будет входить</legend>
-          <div role="radiogroup" aria-label="Как будет входить" className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+          <div role="radiogroup" aria-label="Как будет входить" className="flex flex-wrap gap-1 rounded-lg bg-muted p-1">
             {modes.map((m) => (
               <button
                 key={m.value}
@@ -283,7 +283,7 @@ function CreateDialog({
                 aria-checked={mode === m.value}
                 onClick={() => setMode(m.value)}
                 className={cn(
-                  'h-8 rounded-md px-2 text-[13px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  'min-h-8 flex-auto rounded-md px-2 py-1 text-[13px] leading-tight font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   mode === m.value ? 'bg-card text-foreground shadow-card' : 'text-muted-foreground hover:text-foreground',
                 )}
               >

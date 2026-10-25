@@ -45,7 +45,7 @@ import { useLive } from '@/providers/live'
 
 function Section({ title, aside, children, className }: { title: string; aside?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={cn('px-4 py-5 sm:px-6', className)}>
+    <section className={cn('min-w-0 px-4 py-5 sm:px-6', className)}>
       <div className="mb-3 flex items-baseline justify-between gap-3">
         <h3 className="text-[13px] font-semibold tracking-wide text-muted-foreground uppercase">{title}</h3>
         {aside}
@@ -359,7 +359,7 @@ function Services({ services }: { services: ServiceRisk[] }) {
       {services.length === 0 ? (
         <p className="text-sm text-muted-foreground">У клиента нет услуг.</p>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
+        <div className="min-w-0 overflow-hidden rounded-lg border border-border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -458,7 +458,7 @@ function Transactions({ txs, services }: { txs: Transaction[]; services: Map<num
         <p className="text-sm text-muted-foreground">Транзакций нет.</p>
       ) : (
         <>
-          <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <div className="min-w-0 overflow-hidden rounded-lg border border-border bg-card">
             <Table>
               <TableHeader>
                 <TableRow>

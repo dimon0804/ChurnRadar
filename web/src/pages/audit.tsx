@@ -199,7 +199,8 @@ export default function AuditPage() {
             ariaLabel="Кто"
             className="w-full sm:w-44"
           />
-          <div className="flex items-center gap-2">
+          {/* на телефоне «с» и «по» — двумя строками: в одну даты с иконкой календаря не помещаются */}
+          <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-2 sm:flex sm:w-auto">
             <Label htmlFor={ids.from} className="text-xs text-muted-foreground">
               с
             </Label>
@@ -209,7 +210,7 @@ export default function AuditPage() {
               value={filters.dateFrom}
               max={filters.dateTo || undefined}
               onChange={(e) => update({ dateFrom: e.target.value })}
-              className="h-8 w-36 text-[13px]"
+              className="h-8 w-full min-w-0 text-[13px] sm:w-36"
             />
             <Label htmlFor={ids.to} className="text-xs text-muted-foreground">
               по
@@ -220,7 +221,7 @@ export default function AuditPage() {
               value={filters.dateTo}
               min={filters.dateFrom || undefined}
               onChange={(e) => update({ dateTo: e.target.value })}
-              className="h-8 w-36 text-[13px]"
+              className="h-8 w-full min-w-0 text-[13px] sm:w-36"
             />
           </div>
           <div className="flex h-8 items-center gap-2">

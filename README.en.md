@@ -16,6 +16,8 @@ their services, why exactly, and how much money the company loses if nobody does
 ![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![Docker Compose](https://img.shields.io/badge/Docker%20Compose-v2-2496ED?logo=docker&logoColor=white)
 
+**[Open the panel → churnradar.clv-digital.tech](https://churnradar.clv-digital.tech)**
+
 Aéza case, RND hackathon (DSTU)
 
 </div>

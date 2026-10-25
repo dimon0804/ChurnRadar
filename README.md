@@ -16,6 +16,8 @@
 ![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 ![Docker Compose](https://img.shields.io/badge/Docker%20Compose-v2-2496ED?logo=docker&logoColor=white)
 
+**[Открыть панель → churnradar.clv-digital.tech](https://churnradar.clv-digital.tech)**
+
 Кейс компании Aéza, хакатон РНД (ДГТУ)
 
 </div>

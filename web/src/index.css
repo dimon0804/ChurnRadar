@@ -3,109 +3,145 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/*
+ * Палитра по макету дизайнеров: графитовая тёмная тема (по умолчанию) и светлая с тёмно-синим акцентом.
+ * Имена переменных shadcn-совместимые, их читают все компоненты. --accent здесь — подсветка наведения
+ * (как в shadcn), а фирменный цвет макета — --brand (в Tailwind: bg-brand, text-brand, bg-brand-soft).
+ *
+ * Уровни риска: макет красил их оттенками одного синего, на графиках это неразличимо. Здесь —
+ * приглушённые коралл / песок / голубой акцент / серый. Строгий монохром макета возвращается
+ * одной правкой: см. закомментированный блок «монохром» ниже.
+ */
 :root {
-  --background: #f6f6f3;
-  --foreground: #1a1a18;
+  --background: #f5f5f5;
+  --foreground: #0a1a3d;
   --card: #ffffff;
-  --card-foreground: #1a1a18;
+  --card-foreground: #0a1a3d;
   --popover: #ffffff;
-  --popover-foreground: #1a1a18;
-  --muted: #efeeea;
-  --muted-foreground: #5c5b56;
-  --subtle-foreground: #75746e;
-  --border: #e3e2dc;
-  --input: #d6d5ce;
-  --ring: #2a6fd0;
-  --primary: #1c1c1a;
-  --primary-foreground: #f8f8f5;
-  --secondary: #efeeea;
-  --secondary-foreground: #1a1a18;
-  --accent: #f1f0ec;
-  --accent-foreground: #1a1a18;
-  --link: #1f5fbf;
-  --destructive: #b42318;
+  --popover-foreground: #0a1a3d;
+  --surface-2: #eceef2;
+  --muted: #eceef2;
+  --muted-foreground: #5e687d;
+  --subtle-foreground: #5f697e;
+  --border: rgba(10, 26, 61, 0.13);
+  --input: rgba(10, 26, 61, 0.2);
+  --ring: #0a1a3d;
+  --primary: #0a1a3d;
+  --primary-foreground: #f5f5f5;
+  --secondary: #eceef2;
+  --secondary-foreground: #0a1a3d;
+  --accent: rgba(10, 26, 61, 0.07);
+  --accent-foreground: #0a1a3d;
+  --brand: #0a1a3d;
+  --brand-foreground: #ffffff;
+  --brand-soft: rgba(10, 26, 61, 0.08);
+  --link: #2c4fa3;
+  --destructive: #b4232a;
   --destructive-foreground: #ffffff;
-  --success: #067647;
+  --success: #2c4378;
 
-  --risk-high: #b42318;
-  --risk-high-bg: #fdeceb;
-  --risk-high-bar: #d03b3b;
-  --risk-medium: #8f4f00;
-  --risk-medium-bg: #fff1dc;
-  --risk-medium-bar: #e08a10;
-  --risk-low: #066b40;
-  --risk-low-bg: #e4f4ea;
-  --risk-low-bar: #1f9d5b;
-  --risk-unknown: #5c5b56;
-  --risk-unknown-bg: #eeede8;
-  --risk-unknown-bar: #a3a29b;
+  --risk-high: #b4232a;
+  --risk-high-bg: #fbe9e9;
+  --risk-high-bar: #c8484e;
+  --risk-medium: #855600;
+  --risk-medium-bg: #f9efda;
+  --risk-medium-bar: #c9962e;
+  --risk-low: #2c4378;
+  --risk-low-bg: #e6ebf6;
+  --risk-low-bar: #5872b0;
+  --risk-unknown: #5e687d;
+  --risk-unknown-bg: #eceef2;
+  --risk-unknown-bar: #a3a9b6;
 
-  --chart-fact: #2a78d6;
-  --chart-forecast: #eb6834;
-  --chart-risk: #7048c8;
-  --chart-grid: #e7e6e0;
-  --chart-axis: #807f78;
-  --chart-forecast-zone: rgba(235, 104, 52, 0.06);
+  --chart-fact: #34496f;
+  --chart-forecast: #c08429;
+  --chart-risk: #6b4fb5;
+  --chart-grid: rgba(10, 26, 61, 0.09);
+  --chart-axis: #5e687d;
+  --chart-forecast-zone: rgba(192, 132, 41, 0.07);
   /* сравнение с простыми правилами на странице «Качество модели» */
-  --chart-rule-a: #eb6834;
-  --chart-rule-b: #1baf7a;
+  --chart-rule-a: #c08429;
+  --chart-rule-b: #2f8a6c;
 
-  --flash: rgba(42, 120, 214, 0.16);
-  --shadow-color: 30 30 25;
+  --flash: rgba(10, 26, 61, 0.1);
+  --shadow-color: 10 26 61;
+  --shadow-panel-value: 0 14px 38px rgba(10, 26, 61, 0.06);
+  --overlay: rgba(10, 26, 61, 0.3);
 }
 
 .dark {
-  --background: #0f0f0e;
-  --foreground: #efeee9;
-  --card: #181817;
-  --card-foreground: #efeee9;
-  --popover: #1e1e1c;
-  --popover-foreground: #efeee9;
-  --muted: #232321;
-  --muted-foreground: #a8a79f;
-  --subtle-foreground: #8f8e87;
-  --border: #2b2b28;
-  --input: #3a3a36;
-  --ring: #5b9bea;
-  --primary: #efeee9;
-  --primary-foreground: #161615;
-  --secondary: #252523;
-  --secondary-foreground: #efeee9;
-  --accent: #262624;
-  --accent-foreground: #efeee9;
-  --link: #79aef2;
-  --destructive: #f97066;
-  --destructive-foreground: #161615;
-  --success: #47cd89;
+  --background: #303030;
+  --foreground: #f4f5f8;
+  --card: #363636;
+  --card-foreground: #f4f5f8;
+  --popover: #3d3d3d;
+  --popover-foreground: #f4f5f8;
+  --surface-2: #3d3d3d;
+  --muted: #3d3d3d;
+  --muted-foreground: #b4b8c2;
+  --subtle-foreground: #a6abb6;
+  --border: rgba(147, 169, 226, 0.17);
+  --input: rgba(147, 169, 226, 0.26);
+  --ring: #93a9e2;
+  --primary: #93a9e2;
+  --primary-foreground: #262626;
+  --secondary: #3d3d3d;
+  --secondary-foreground: #f4f5f8;
+  --accent: rgba(147, 169, 226, 0.12);
+  --accent-foreground: #f4f5f8;
+  --brand: #93a9e2;
+  --brand-foreground: #262626;
+  --brand-soft: rgba(147, 169, 226, 0.12);
+  --link: #aebde6;
+  --destructive: #ef9a9a;
+  --destructive-foreground: #262626;
+  --success: #a9bcf0;
 
-  --risk-high: #ff8a80;
-  --risk-high-bg: rgba(240, 68, 56, 0.16);
-  --risk-high-bar: #e5534b;
-  --risk-medium: #fdb54a;
-  --risk-medium-bg: rgba(247, 144, 9, 0.15);
-  --risk-medium-bar: #e8960f;
-  --risk-low: #5fd49a;
-  --risk-low-bg: rgba(23, 178, 106, 0.15);
-  --risk-low-bar: #22a866;
-  --risk-unknown: #a8a79f;
-  --risk-unknown-bg: #262624;
-  --risk-unknown-bar: #6b6a64;
+  --risk-high: #f3a7a7;
+  --risk-high-bg: rgba(224, 122, 122, 0.15);
+  --risk-high-bar: #e07a7a;
+  --risk-medium: #e3c27e;
+  --risk-medium-bg: rgba(212, 169, 90, 0.15);
+  --risk-medium-bar: #d4a95a;
+  --risk-low: #a9bcf0;
+  --risk-low-bg: rgba(147, 169, 226, 0.14);
+  --risk-low-bar: #93a9e2;
+  --risk-unknown: #b4b8c2;
+  --risk-unknown-bg: #414141;
+  --risk-unknown-bar: #7a7e88;
 
-  --chart-fact: #3987e5;
-  --chart-forecast: #f07a45;
-  --chart-risk: #a88bf2;
-  --chart-grid: #2a2a27;
-  --chart-axis: #8f8e87;
-  --chart-forecast-zone: rgba(240, 122, 69, 0.07);
-  --chart-rule-a: #d95926;
-  --chart-rule-b: #199e70;
+  --chart-fact: #93a9e2;
+  --chart-forecast: #d4a95a;
+  --chart-risk: #c3a6f0;
+  --chart-grid: rgba(147, 169, 226, 0.13);
+  --chart-axis: #b4b8c2;
+  --chart-forecast-zone: rgba(212, 169, 90, 0.07);
+  --chart-rule-a: #d4a95a;
+  --chart-rule-b: #7cc4a8;
 
-  --flash: rgba(91, 155, 234, 0.2);
+  --flash: rgba(147, 169, 226, 0.2);
   --shadow-color: 0 0 0;
+  --shadow-panel-value: 0 16px 45px rgba(0, 0, 0, 0.14);
+  --overlay: rgba(0, 0, 0, 0.6);
 }
+
+/*
+ * Монохром как в исходном макете — раскомментировать, если нужен строгий синий:
+ * .dark { --risk-high-bar: #7f91bd; --risk-medium-bar: #aebde6; --risk-low-bar: #93a9e2;
+ *         --risk-high: #c9d4f0; --risk-medium: #aebde6; --risk-low: #93a9e2; }
+ * :root:not(.dark) { --risk-high-bar: #0a1a3d; --risk-medium-bar: #66799e; --risk-low-bar: #34496f;
+ *         --risk-high: #0a1a3d; --risk-medium: #34496f; --risk-low: #34496f; }
+ */
 
 @theme inline {
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* веса по макету: обычный текст 450, заголовки 750–850 */
+  --font-weight-normal: 450;
+  --font-weight-medium: 560;
+  --font-weight-semibold: 680;
+  --font-weight-bold: 780;
+  --font-weight-extrabold: 850;
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -113,6 +149,7 @@
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+  --color-surface-2: var(--surface-2);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-subtle-foreground: var(--subtle-foreground);
@@ -125,6 +162,9 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-soft: var(--brand-soft);
   --color-link: var(--link);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
@@ -147,22 +187,26 @@
   --color-chart-forecast: var(--chart-forecast);
   --color-chart-risk: var(--chart-risk);
 
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 10px;
-  --radius-xl: 14px;
+  /* скругления макета: кнопки 10, поля 11, вложенные блоки 12–14, панели 17, окна 18 */
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 13px;
+  --radius-xl: 17px;
+  --radius-2xl: 18px;
 
-  --shadow-card: 0 1px 2px rgb(var(--shadow-color) / 0.04), 0 1px 1px rgb(var(--shadow-color) / 0.02);
-  --shadow-pop: 0 10px 30px -8px rgb(var(--shadow-color) / 0.18), 0 2px 6px rgb(var(--shadow-color) / 0.06);
+  --shadow-card: var(--shadow-panel-value);
+  --shadow-pop: 0 30px 80px -12px rgb(var(--shadow-color) / 0.35), 0 4px 12px rgb(var(--shadow-color) / 0.08);
 
   --animate-row-flash: row-flash 2.4s cubic-bezier(0.2, 0, 0, 1);
   --animate-value-flash: value-flash 2.4s cubic-bezier(0.2, 0, 0, 1);
   --animate-fade-in: fade-in 160ms ease-out;
-  --animate-sheet-in: sheet-in 220ms cubic-bezier(0.32, 0.72, 0, 1);
+  --animate-sheet-in: sheet-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
   --animate-sheet-out: sheet-out 160ms ease-in;
+  --animate-drawer-in: drawer-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
   --animate-overlay-in: fade-in 180ms ease-out;
   --animate-overlay-out: fade-out 140ms ease-in;
-  --animate-pop-in: pop-in 140ms cubic-bezier(0.2, 0, 0, 1);
+  --animate-pop-in: pop-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-enter: enter 240ms ease both;
 
   @keyframes row-flash {
     0%,
@@ -202,7 +246,7 @@
   }
   @keyframes sheet-in {
     from {
-      transform: translateX(24px);
+      transform: translateX(28px);
       opacity: 0;
     }
     to {
@@ -220,14 +264,34 @@
       opacity: 0;
     }
   }
+  @keyframes drawer-in {
+    from {
+      transform: translateX(-28px);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
   @keyframes pop-in {
     from {
-      transform: scale(0.97) translateY(-2px);
+      transform: scale(0.97) translateY(4px);
       opacity: 0;
     }
     to {
       transform: scale(1) translateY(0);
       opacity: 1;
+    }
+  }
+  @keyframes enter {
+    from {
+      opacity: 0;
+      transform: translateY(5px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
     }
   }
 }
@@ -243,7 +307,7 @@
     color-scheme: light;
     -webkit-text-size-adjust: 100%;
     /* якоря и фокус не прячутся под липкой шапкой */
-    scroll-padding-top: 4.5rem;
+    scroll-padding-top: 5rem;
   }
   html.dark {
     color-scheme: dark;
@@ -253,10 +317,14 @@
     background-color: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
+    font-weight: 450;
     font-feature-settings: 'cv11', 'ss03';
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    transition:
+      background-color 0.25s,
+      color 0.25s;
   }
 
   /* ячейка сетки не раздувает колонку широкой таблицей или графиком — иначе на телефоне страница уезжает вбок */
@@ -276,6 +344,227 @@
   button:not(:disabled),
   [role='button']:not(:disabled) {
     cursor: pointer;
+  }
+
+  input[type='range'] {
+    accent-color: var(--brand);
+  }
+}
+
+@layer components {
+  /* надпись над заголовком страницы, как .eyebrow в макете */
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1.2;
+    text-transform: uppercase;
+    letter-spacing: 1.3px;
+    color: var(--brand);
+  }
+  .dark .eyebrow {
+    color: var(--brand);
+  }
+
+  /* Обзор: центральный блок над карточками, растворяется при прокрутке */
+  .overview-hero {
+    will-change: opacity, transform;
+  }
+  .overview-hero .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: var(--brand-soft);
+    border: 1px solid var(--border);
+  }
+
+  /* KPI-карточка: тонированный круг в углу и подъём при наведении */
+  .metric {
+    isolation: isolate;
+    transition:
+      transform 0.22s ease,
+      border-color 0.22s ease,
+      box-shadow 0.22s ease;
+  }
+  .metric::after {
+    content: '';
+    position: absolute;
+    right: -25px;
+    top: -35px;
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    background: var(--metric-tint, var(--brand-soft));
+    filter: blur(2px);
+    opacity: 0.8;
+    z-index: -1;
+    transition: transform 0.25s;
+    pointer-events: none;
+  }
+  @media (hover: hover) {
+    .metric:hover {
+      transform: translateY(-4px) scale(1.018);
+      border-color: var(--metric-color, var(--brand));
+      box-shadow: 0 14px 32px color-mix(in srgb, var(--metric-color, var(--brand)) 12%, transparent);
+    }
+    .metric:hover::after {
+      transform: scale(1.35);
+    }
+  }
+
+  /* Навигация-«таблетка»: скользящий индикатор активного раздела */
+  .nav-pill-indicator {
+    transition:
+      left 0.42s cubic-bezier(0.2, 0.8, 0.2, 1),
+      width 0.42s cubic-bezier(0.2, 0.8, 0.2, 1),
+      opacity 0.2s;
+    box-shadow: 0 0 18px color-mix(in srgb, var(--brand) 9%, transparent);
+    border: 1px solid color-mix(in srgb, var(--brand) 58%, transparent);
+  }
+  .nav-pill-link[aria-current='page']::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: 2px;
+    width: 14px;
+    height: 2px;
+    border-radius: 3px;
+    background: var(--brand);
+    transform: translateX(-50%);
+    animation: nav-dot 0.35s ease both;
+  }
+  @keyframes nav-dot {
+    from {
+      width: 3px;
+      opacity: 0.25;
+    }
+    to {
+      width: 14px;
+      opacity: 1;
+    }
+  }
+
+  /* «Онлайн» как в макете: точка с ореолом в мягкой таблетке */
+  .online-dot {
+    box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 16%, transparent);
+  }
+
+  /* Размытый радар за обзором */
+  .radar {
+    position: fixed;
+    width: min(780px, 88vw);
+    aspect-ratio: 1;
+    top: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.34;
+    filter: blur(6px);
+    overflow: hidden;
+    mask-image: radial-gradient(circle, black 20%, rgba(0, 0, 0, 0.75) 58%, transparent 76%);
+  }
+  :root:not(.dark) .radar {
+    opacity: 0.22;
+  }
+  .radar::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: repeating-radial-gradient(
+      circle at 50% 50%,
+      transparent 0 68px,
+      color-mix(in srgb, var(--brand) 20%, transparent) 69px 70px
+    );
+  }
+  .radar-ring {
+    position: absolute;
+    border: 1px solid color-mix(in srgb, var(--brand) 28%, transparent);
+    border-radius: 50%;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    aspect-ratio: 1;
+  }
+  .radar-sweep {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg,
+      transparent 300deg,
+      color-mix(in srgb, var(--brand) 2%, transparent) 326deg,
+      color-mix(in srgb, var(--brand) 24%, transparent) 359deg,
+      var(--brand) 360deg
+    );
+    opacity: 0.6;
+    animation: radar-sweep 14s linear infinite;
+  }
+  .radar-cross-h,
+  .radar-cross-v {
+    position: absolute;
+    background: color-mix(in srgb, var(--brand) 20%, transparent);
+  }
+  .radar-cross-h {
+    height: 1px;
+    width: 100%;
+    left: 0;
+    top: 50%;
+  }
+  .radar-cross-v {
+    width: 1px;
+    height: 100%;
+    left: 50%;
+    top: 0;
+  }
+  .radar-blip {
+    position: absolute;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--brand);
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--brand) 16%, transparent);
+    animation: radar-blip 3.8s ease-in-out infinite;
+  }
+  @keyframes radar-blip {
+    0%,
+    100% {
+      opacity: 0.3;
+      transform: scale(0.8);
+    }
+    50% {
+      opacity: 0.95;
+      transform: scale(1.3);
+    }
+  }
+  @keyframes radar-sweep {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (max-width: 1023px) {
+    .radar {
+      top: 90px;
+    }
+  }
+  @media (max-width: 639px) {
+    .radar {
+      width: 130vw;
+      top: 40px;
+      opacity: 0.26;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .radar-sweep,
+    .radar-blip {
+      animation: none !important;
+    }
+    .radar-sweep {
+      transform: rotate(40deg);
+    }
   }
 }
 

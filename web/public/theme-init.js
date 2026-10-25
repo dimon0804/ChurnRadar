@@ -3,7 +3,8 @@
   try {
     stored = localStorage.getItem('cr-theme')
   } catch (e) {}
-  var dark = stored === 'dark' || (stored !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  // по макету тёмная тема — основная: светлая включается только явным выбором пользователя
+  var dark = stored !== 'light'
   document.documentElement.classList.toggle('dark', dark)
 })()
 

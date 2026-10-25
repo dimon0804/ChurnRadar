@@ -25,7 +25,7 @@ export function Tooltip({
           sideOffset={6}
           collisionPadding={12}
           className={cn(
-            'z-50 max-w-xs rounded-md border border-border bg-popover px-3 py-2 text-[13px] leading-5 text-popover-foreground shadow-pop animate-pop-in',
+            'z-50 max-w-xs rounded-[11px] border border-border bg-popover px-3 py-2 text-[13px] leading-5 text-popover-foreground shadow-pop animate-pop-in',
             className,
           )}
         >

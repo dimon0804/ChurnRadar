@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useState, type ReactNode } from 'react'
 
 export type ThemePreference = 'light' | 'dark' | 'system'
 type Resolved = 'light' | 'dark'
@@ -23,22 +23,17 @@ function readPreference(): ThemePreference {
   return 'system'
 }
 
-function systemTheme(): Resolved {
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-}
+/**
+ * Тема «по умолчанию» по макету — тёмная. Системную настройку не читаем: браузеры не отличают
+ * «светлая выбрана явно» от «ничего не выбрано», и почти у всех вышло бы светлое оформление.
+ * Явный выбор пользователя хранится в localStorage 'cr-theme' (его же читает public/theme-init.js).
+ */
+const DEFAULT_THEME: Resolved = 'dark'
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [preference, setPreferenceState] = useState<ThemePreference>(readPreference)
-  const [system, setSystem] = useState<Resolved>(systemTheme)
 
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    const onChange = () => setSystem(mq.matches ? 'dark' : 'light')
-    mq.addEventListener('change', onChange)
-    return () => mq.removeEventListener('change', onChange)
-  }, [])
-
-  const resolved: Resolved = preference === 'system' ? system : preference
+  const resolved: Resolved = preference === 'system' ? DEFAULT_THEME : preference
 
   useLayoutEffect(() => {
     document.documentElement.classList.toggle('dark', resolved === 'dark')

@@ -93,14 +93,14 @@ function EmailForm({
             <span className="text-[13px] text-muted-foreground">Шаблон</span>
             <Select value={draft.template_code} onValueChange={onTemplate} options={templateOptions} ariaLabel="Шаблон письма" className="w-60 max-w-full min-w-0" />
           </div>
-          <div className="inline-flex rounded-md border border-border p-0.5" role="group" aria-label="Вид">
+          <div className="inline-flex rounded-[11px] border border-border bg-surface-2 p-[3px]" role="group" aria-label="Вид">
             {(['edit', 'preview'] as const).map((v) => (
               <button
                 key={v}
                 type="button"
                 aria-pressed={view === v}
                 onClick={() => setView(v)}
-                className={cn('h-7 rounded px-2.5 text-[13px]', view === v ? 'bg-accent font-medium' : 'text-muted-foreground')}
+                className={cn('h-7 rounded-[8px] px-2.5 text-[13px]', view === v ? 'bg-card font-medium text-foreground shadow-sm ring-1 ring-brand/45' : 'text-muted-foreground')}
               >
                 {v === 'edit' ? 'Текст' : 'Как увидит клиент'}
               </button>

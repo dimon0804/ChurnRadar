@@ -5,7 +5,8 @@ import { useNavigate, useSearchParams } from 'react-router'
 import { z } from 'zod'
 import { isApiError } from '@/api/client'
 import { api, queryKeys } from '@/api/endpoints'
-import { Logo } from '@/components/app-shell'
+import { HEADER_ICON_BTN, Logo } from '@/components/app-shell'
+import { RadarBackdrop } from '@/components/overview-hero'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -144,23 +145,25 @@ export function LoginPage() {
   const formError = login.isError ? loginErrorText(login.error, retryLeft) : ssoErrorText
 
   return (
-    <div className="relative flex min-h-screen flex-col bg-background">
-      <div className="absolute top-4 right-4">
+    <div className="relative flex min-h-screen flex-col overflow-x-clip bg-background">
+      <RadarBackdrop />
+      <div className="absolute top-4 right-4 z-[2]">
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon"
           onClick={toggle}
           aria-label={resolved === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
-          className="text-muted-foreground"
+          className={HEADER_ICON_BTN}
         >
           {resolved === 'dark' ? <Sun /> : <Moon />}
         </Button>
       </div>
 
-      <div className="flex flex-1 items-center justify-center px-4 py-12">
-        <div className="w-full max-w-[380px]">
-          <Logo className="mb-8" />
-          <h1 className="text-2xl font-semibold tracking-[-0.02em]">Вход в панель</h1>
+      <div className="relative z-[1] flex flex-1 items-center justify-center px-4 py-12">
+        <div className="w-full max-w-[420px] animate-enter rounded-2xl border border-border bg-card p-6 shadow-card sm:p-8">
+          <Logo className="mb-7" />
+          <p className="eyebrow mb-2">Центр мониторинга</p>
+          <h1 className="text-[28px] leading-tight font-extrabold tracking-[-0.8px]">Вход в панель</h1>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
             Кто из клиентов может уйти, почему и сколько это стоит бизнесу.
           </p>
@@ -247,7 +250,7 @@ export function LoginPage() {
         </div>
       </div>
 
-      <p className="pb-6 text-center text-xs text-subtle-foreground">ChurnRadar · аналитика оттока для маркетинга</p>
+      <p className="relative z-[1] pb-6 text-center text-xs text-subtle-foreground">ChurnRadar · аналитика оттока для маркетинга</p>
     </div>
   )
 }

@@ -1,6 +1,7 @@
 import {
   Activity,
   Bell,
+  ChevronDown,
   CircleUserRound,
   Database,
   FileCode2,
@@ -21,9 +22,9 @@ import {
   X,
 } from 'lucide-react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
-import { useState, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import type { Role } from '@/api/types'
-import { Link, NavLink, Outlet } from 'react-router'
+import { Link, NavLink, Outlet, useLocation } from 'react-router'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
   DropdownMenu,
@@ -73,17 +74,17 @@ const NAV: NavItem[] = [
   { to: '/audit', label: 'Журнал действий', icon: <ScrollText />, adminOnly: true },
 ]
 
+/** Квадратные кнопки-иконки шапки (40px, скругление 11px), как в макете. */
+export const HEADER_ICON_BTN =
+  'size-10 rounded-[11px] border border-border bg-card text-foreground hover:border-brand/60 hover:bg-brand-soft [&_svg]:size-[17px]'
+
 export function Logo({ className }: { className?: string }) {
   return (
-    <span className={cn('inline-flex items-center gap-2', className)}>
-      <svg viewBox="0 0 32 32" className="size-7" aria-hidden>
-        <rect width="32" height="32" rx="8" className="fill-primary" />
-        <circle cx="16" cy="16" r="9" fill="none" className="stroke-primary-foreground" strokeWidth="2" opacity=".45" />
-        <circle cx="16" cy="16" r="4.5" fill="none" className="stroke-primary-foreground" strokeWidth="2" opacity=".7" />
-        <path d="M16 16 L23.5 9.5" className="stroke-primary-foreground" strokeWidth="2.2" strokeLinecap="round" />
-        <circle cx="21.5" cy="19.5" r="2.2" fill="#f0603a" />
-      </svg>
-      <span className="text-[15px] font-semibold tracking-[-0.02em]">ChurnRadar</span>
+    <span className={cn('inline-flex items-center gap-2.5', className)}>
+      <span className="grid size-[34px] shrink-0 place-items-center rounded-[11px] bg-brand text-brand-foreground" aria-hidden>
+        <Activity className="size-[21px]" strokeWidth={2.25} />
+      </span>
+      <span className="text-[19px] font-extrabold tracking-[-0.5px] whitespace-nowrap max-sm:text-base">ChurnRadar</span>
     </span>
   )
 }
@@ -92,7 +93,7 @@ function LiveIndicator() {
   const { status, lastRecalc } = useLive()
   const now = useNow(lastRecalc ? 1000 : null)
   const online = status === 'online'
-  const label = online ? 'онлайн' : status === 'connecting' ? 'подключение…' : 'переподключение…'
+  const label = online ? 'Онлайн' : status === 'connecting' ? 'Подключение…' : 'Переподключение…'
   const hint = online
     ? lastRecalc
       ? `Данные обновляются сами. Последний пересчёт ${formatAgo(lastRecalc.receivedAt, now)}, версия модели ${lastRecalc.modelVersion}.`
@@ -106,17 +107,15 @@ function LiveIndicator() {
         aria-live="polite"
         tabIndex={0}
         className={cn(
-          'inline-flex h-7 items-center gap-2 rounded-full border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring',
-          online
-            ? 'border-risk-low/25 bg-risk-low-bg text-risk-low'
-            : 'border-risk-medium/30 bg-risk-medium-bg text-risk-medium',
+          'inline-flex h-[30px] items-center gap-[7px] rounded-full px-2.5 text-xs font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring max-md:px-2',
+          online ? 'bg-brand-soft text-risk-low' : 'bg-risk-medium-bg text-risk-medium',
         )}
       >
-        <span className="relative flex size-2">
+        <span className="relative flex size-[7px]">
           {online && (
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-risk-low-bar opacity-50 motion-reduce:hidden [animation-duration:2.4s]" />
+            <span className="absolute inline-flex size-full animate-ping rounded-full bg-current opacity-40 motion-reduce:hidden [animation-duration:2.4s]" />
           )}
-          <span className={cn('relative inline-flex size-2 rounded-full', online ? 'bg-risk-low-bar' : 'bg-risk-medium-bar')} />
+          <span className="online-dot relative inline-flex size-[7px] rounded-full bg-current" />
         </span>
         <span className="max-md:sr-only">{label}</span>
       </span>
@@ -129,7 +128,7 @@ function ThemeToggle() {
   const label = resolved === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'
   return (
     <Tooltip content={label} side="bottom">
-      <Button variant="ghost" size="icon-sm" onClick={toggle} aria-label={label} className="text-muted-foreground">
+      <Button variant="ghost" size="icon" onClick={toggle} aria-label={label} className={HEADER_ICON_BTN}>
         {resolved === 'dark' ? <Sun /> : <Moon />}
       </Button>
     </Tooltip>
@@ -156,23 +155,27 @@ function UserMenu({ showName = true }: { showName?: boolean }) {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="flex h-9 items-center gap-2.5 rounded-md py-1 pr-2 pl-1 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+          className="group flex h-10 items-center gap-[9px] rounded-[11px] border border-border bg-card py-1 pr-2.5 pl-[5px] text-left transition-colors outline-none hover:border-brand/60 hover:bg-brand-soft focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-brand/60 max-sm:pr-[5px]"
           aria-label={`Профиль: ${name === role ? name : `${name}, ${role}`}, ${caption}`}
         >
-          <span className="flex size-7 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">
+          <span className="flex size-[29px] items-center justify-center rounded-[9px] bg-surface-2 text-[11px] font-extrabold text-foreground">
             {initials(name)}
           </span>
           <span className={cn('hidden max-w-36 flex-col leading-tight', showName && '2xl:flex')}>
-            <span className="truncate text-[13px] font-medium" title={name}>
+            <span className="truncate text-xs font-bold" title={name}>
               {name}
             </span>
             <span className="truncate text-[11px] text-muted-foreground">{caption}</span>
           </span>
+          <ChevronDown
+            className="size-[15px] text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180 max-sm:hidden"
+            aria-hidden
+          />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuLabel>
-          <p className="truncate text-[13px] font-medium" title={name}>
+          <p className="truncate text-[13px] font-bold" title={name}>
             {name}
           </p>
           <p className="truncate text-xs text-muted-foreground">
@@ -222,8 +225,8 @@ function MobileNav({ items }: { items: NavItem[] }) {
       <DialogPrimitive.Trigger asChild>
         <Button
           variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground lg:hidden"
+          size="icon"
+          className={cn(HEADER_ICON_BTN, 'lg:hidden')}
           aria-label="Открыть меню разделов"
           data-testid="nav-menu"
         >
@@ -231,13 +234,13 @@ function MobileNav({ items }: { items: NavItem[] }) {
         </Button>
       </DialogPrimitive.Trigger>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-black/30 data-[state=closed]:animate-overlay-out data-[state=open]:animate-overlay-in dark:bg-black/50" />
+        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-[var(--overlay)] backdrop-blur-[7px] data-[state=closed]:animate-overlay-out data-[state=open]:animate-overlay-in" />
         <DialogPrimitive.Content
-          className="fixed inset-y-0 left-0 z-50 flex w-[min(300px,85vw)] flex-col border-r border-border bg-background pb-[env(safe-area-inset-bottom)] shadow-pop outline-none data-[state=open]:animate-fade-in"
+          className="fixed inset-y-0 left-0 z-50 flex w-[min(300px,85vw)] flex-col border-r border-border bg-background pb-[env(safe-area-inset-bottom)] shadow-pop outline-none data-[state=open]:animate-drawer-in"
           aria-describedby={undefined}
           data-testid="nav-drawer"
         >
-          <div className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border px-4">
+          <div className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-border px-4">
             <DialogPrimitive.Title asChild>
               <span>
                 <Logo />
@@ -245,13 +248,13 @@ function MobileNav({ items }: { items: NavItem[] }) {
               </span>
             </DialogPrimitive.Title>
             <DialogPrimitive.Close
-              className="-mr-1 inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              className="-mr-1 inline-flex size-9 items-center justify-center rounded-[11px] border border-border bg-card text-muted-foreground transition-colors hover:border-brand/60 hover:bg-brand-soft hover:text-foreground"
               aria-label="Закрыть меню"
             >
               <X className="size-4" />
             </DialogPrimitive.Close>
           </div>
-          <nav aria-label="Разделы" className="min-h-0 flex-1 overflow-y-auto p-2">
+          <nav aria-label="Разделы" className="min-h-0 flex-1 space-y-1 overflow-y-auto p-3">
             {items.map((item) => (
               <NavLink
                 key={item.to}
@@ -260,14 +263,14 @@ function MobileNav({ items }: { items: NavItem[] }) {
                 onClick={() => setOpen(false)}
                 className={({ isActive }) =>
                   cn(
-                    'flex h-11 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4',
-                    isActive ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+                    'flex h-11 items-center gap-3 rounded-[10px] border px-3 text-sm font-[650] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4',
+                    isActive
+                      ? 'border-brand/60 bg-brand-soft text-foreground [&_svg]:text-brand'
+                      : 'border-transparent text-muted-foreground hover:bg-surface-2 hover:text-foreground',
                   )
                 }
               >
-                <span className="opacity-80" aria-hidden>
-                  {item.icon}
-                </span>
+                <span aria-hidden>{item.icon}</span>
                 {item.label}
               </NavLink>
             ))}
@@ -275,6 +278,71 @@ function MobileNav({ items }: { items: NavItem[] }) {
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
+  )
+}
+
+/** Навигация-«таблетка» с плавно скользящей подложкой под активным разделом. */
+function DesktopNav({ items }: { items: NavItem[] }) {
+  const navRef = useRef<HTMLElement>(null)
+  const indicatorRef = useRef<HTMLSpanElement>(null)
+  const { pathname } = useLocation()
+  // у администратора пунктов вдвое больше: подписи влезают только на широком экране
+  const many = items.length > 6
+
+  useLayoutEffect(() => {
+    const nav = navRef.current
+    const indicator = indicatorRef.current
+    if (!nav || !indicator) return
+    const place = () => {
+      const active = nav.querySelector<HTMLElement>('a[aria-current="page"]')
+      if (!active || active.offsetWidth === 0) {
+        indicator.style.opacity = '0'
+        return
+      }
+      indicator.style.opacity = '1'
+      indicator.style.left = `${active.offsetLeft}px`
+      indicator.style.width = `${active.offsetWidth}px`
+    }
+    place()
+    const ro = new ResizeObserver(place)
+    ro.observe(nav)
+    return () => ro.disconnect()
+  }, [pathname, items.length])
+
+  return (
+    <nav
+      ref={navRef}
+      aria-label="Разделы"
+      className="relative isolate flex min-w-0 items-center gap-[5px] rounded-[15px] border border-border bg-card p-[5px] max-lg:hidden"
+    >
+      <span
+        ref={indicatorRef}
+        aria-hidden
+        className="nav-pill-indicator pointer-events-none absolute top-[5px] -z-10 h-[calc(100%-10px)] rounded-[10px] bg-brand-soft opacity-0"
+        style={{ left: 5, width: 40 }}
+      />
+      {items.map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          end={item.end}
+          title={item.label}
+          className={({ isActive }) =>
+            cn(
+              'nav-pill-link relative inline-flex h-[38px] shrink-0 items-center gap-2 rounded-[10px] px-[11px] text-sm font-[650] whitespace-nowrap transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4',
+              isActive ? 'text-foreground [&_svg]:text-brand' : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground',
+              many ? 'min-[1400px]:px-2.5' : 'min-[1440px]:px-[13px]',
+            )
+          }
+        >
+          {/* узко — только иконки; шире — подписи; совсем широко (и разделов немного) — и то и другое */}
+          <span aria-hidden className={many ? 'min-[1400px]:hidden' : 'xl:max-[1440px]:hidden'}>
+            {item.icon}
+          </span>
+          <span className={many ? 'max-[1400px]:sr-only' : 'max-xl:sr-only'}>{item.label}</span>
+        </NavLink>
+      ))}
+    </nav>
   )
 }
 
@@ -290,46 +358,24 @@ export function AppShell() {
       >
         К содержимому
       </a>
-      <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur-md supports-[backdrop-filter]:bg-background/70">
-        <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-1 px-3 sm:gap-4 sm:px-4 md:px-6">
+      <header className="sticky top-0 z-30 border-b border-border bg-[color-mix(in_srgb,var(--background)_88%,transparent)] backdrop-blur-[18px]">
+        <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-2 px-3.5 sm:gap-3 md:px-6 lg:h-[70px] lg:gap-[22px] xl:px-7">
           <MobileNav items={items} />
-          <NavLink to="/" className="shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="ChurnRadar, обзор">
-            <Logo className="[&>span]:max-sm:sr-only" />
+          <NavLink to="/" className="shrink-0 rounded-[11px] outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="ChurnRadar, обзор">
+            <Logo className="[&>span:last-child]:max-sm:sr-only" />
           </NavLink>
-          <nav aria-label="Разделы" className="flex min-w-0 items-center gap-0.5 max-lg:hidden sm:ml-2">
-            {items.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                title={item.label}
-                className={({ isActive }) =>
-                  cn(
-                    'inline-flex h-8 shrink-0 items-center gap-2 rounded-md px-2 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-2.5 [&_svg]:size-4',
-                    isActive
-                      ? 'bg-accent text-foreground'
-                      : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-                  )
-                }
-              >
-                <span className="opacity-80" aria-hidden>
-                  {item.icon}
-                </span>
-                {/* у администратора пунктов вдвое больше: подписи влезают только на широком экране */}
-                <span className={items.length > 6 ? 'max-2xl:sr-only' : 'max-lg:sr-only'}>{item.label}</span>
-              </NavLink>
-            ))}
-          </nav>
-          <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-1.5">
+          <div className="flex min-w-0 flex-1 justify-center max-lg:hidden">
+            <DesktopNav items={items} />
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2.5">
             <LiveIndicator />
             <AlertsBell />
             <ThemeToggle />
-            <div className="mx-1 h-5 w-px bg-border max-sm:hidden" aria-hidden />
             <UserMenu showName={items.length <= 6} />
           </div>
         </div>
       </header>
-      <main id="main" className="mx-auto w-full max-w-[1400px] min-w-0 flex-1 px-4 pt-6 pb-16 md:px-6">
+      <main id="main" className="relative z-[1] mx-auto w-full max-w-[1440px] min-w-0 flex-1 px-4 pt-6 pb-16 md:px-6 lg:pt-8 xl:px-7">
         <Outlet />
       </main>
       <RecalcToast />

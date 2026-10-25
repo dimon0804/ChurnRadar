@@ -22,14 +22,14 @@ export function Slider({
       )}
       {...props}
     >
-      <SliderPrimitive.Track className={cn('relative h-1.5 w-full grow overflow-hidden rounded-full bg-muted', trackClassName)}>
-        <SliderPrimitive.Range className={cn('absolute h-full bg-primary/80', rangeClassName)} />
+      <SliderPrimitive.Track className={cn('relative h-1.5 w-full grow overflow-hidden rounded-full bg-input', trackClassName)}>
+        <SliderPrimitive.Range className={cn('absolute h-full bg-brand', rangeClassName)} />
       </SliderPrimitive.Track>
       {Array.from({ length: count }, (_, i) => (
         <SliderPrimitive.Thumb
           key={i}
           aria-label={thumbLabels?.[i]}
-          className="block size-4 rounded-full border-2 border-primary bg-card shadow-sm transition-[box-shadow,transform] duration-100 outline-none hover:scale-110 focus-visible:ring-4 focus-visible:ring-ring/30 data-[disabled]:pointer-events-none"
+          className="block size-4 rounded-full border-2 border-brand bg-card shadow-sm transition-[box-shadow,transform] duration-100 outline-none hover:scale-110 focus-visible:ring-4 focus-visible:ring-ring/30 data-[disabled]:pointer-events-none"
         />
       ))}
     </SliderPrimitive.Root>

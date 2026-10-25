@@ -20,7 +20,7 @@ export function EmptyState({
 }) {
   return (
     <div className={cn('flex flex-col items-center justify-center px-6 py-12 text-center', className)}>
-      <div className="mb-3 flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground [&_svg]:size-5">
+      <div className="mb-3 flex size-11 items-center justify-center rounded-[13px] bg-brand-soft text-brand [&_svg]:size-5">
         {icon ?? <SearchX />}
       </div>
       <p className="text-sm font-medium text-foreground">{title}</p>
@@ -44,7 +44,7 @@ export function ErrorState({
   const requestId = isApiError(error) ? error.requestId : null
   return (
     <div role="alert" className={cn('flex flex-col items-center justify-center px-6 py-12 text-center', className)}>
-      <div className="mb-3 flex size-10 items-center justify-center rounded-full bg-risk-high-bg text-risk-high">
+      <div className="mb-3 flex size-11 items-center justify-center rounded-[13px] bg-risk-high-bg text-risk-high">
         <AlertTriangle className="size-5" />
       </div>
       <p className="text-sm font-medium">{title}</p>
@@ -63,7 +63,7 @@ export function ErrorState({
 export function ForbiddenState() {
   return (
     <div className="mx-auto flex max-w-md flex-col items-center px-6 py-24 text-center">
-      <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+      <div className="mb-4 flex size-12 items-center justify-center rounded-[14px] bg-brand-soft text-brand">
         <Lock className="size-5" />
       </div>
       <h1 className="text-lg font-semibold tracking-tight">Этот раздел только для администраторов</h1>

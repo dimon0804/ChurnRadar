@@ -262,7 +262,7 @@ function LevelChips({
         type="button"
         aria-pressed={selected.length === 0}
         onClick={onClear}
-        className={cn(chip, selected.length === 0 ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card text-muted-foreground hover:text-foreground')}
+        className={cn(chip, selected.length === 0 ? 'border-brand bg-brand-soft text-foreground' : 'border-border bg-card text-muted-foreground hover:text-foreground')}
       >
         Все
       </button>
@@ -277,7 +277,7 @@ function LevelChips({
             onClick={() => onToggle(l)}
             className={cn(
               chip,
-              on ? 'border-foreground/70 bg-accent text-foreground' : 'border-border bg-card text-muted-foreground hover:text-foreground',
+              on ? 'border-brand bg-brand-soft text-foreground' : 'border-border bg-card text-muted-foreground hover:text-foreground',
             )}
           >
             <RiskGlyph level={l} className={RISK_TEXT[l]} />
@@ -313,7 +313,7 @@ function FilterChip({ label, value, onClear, testId }: { label: string; value: s
 
 function ViewSwitch({ view, onChange }: { view: 'table' | 'chart'; onChange: (v: 'table' | 'chart') => void }) {
   return (
-    <div className="inline-flex shrink-0 rounded-md border border-border p-0.5" role="group" aria-label="Вид списка">
+    <div className="inline-flex shrink-0 rounded-[11px] border border-border bg-surface-2 p-[3px]" role="group" aria-label="Вид списка">
       {(
         [
           ['table', 'Таблица', Table2],
@@ -327,8 +327,8 @@ function ViewSwitch({ view, onChange }: { view: 'table' | 'chart'; onChange: (v:
           onClick={() => onChange(key)}
           data-testid={`customers-view-${key}`}
           className={cn(
-            'inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-            view === key ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
+            'inline-flex h-8 items-center gap-1.5 rounded-[8px] px-2.5 text-[13px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            view === key ? 'bg-card text-foreground shadow-sm ring-1 ring-brand/45' : 'text-muted-foreground hover:text-foreground',
           )}
         >
           <Icon className="size-3.5" aria-hidden />

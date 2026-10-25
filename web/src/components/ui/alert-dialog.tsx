@@ -24,9 +24,9 @@ export function ConfirmDialog({
     <AlertDialogPrimitive.Root>
       <AlertDialogPrimitive.Trigger asChild>{trigger}</AlertDialogPrimitive.Trigger>
       <AlertDialogPrimitive.Portal>
-        <AlertDialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/30 data-[state=closed]:animate-overlay-out data-[state=open]:animate-overlay-in dark:bg-black/50" />
-        <AlertDialogPrimitive.Content className="fixed top-1/2 left-1/2 z-50 w-[min(440px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-6 shadow-pop data-[state=open]:animate-pop-in">
-          <AlertDialogPrimitive.Title className="text-base font-semibold">{title}</AlertDialogPrimitive.Title>
+        <AlertDialogPrimitive.Overlay className="fixed inset-0 z-50 bg-[var(--overlay)] backdrop-blur-[7px] data-[state=closed]:animate-overlay-out data-[state=open]:animate-overlay-in" />
+        <AlertDialogPrimitive.Content className="fixed top-1/2 left-1/2 z-50 w-[min(440px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-card p-6 shadow-pop data-[state=open]:animate-pop-in">
+          <AlertDialogPrimitive.Title className="text-[17px] font-[750] tracking-[-0.01em]">{title}</AlertDialogPrimitive.Title>
           <AlertDialogPrimitive.Description className="mt-2 text-sm leading-6 text-muted-foreground">
             {description}
           </AlertDialogPrimitive.Description>

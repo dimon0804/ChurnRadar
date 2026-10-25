@@ -87,7 +87,7 @@ async function restoreOverlay() {
 }
 
 function readMs(text: string) {
-  return Math.max(3800, 1900 + text.length * 62)
+  return Math.max(3300, 1500 + text.length * 56)
 }
 
 function closeCue() {
@@ -165,6 +165,7 @@ async function scrollTo(locator: Locator) {
       const vh = window.innerHeight
       const free = vh - 200
       const r = el.getBoundingClientRect()
+      if (r.top >= 70 && r.bottom <= free) return
       const top = r.height > free - 90 ? r.top - 84 : r.top - (free - r.height) / 2 - 10
       if (Math.abs(top) > 24) window.scrollBy({ top, behavior: 'smooth' })
     })
@@ -199,14 +200,22 @@ async function move(locator: Locator) {
 async function click(locator: Locator, opts: { force?: boolean } = {}) {
   const at = await move(locator)
   if (at) await overlay('ripple', at.x, at.y)
-  await locator.first().click({ timeout: 8000, force: opts.force })
+  try {
+    await locator.first().click({ timeout: 8000, force: opts.force })
+  } catch (e) {
+    // кнопку перекрыл соседний элемент (тесная шапка): нажимаем напрямую, иначе сдаёмся
+    const ok = await locator.first().evaluate((el) => (el as HTMLElement).click()).then(() => true, () => false)
+    if (!ok) throw e
+    log('клик через JS: элемент перекрыт')
+  }
   await pause(450)
 }
 
-async function type(locator: Locator, text: string, opts: { clear?: boolean } = {}) {
+async function type(locator: Locator, text: string, opts: { clear?: boolean; secret?: boolean } = {}) {
   await click(locator)
   if (opts.clear !== false) await locator.first().fill('')
-  await locator.first().pressSequentially(text, { delay: Math.round(85 * PACE) })
+  // длинные пароли печатаем быстрее: на видео всё равно точки
+  await locator.first().pressSequentially(text, { delay: Math.round((opts.secret ? 35 : 85) * PACE) })
   await pause(350)
 }
 
@@ -242,7 +251,7 @@ async function nav(name: string, path: string) {
 }
 
 const card = (title: string) =>
-  page.locator('div.rounded-xl').filter({ has: page.getByText(title, { exact: true }) }).last()
+  page.locator('div.rounded-xl.border').filter({ has: page.getByText(title, { exact: true }) }).last()
 
 async function json<T>(res: Promise<import('@playwright/test').APIResponse>): Promise<T> {
   const r = await res
@@ -302,7 +311,7 @@ async function pickCustomer() {
 
 const dialog = () => page.getByRole('dialog').first()
 const section = (title: string) =>
-  dialog().locator('section').filter({ has: page.locator('h3').filter({ hasText: new RegExp(`^${title}`) }) }).first()
+  dialog().locator('section').filter({ has: page.locator('h3').filter({ hasText: new RegExp(`^${title}`, 'i') }) }).first()
 
 async function openCustomerCard() {
   const c = await pickCustomer()
@@ -318,6 +327,55 @@ interface Scene {
   id: string
   title: string
   run: () => Promise<void>
+}
+
+/** Ждём, пока таблица клиентов покажет строки, а не скелетон. */
+async function tableReady() {
+  const rows = page.getByRole('table', { name: 'Клиенты под риском' }).locator('tbody tr[aria-label]')
+  await rows.first().waitFor({ state: 'visible', timeout: 15_000 }).catch(() => {})
+  await pause(500)
+}
+
+async function restoreAction(id: number, previous: Action) {
+  if (previous === null) {
+    await api.delete(`/api/v1/customers/${id}/action`, { headers: { Origin: ORIGIN } })
+  } else {
+    const data: Record<string, unknown> = { status: previous.status }
+    if (previous.status === 'snoozed' && previous.until) data.snoozed_until = previous.until
+    if (previous.note) data.note = previous.note
+    await api.put(`/api/v1/customers/${id}/action`, { data, headers: { Origin: ORIGIN } })
+  }
+}
+
+/** Отправка письма из открытого окна: true — ушло, false — сервер отказал (окно закрываем). */
+async function sendLetter(mail: Locator): Promise<boolean> {
+  await click(mail.getByRole('button', { name: 'Отправить' }))
+  const gone = await mail.waitFor({ state: 'detached', timeout: 20_000 }).then(() => true, () => false)
+  if (gone) return true
+  const error = mail.getByRole('alert')
+  log(`письмо не ушло: ${(await error.innerText().catch(() => '')).trim() || 'окно не закрылось'}`)
+  const cancel = mail.getByRole('button', { name: 'Отмена' })
+  if (await visible(cancel, 1000)) await click(cancel)
+  return false
+}
+
+async function showInMailpit(email: string, subject: string) {
+  let found: MailpitMessage | undefined
+  for (let i = 0; i < 20 && !found; i++) {
+    found = (await mailpitMessages()).find((m) => fresh(m) && m.To.some((t) => t.Address === email) && (!subject || m.Subject === subject))
+    if (!found) await page.waitForTimeout(1000)
+  }
+  if (!found) {
+    log('письмо в Mailpit не нашлось — ящик не показываю')
+    return
+  }
+  const back = page.url()
+  await goto(`${MAILPIT}/view/${found.ID}`)
+  await pause(1500)
+  await cursorTo(760, 430)
+  await say('На стенде письма ловит Mailpit. Вот это письмо глазами клиента: тема, сумма, дата и адрес, куда придёт ответ.')
+  await settle()
+  await goto(back)
 }
 
 const scenes: Scene[] = [
@@ -339,7 +397,7 @@ const scenes: Scene[] = [
       await need(login, 'форма входа')
       await cursorTo(720, 470, 400)
       await spot(page.locator('form').first())
-      await say('Без входа не открывается ни одна страница и ни один запрос к API. Сессия живёт в httpOnly-cookie, а проверяет её шлюз.')
+      await say('Без входа не открывается ни одна страница и ни один запрос к API: сессию проверяет шлюз перед каждым запросом.')
       const sso = page.getByRole('link', { name: /Войти через/ })
       if (await visible(sso, 1500)) {
         await settle()
@@ -349,71 +407,178 @@ const scenes: Scene[] = [
       await settle()
       await unspot()
       await type(login, ADMIN.username)
-      await type(page.getByLabel('Пароль', { exact: true }), ADMIN.password)
+      await type(page.getByLabel('Пароль', { exact: true }), ADMIN.password, { secret: true })
       await click(page.getByRole('button', { name: 'Войти', exact: true }))
-      await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15_000 })
+      await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 20_000 })
       await restoreOverlay()
       await pause(800)
     },
   },
   {
+    id: 'design',
+    title: 'Обзор: радар и темы',
+    run: async () => {
+      if (new URL(page.url()).pathname !== '/') await goto('/')
+      const radar = page.getByTestId('radar-backdrop')
+      await need(page.getByTestId('kpi-high'), 'обзор')
+      await pause(1200)
+      const hero = page.getByRole('heading', { level: 1 }).first()
+      if (await visible(radar, 1500)) {
+        const box = await hero.boundingBox().catch(() => null)
+        if (box) await cursorTo(Math.round(box.x + box.width / 2), Math.round(box.y + box.height + 40))
+      }
+      await say('Обзор открывается радаром: тёмная тема по умолчанию, чтобы панель спокойно висела на большом экране у команды.')
+      await settle()
+      const light = page.getByRole('button', { name: 'Включить светлую тему' })
+      if (await visible(light, 1500)) {
+        await unspot()
+        await click(light)
+        await say('Для работы днём есть светлая тема, выбор запоминается.')
+        await pause(2600)
+        await settle()
+        await click(page.getByRole('button', { name: 'Включить тёмную тему' }))
+        await pause(600)
+      }
+    },
+  },
+  {
     id: 'overview',
-    title: 'Обзор',
+    title: 'Обзор: деньги под риском',
     run: async () => {
       if (new URL(page.url()).pathname !== '/') await goto('/')
       const high = page.getByTestId('kpi-high')
       await need(high, 'KPI на обзоре')
-      await pause(1200)
       await spot(high.locator('xpath=..'))
-      await say('Обзор начинается с главного: сколько клиентов под высоким риском и сколько денег мы потеряем за 30 дней, если ничего не делать.')
-      const loss = page.getByTestId('kpi-expected-loss')
+      await say('Сверху главное: сколько клиентов под высоким риском и сколько денег мы потеряем за 30 дней, если ничего не делать.')
       await settle()
+      const loss = page.getByTestId('kpi-expected-loss')
       await spot(loss)
-      await say('Ожидаемая потеря — не сумма всех счетов. Цена каждой услуги умножена на вероятность, что её не продлят, а то, что уже покрыто балансом, вычтено.')
+      await say('Ожидаемая потеря — не сумма всех счетов. Цена каждой услуги умножена на вероятность, что её не продлят, а то, что покрыто балансом, вычтено.')
       const info = loss.getByRole('button').first()
       if (await visible(info, 1000)) await move(info)
       await settle()
-      await cursorTo(1300, 120)
-
+      await cursorTo(1250, 160)
+    },
+  },
+  {
+    id: 'contact-today',
+    title: 'С кем связаться сегодня: письмо',
+    run: async () => {
+      if (new URL(page.url()).pathname !== '/') await goto('/')
       const today = page.getByTestId('contact-today')
-      if (await visible(today, 3000)) {
-        await spot(today)
-        await say('«С кем связаться сегодня» — с этого маркетолог начинает день. Очередь отсортирована по деньгам, которые можно спасти: сверху тот, на ком потеряем больше всего.')
-        const mark = today.getByTestId('contact-today-row').first().getByRole('button', { name: 'Отметить' })
-        if (await visible(mark, 1500)) {
-          await settle()
-          await click(mark)
-          await say('Клиента можно отметить: ответил и вопрос решён, или отложить на пару дней. Он уйдёт из очереди, а в журнале останется, кто и когда это сделал.')
-          await settle()
-          await page.keyboard.press('Escape')
-          await pause(400)
-        }
+      await need(today, 'блок «С кем связаться сегодня»')
+      await spot(today)
+      await say('«С кем связаться сегодня» — с этого маркетолог начинает день. Очередь отсортирована по деньгам, которые можно спасти.')
+      await settle()
+      const queue = await json<{ items: { id: number; email: string }[] }>(api.get('/api/v1/contact-today', { params: { limit: '5' } }))
+      const target = queue.items[0]
+      if (!target) throw new SkipScene('очередь пуста')
+      const row = today.getByTestId('contact-today-row').filter({ has: page.getByRole('link', { name: target.email, exact: true }) }).first()
+      const write = row.getByRole('button', { name: 'Написать', exact: true })
+      await need(write, 'кнопка «Написать» в очереди')
+      const previous = await json<{ action: Action }>(api.get(`/api/v1/customers/${target.id}/action`)).then((r) => r.action).catch(() => null)
+      await unspot()
+      await click(write)
+      const mail = page.getByTestId('email-dialog')
+      await need(mail, 'окно письма')
+      await pause(900)
+      await spot(mail)
+      await say('Письмо собирается само: шаблон выбран по главной причине риска, сумма и дата клиента уже подставлены. Текст можно поправить.')
+      await settle()
+      const subject = (await mail.getByLabel('Тема').inputValue().catch(() => '')) || ''
+      const previewBtn = mail.getByRole('button', { name: 'Как увидит клиент' })
+      if (await visible(previewBtn, 1500)) {
+        await unspot()
+        await click(previewBtn)
+        await spot(mail.getByTestId('letter-preview'))
+        await say('Кнопка «Как увидит клиент» показывает письмо с вёрсткой, как в почтовом ящике.')
         await settle()
       }
-
+      await unspot()
+      onCleanup(`статус клиента #${target.id}`, () => restoreAction(target.id, previous))
+      onCleanup('письмо клиенту в Mailpit', async () => {
+        const ids = (await mailpitMessages()).filter((m) => fresh(m) && m.To.some((t) => t.Address === target.email)).map((m) => m.ID)
+        await mailpitDelete(ids)
+      })
+      if (!(await sendLetter(mail))) return
+      await spot(today)
+      await say('Письмо ушло через SMTP: клиент получил статус «Письмо отправлено» и пропал из очереди, на неделю его не тронем.')
+      await settle()
+      await unspot()
+      await showInMailpit(target.email, subject)
+    },
+  },
+  {
+    id: 'campaign',
+    title: 'Рассылка по очереди',
+    run: async () => {
+      if (new URL(page.url()).pathname !== '/') await goto('/')
+      const mass = page.getByTestId('contact-today-mass')
+      await need(mass, 'кнопка рассылки')
+      await click(mass)
+      const campaign = page.getByTestId('campaign-dialog')
+      await need(campaign, 'окно рассылки')
+      await pause(1500)
+      await spot(campaign.getByTestId('campaign-summary'))
+      await say('Можно написать всей очереди сразу. Перед отправкой видно, сколько писем уйдёт и кого пропустим: кому уже писали на неделе, второе письмо не придёт.')
+      await settle()
+      const preview = campaign.getByTestId('letter-preview')
+      if (await visible(preview, 1500)) {
+        await spot(preview)
+        await say('Каждому — своё письмо под его причину. Ниже пример для первого клиента.')
+        await settle()
+      }
+      await unspot()
+      await click(campaign.getByRole('button', { name: 'Отмена' }))
+      await say('Сейчас ничего не отправляем, это только предпросмотр.')
+      await settle()
+    },
+  },
+  {
+    id: 'charts',
+    title: 'Графики и причины',
+    run: async () => {
+      if (new URL(page.url()).pathname !== '/') await goto('/')
       const chart = card('Отток услуг: факт и прогноз')
-      if (await visible(chart, 3000)) {
+      if (await visible(chart, 4000)) {
         await spot(chart)
-        await say('На графике факт и прогноз вместе: сколько услуг уже ушло по дням, сколько непродлений ждём впереди и сколько услуг сейчас под риском.')
+        await say('На графике факт и прогноз вместе: сколько услуг уже ушло, сколько непродлений ждём и сколько услуг сейчас под риском.')
         const plot = chart.locator('svg.recharts-surface').first()
         const box = await plot.boundingBox().catch(() => null)
         if (box) {
-          await cursorTo(Math.round(box.x + box.width * 0.62), Math.round(box.y + box.height * 0.5))
+          await cursorTo(Math.round(box.x + box.width * 0.6), Math.round(box.y + box.height * 0.5))
           await pause(900)
-          await cursorTo(Math.round(box.x + box.width * 0.8), Math.round(box.y + box.height * 0.45))
+          await cursorTo(Math.round(box.x + box.width * 0.82), Math.round(box.y + box.height * 0.45))
         }
         await settle()
       }
-      const levels = card('Клиенты по уровню риска')
-      if (await visible(levels, 2000)) {
-        await spot(levels)
-        await say('Справа — распределение по уровням риска. Каждая строка ведёт в таблицу клиентов с готовым фильтром.')
+      const hist = page.getByTestId('chart-score-histogram')
+      if (await visible(hist, 2000)) {
+        await spot(hist, page.getByTestId('chart-revenue-by-level'))
+        await say('Ниже распределение оценок риска и выручка по уровням. Любой столбец кликабелен и открывает клиентов из этого диапазона.')
+        await settle()
+      }
+      const byReason = page.getByTestId('chart-loss-by-reason')
+      if (await visible(byReason, 1500)) {
+        await spot(byReason, page.getByTestId('chart-metrics-history'))
+        await say('Потеря по причинам и история главных цифр: видно, растёт риск или мы его сбиваем.')
         await settle()
       }
       const reasons = card('Главные причины риска')
-      if (await visible(reasons, 2000)) {
-        await spot(reasons)
-        await say('А внизу — главные причины риска по всей базе: что чаще всего толкает клиентов к уходу и сколько денег за этим стоит.')
+      await need(reasons, 'главные причины риска')
+      await spot(reasons)
+      await say('Главные причины риска по всей базе. Нажимаю на причину — и сразу вижу всех клиентов с ней.')
+      await settle()
+      const link = page.locator('main a[data-reason]').first()
+      await need(link, 'ссылка причины')
+      await unspot()
+      await click(link)
+      await page.waitForURL(/reason=/, { timeout: 10_000 }).catch(() => {})
+      await tableReady()
+      const panel = page.getByTestId('reason-panel')
+      if (await visible(panel, 5000)) {
+        await spot(panel)
+        await say('Список уже отфильтрован, а панель причины объясняет, что с этими клиентами делать, и даёт написать всем им сразу.')
         await settle()
       }
     },
@@ -422,7 +587,12 @@ const scenes: Scene[] = [
     id: 'customers',
     title: 'Клиенты: фильтр, сортировка, поиск',
     run: async () => {
-      await nav('Клиенты', '/customers')
+      if (!new URL(page.url()).pathname.startsWith('/customers')) await nav('Клиенты', '/customers')
+      const chipReason = page.getByTestId('chip-reason')
+      if (await visible(chipReason, 1000)) {
+        await click(chipReason.getByRole('button'))
+      }
+      await tableReady()
       const table = page.getByRole('table', { name: 'Клиенты под риском' })
       await need(table, 'таблица клиентов')
       await spot(table.locator('xpath=ancestor::div[contains(@class,"rounded-xl")][1]'))
@@ -432,8 +602,9 @@ const scenes: Scene[] = [
       if (await visible(chip)) {
         await unspot()
         await click(chip)
+        await tableReady()
         await spot(page.getByRole('group', { name: 'Фильтр по уровню риска' }))
-        await say('Фильтр по уровню оставляет только тех, кем надо заняться в первую очередь.')
+        await say('Фильтр по уровню оставляет тех, кем надо заняться в первую очередь.')
         await settle()
       }
       const balance = page.getByRole('columnheader', { name: /^Баланс/ })
@@ -441,8 +612,8 @@ const scenes: Scene[] = [
         await unspot()
         await click(balance.getByRole('button'))
         await spot(balance)
-        await say('Сортировка — по ID, email, балансу и пополнениям, в обе стороны. Всё это сохраняется в адресе, ссылкой можно поделиться с коллегой.')
-        await pause(1500)
+        await say('Сортировка по ID, email, балансу и пополнениям, в обе стороны. Всё сохраняется в адресе, ссылкой можно поделиться.')
+        await pause(1400)
         await click(balance.getByRole('button'))
         await settle()
       }
@@ -451,19 +622,25 @@ const scenes: Scene[] = [
         await unspot()
         const first = await table.locator('tbody tr[aria-label]').first().getAttribute('aria-label').catch(() => null)
         const email = (first ?? '').replace(/^Клиент\s+/, '')
-        const fragment = email.includes('@') ? email.split('@')[0]!.slice(-4) : '00'
-        await say('Поиск — по email или ID клиента, прямо по мере ввода.')
+        const fragment = email.includes('@') ? email.split('@')[0]!.slice(-4) : '1'
+        await say('Поиск — по email или ID, прямо по мере ввода.')
         await type(search, fragment)
-        await pause(1600)
+        await pause(1500)
         await settle()
         const clear = page.getByRole('button', { name: 'Очистить поиск' })
         if (await visible(clear, 1000)) await click(clear)
       }
-      const csv = page.getByTestId('customers-csv')
-      if (await visible(csv)) {
-        await spot(csv)
-        await say('Выгрузка в CSV берёт ровно те же фильтры и сортировку: удобно отдать список в CRM или открыть в Excel.')
-        await settle()
+      const chartView = page.getByTestId('customers-view-chart')
+      if (await visible(chartView, 1500)) {
+        await unspot()
+        await click(chartView)
+        const scatter = page.getByTestId('risk-scatter')
+        if (await visible(scatter, 6000)) {
+          await pause(800)
+          await spot(scatter)
+          await say('А можно смотреть картой: риск по одной оси, потеря по другой. Самые опасные и дорогие клиенты — в правом верхнем углу.')
+          await settle()
+        }
       }
     },
   },
@@ -472,168 +649,81 @@ const scenes: Scene[] = [
     title: 'Карточка клиента',
     run: async () => {
       const c = await pickCustomer()
-      await goto('/customers?level=high')
-      const row = page.getByRole('row', { name: `Клиент ${c.email}` })
-      if (await visible(row, 5000)) {
-        await click(row)
+      const dot = page.getByTestId('risk-scatter').locator('.recharts-scatter-symbol').first()
+      if (new URL(page.url()).searchParams.get('view') === 'chart' && (await visible(dot, 1500))) {
+        await unspot()
+        await click(dot)
       } else {
         await goto(`/customers/${c.id}?level=high`)
       }
       await need(dialog(), 'карточка клиента')
-      await pause(1000)
+      await pause(1200)
       const why = section('Почему')
       if (await visible(why)) {
         await spot(why)
-        await say('Карточка объясняет оценку: почему клиент в риске — обычными словами, без формул.')
+        await say('Карточка объясняет оценку обычными словами: почему этот клиент в риске.')
         await settle()
       }
-      const parts = section('Из чего сложилась оценка')
-      if (await visible(parts)) {
-        await spot(parts)
-        await say('Ниже вклад каждого признака в баллах: видно, что именно перевесило и насколько.')
+      const waterfall = dialog().getByTestId('chart-score-waterfall')
+      if (await visible(waterfall, 2000)) {
+        await spot(waterfall)
+        await say('Водопад показывает, из чего сложилась оценка: какой признак сколько баллов добавил.')
         await settle()
       }
       const money = section('Деньги')
       if (await visible(money)) {
         await spot(money)
-        await say('Деньги на кону: выручка в месяц, ожидаемая потеря, максимум потерь и на сколько дней хватит баланса.')
+        await say('Деньги на кону: выручка в месяц, ожидаемая потеря и максимум, который можно потерять.')
+        await settle()
+      }
+      const runway = dialog().getByTestId('chart-runway')
+      const payments = dialog().getByTestId('chart-payments')
+      if (await visible(runway, 1500)) {
+        await spot(runway)
+        await say('Баланс по дням: когда закончатся деньги и какие продления на это попадут.')
+        await settle()
+      } else if (await visible(payments, 1500)) {
+        await spot(payments)
+        await say('История платежей: как клиент пополнял баланс и как это менялось со временем.')
         await settle()
       }
       const todo = section('Что сделать')
       if (await visible(todo)) {
         await spot(todo)
-        await say('И конкретное действие: что сделать с этим клиентом и насколько это снизит ожидаемую потерю.')
+        await say('И конкретное действие: что сделать с клиентом и насколько это снизит ожидаемую потерю.')
         await settle()
       }
       const work = page.getByTestId('customer-action')
       if (await visible(work)) {
         await spot(work)
-        await say('Блок «Связь с клиентом»: статус, кнопка письма, отметки и короткий журнал — видно, кто и что уже сделал.')
+        await say('Ниже работа с клиентом: статус, письмо, отметки и журнал — видно, кто и что уже сделал.')
         await settle()
       }
+      await unspot()
+      await page.keyboard.press('Escape')
+      await pause(500)
     },
   },
   {
-    id: 'email',
-    title: 'Письмо клиенту',
+    id: 'report',
+    title: 'Отчёт PDF',
     run: async () => {
-      const c = await openCustomerCard()
-      const previous = await json<{ action: Action }>(api.get(`/api/v1/customers/${c.id}/action`)).then((r) => r.action).catch(() => null)
-      const panel = page.getByTestId('customer-action')
-      const write = panel.getByRole('button', { name: 'Написать письмо' })
-      await need(write, 'кнопка «Написать письмо»')
-      await unspot()
-      await click(write)
-      const mail = page.getByTestId('email-dialog')
-      await need(mail, 'окно письма')
-      await pause(900)
-      await spot(mail)
-      await say('Письмо собирается само: шаблон выбран по главной причине риска, сумма и дата клиента уже подставлены.')
-      await settle()
-      const template = mail.getByLabel('Шаблон письма')
-      if (await visible(template, 1500)) {
-        await spot(template)
-        await say('Шаблон можно сменить, а тему и текст поправить руками перед отправкой.')
-        await move(mail.getByLabel('Тема'))
+      await goto('/')
+      const link = page.getByRole('link', { name: 'Скачать отчёт' })
+      await need(link, 'кнопка «Скачать отчёт»')
+      await spot(link)
+      await say('Для руководства — PDF-отчёт за неделю: цифры, прогноз и клиенты под риском. Одна кнопка, без выгрузок в Excel.')
+      const download = page.waitForEvent('download', { timeout: 30_000 }).catch(() => null)
+      await click(link)
+      const file = await download
+      if (file) {
+        const path = resolve(OUT, file.suggestedFilename() || 'report.pdf')
+        await file.saveAs(path).catch(() => {})
+        log(`отчёт скачан: ${path}`)
         await settle()
+        await say(`Файл ${file.suggestedFilename()} скачан. Его же можно получать на почту каждую неделю.`)
       }
-      const subject = (await mail.getByLabel('Тема').inputValue().catch(() => '')) || ''
-      const previewBtn = mail.getByRole('button', { name: 'Как увидит клиент' })
-      if (await visible(previewBtn, 1500)) {
-        await unspot()
-        await click(previewBtn)
-        await spot(mail.getByTestId('letter-preview'))
-        await say('Так письмо увидит клиент: с вёрсткой, как в почтовом ящике.')
-        await settle()
-      }
-      await unspot()
-      onCleanup(`статус клиента #${c.id}`, async () => {
-        if (previous === null) {
-          await api.delete(`/api/v1/customers/${c.id}/action`, { headers: { Origin: ORIGIN } })
-        } else {
-          const data: Record<string, unknown> = { status: previous.status }
-          if (previous.status === 'snoozed' && previous.until) data.snoozed_until = previous.until
-          if (previous.note) data.note = previous.note
-          await api.put(`/api/v1/customers/${c.id}/action`, { data, headers: { Origin: ORIGIN } })
-        }
-      })
-      onCleanup('письмо клиенту в Mailpit', async () => {
-        const ids = (await mailpitMessages()).filter((m) => fresh(m) && m.To.some((t) => t.Address === c.email)).map((m) => m.ID)
-        await mailpitDelete(ids)
-      })
-      await click(mail.getByRole('button', { name: 'Отправить' }))
-      await mail.waitFor({ state: 'detached', timeout: 20_000 }).catch(() => {})
-      const badge = panel.getByTestId('action-badge')
-      if (await visible(badge, 8000)) {
-        await spot(panel)
-        await say('Письмо ушло через SMTP. У клиента статус «Письмо отправлено», запись в журнале, и из очереди «С кем связаться» он пропал.')
-        await settle()
-      }
-      // письмо в Mailpit
-      let found: MailpitMessage | undefined
-      for (let i = 0; i < 20 && !found; i++) {
-        found = (await mailpitMessages()).find(
-          (m) => fresh(m) && m.To.some((t) => t.Address === c.email) && (!subject || m.Subject === subject),
-        )
-        if (!found) await page.waitForTimeout(1000)
-      }
-      if (!found) {
-        log('письмо в Mailpit не нашлось — пропускаю показ ящика')
-        return
-      }
-      await unspot()
-      await goto(`${MAILPIT}/view/${found.ID}`)
-      await pause(1200)
-      await cursorTo(760, 420)
-      await say('На стенде письма ловит Mailpit. Вот оно глазами клиента: тема, сумма, дата и обратный адрес для ответа.')
       await settle()
-      await pause(800)
-    },
-  },
-  {
-    id: 'campaign',
-    title: 'Массовая рассылка',
-    run: async () => {
-      await goto('/customers?level=high&sort=expected_loss&order=desc')
-      const all = page.getByRole('checkbox', { name: 'Выбрать всех на странице' })
-      await need(all, 'выбор клиентов')
-      await pause(600)
-      await click(all)
-      const bar = page.getByTestId('selection-bar')
-      await need(bar, 'панель выбранных')
-      await spot(bar)
-      await say('Можно выбрать сразу несколько клиентов и написать всем — каждому своё письмо по его причине риска.')
-      await settle()
-      await unspot()
-      await click(bar.getByRole('button', { name: 'Написать выбранным' }))
-      const campaign = page.getByTestId('campaign-dialog')
-      await need(campaign, 'окно рассылки')
-      await pause(1200)
-      await spot(campaign.getByTestId('campaign-summary'))
-      await say('Перед отправкой видно, сколько писем уйдёт и кого пропустим: кому уже писали на этой неделе, второе письмо не придёт.')
-      await settle()
-      const preview = campaign.getByTestId('letter-preview')
-      if (await visible(preview, 1500)) {
-        await spot(preview)
-        await say('Ниже пример письма для первого клиента из списка.')
-        await settle()
-      }
-      await unspot()
-      await click(campaign.getByRole('button', { name: 'Отмена' }))
-      await say('Сейчас ничего не отправляем, это только предпросмотр.')
-      await settle()
-      await goto('/mail')
-      const stats = page.getByTestId('mail-stats')
-      if (await visible(stats, 6000)) {
-        await spot(stats)
-        await say('Все рассылки и шаблоны — на странице «Письма»: сколько отправлено, сколько не дошло и какие шаблоны есть.')
-        await settle()
-        const templates = card('Шаблоны')
-        if (await visible(templates, 1500)) {
-          await spot(templates)
-          await pause(2500)
-        }
-      }
     },
   },
   {
@@ -653,24 +743,18 @@ const scenes: Scene[] = [
         await move(info)
         await say('У каждой цифры есть значок «i»: формула и пример простыми словами.')
         await settle()
-        await cursorTo(1300, 140)
-      }
-      const churn = page.getByTestId('mkt-customer-churn')
-      if (await visible(churn, 1500)) {
-        await spot(churn, page.getByTestId('mkt-revenue-churn'))
-        await say('Отток клиентов и отток выручки считаются отдельно: уход одного крупного клиента бьёт по деньгам сильнее, чем десятка мелких.')
-        await settle()
+        await cursorTo(1250, 160)
       }
       const retention = page.getByTestId('mkt-retention')
       if (await visible(retention, 1500)) {
         await spot(retention)
-        await say('Главное здесь — связь с риском: видно, на сколько вырастет LTV базы, если удержать клиентов высокого риска.')
+        await say('Главное — связь с риском: на сколько вырастет LTV базы, если удержать клиентов высокого риска.')
         await settle()
       }
-      const economics = page.getByTestId('mkt-economics')
-      if (await visible(economics, 1500)) {
-        await spot(economics)
-        await say('Маржу и стоимость привлечения задают руками: в данных хостинга их нет. Отсюда считаются LTV/CAC и окупаемость.')
+      const charts = page.getByTestId('chart-mrr-segments')
+      if (await visible(charts, 1500)) {
+        await spot(charts, page.getByTestId('chart-ltv-segments'))
+        await say('Графики раскладывают выручку и LTV по сегментам риска: видно, где сосредоточены деньги.')
         await settle()
       }
       const glossary = page.getByTestId('mkt-glossary')
@@ -698,32 +782,32 @@ const scenes: Scene[] = [
       await settle()
       await unspot()
       if ((await sw.getAttribute('aria-checked')) !== 'true') await click(sw)
-      await say('Но сначала веса можно примерить в режиме «Что если»: пока не нажали «Применить», в базе ничего не меняется.')
+      await say('Но сначала вес можно примерить в режиме «Что если»: пока не нажали «Применить», в базе ничего не меняется.')
       const slider = row.getByRole('slider').first()
       const preview = page.waitForResponse((r) => r.url().includes('/api/v1/model/settings/preview') && r.ok(), { timeout: 15_000 }).catch(() => null)
-      const box = await slider.boundingBox().catch(() => null)
-      if (box) {
+      if (await visible(slider, 1500)) {
         await scrollTo(slider)
-        const b = (await slider.boundingBox())!
-        const x = Math.round(b.x + b.width / 2)
-        const y = Math.round(b.y + b.height / 2)
-        await cursorTo(x, y)
-        await page.mouse.down()
-        const toX = w.weight > (w.min + w.max) / 2 ? x - 320 : x + 260
-        overlayState.cursor = { x: toX, y }
-        await overlay('cursorTo', toX, y, 1400)
-        await page.mouse.move(toX, y, { steps: 45 })
-        await page.waitForTimeout(400)
-        await page.mouse.up()
+        const b = await slider.boundingBox()
+        if (b) {
+          const x = Math.round(b.x + b.width / 2)
+          const y = Math.round(b.y + b.height / 2)
+          await cursorTo(x, y)
+          await page.mouse.down()
+          const toX = w.weight > (w.min + w.max) / 2 ? x - 320 : x + 260
+          overlayState.cursor = { x: toX, y }
+          await overlay('cursorTo', toX, y, 1400)
+          await page.mouse.move(toX, y, { steps: 45 })
+          await page.waitForTimeout(400)
+          await page.mouse.up()
+        }
       }
-      let res = await preview
-      if (!res) {
+      if (!(await preview)) {
         const input = page.getByRole('textbox', { name: `Вес: ${w.title}` })
         await type(input, '0')
         await input.blur()
-        res = await page.waitForResponse((r) => r.url().includes('/settings/preview') && r.ok(), { timeout: 15_000 }).catch(() => null)
+        await page.waitForResponse((r) => r.url().includes('/settings/preview') && r.ok(), { timeout: 15_000 }).catch(() => null)
       }
-      await pause(900)
+      await pause(1200)
       const whatIf = page.getByTestId('what-if')
       await need(whatIf, 'блок «Что если»')
       await settle()
@@ -758,9 +842,9 @@ const scenes: Scene[] = [
       const shown = (v: number) => String(v).replace('.', ',')
       const input = page.getByRole('textbox', { name: `Вес: ${w.title}` })
       await need(input, 'поле веса')
-      let restored = false
       onCleanup(`вес «${w.title}» = ${original}`, async () => {
-        if (restored) return
+        const now = await json<Settings>(api.get('/api/v1/model/settings'))
+        if (now.weights.find((x) => x.code === w.code)?.weight === original) return
         await api.patch('/api/v1/model/settings', { data: { weights: [{ code: w.code, weight: original }] }, headers: { Origin: ORIGIN } })
       })
       const summary = page.getByRole('group', { name: 'Итог по всем клиентам' })
@@ -775,24 +859,21 @@ const scenes: Scene[] = [
       const p = await patched
       log(`PATCH веса: ${p?.status() ?? 'нет ответа'}`)
       const toast = page.getByTestId('recalc-toast')
-      const toastShown = await visible(toast, 30_000)
-      if (toastShown) await spot(toast, summary)
+      if (await visible(toast, 30_000)) await spot(toast, summary)
       else await spot(summary)
       await say('Через пару секунд — новые цифры: оценки пересчитаны, итог по всем клиентам и обзор обновились сами.')
       await settle()
-      await pause(1000)
-      // возвращаем как было
+      await pause(800)
       await unspot()
       const back = page.waitForResponse((r) => r.request().method() === 'PATCH' && r.url().includes('/api/v1/model/settings'), { timeout: 15_000 }).catch(() => null)
       await click(input)
       await page.keyboard.press('Control+A')
       await input.pressSequentially(shown(original), { delay: 120 })
       await page.keyboard.press('Tab')
-      const b = await back
-      if (b?.ok()) restored = true
-      const history = card('История изменений')
-      if (await visible(history, 2000)) await spot(history)
-      await say('И возвращаю вес обратно. Каждая правка остаётся в истории изменений: кто, когда и что поменял.')
+      await back
+      const history = page.getByTestId('settings-history')
+      if (await visible(history, 3000)) await spot(history)
+      await say('И возвращаю вес обратно. Каждая правка остаётся в истории: кто, когда и что поменял, и к любой версии можно откатиться.')
       await settle()
     },
   },
@@ -811,37 +892,70 @@ const scenes: Scene[] = [
       const aucText = ((await auc.locator('[data-role=value]').innerText().catch(() => '')) || '').trim()
       await say(
         liftText && aucText
-          ? `Клиенты высокого риска уходят ${liftText} чаще среднего, ROC AUC — ${aucText}: модель правильно ставит опасных клиентов выше остальных.`
+          ? `Клиенты высокого риска уходят ${liftText} чаще среднего, ROC AUC — ${aucText}: опасных клиентов модель ставит выше остальных.`
           : 'Lift показывает, во сколько раз чаще уходят клиенты высокого риска, а ROC AUC — насколько верно модель их упорядочивает.',
       )
       await settle()
       const chart = page.getByTestId('quality-lift-chart')
       if (await visible(chart, 1500)) {
         await spot(chart, page.getByTestId('quality-roc'))
-        await say('Под цифрами — графики, и у каждого есть таблица с теми же данными.')
+        await say('Под цифрами графики lift и ROC-кривая, у каждого есть таблица с теми же данными.')
         await settle()
       }
-      const scenario = page.getByRole('button', { name: 'Продления по сроку' })
-      if (await visible(scenario, 1500)) {
-        const group = scenario.locator('xpath=..')
-        const original = group.locator('button[aria-pressed="true"]').first()
-        const originalName = (await original.innerText().catch(() => '')).trim()
-        await unspot()
-        await click(scenario)
-        const baselines = page.getByTestId('quality-baselines')
-        if (await visible(baselines, 2000)) await spot(baselines)
-        await say('Сценарии проверки переключаются, а сравнение с простыми правилами показывает, насколько модель полезнее правила «ждёт оплаты».')
+      const brier = page.getByTestId('quality-brier')
+      if (await visible(brier, 1500)) {
+        await spot(brier, page.getByTestId('quality-reliability'))
+        await say('Вероятности тоже честные: Brier score и кривая надёжности показывают, что «60 %» у нас действительно значит около 60 %.')
         await settle()
-        if (originalName && originalName !== 'Продления по сроку') {
-          await unspot()
-          await click(group.getByRole('button', { name: originalName, exact: true }))
-        }
+      }
+      const baselines = page.getByTestId('quality-baselines')
+      if (await visible(baselines, 1500)) {
+        await spot(baselines)
+        await say('А сравнение с простыми правилами и контрольной моделью показывает, где наша модель полезнее.')
+        await settle()
       }
       const method = page.getByTestId('quality-method')
       if (await visible(method, 1500)) {
         await spot(method)
-        await say('И честно про ограничения: данные синтетические, поэтому на реальной базе эти цифры нужно перемерить.')
+        await say('И честно про ограничения: данные синтетические, на реальной базе эти цифры нужно перемерить.')
         await settle()
+      }
+    },
+  },
+  {
+    id: 'playbooks',
+    title: 'Сценарии удержания',
+    run: async () => {
+      await nav('Сценарии', '/playbooks')
+      const presets = page.getByTestId('playbook-presets')
+      await need(presets, 'страница «Сценарии»')
+      await pause(800)
+      await spot(presets)
+      await say('Сценарии удержания — правила «если, то»: например, за три дня до списания написать тем, кому не хватит денег. Есть готовые заготовки.')
+      await settle()
+      const create = page.getByRole('button', { name: 'Новый сценарий' }).first()
+      if (await visible(create, 2000)) {
+        await unspot()
+        await click(create)
+        const d = page.getByRole('dialog', { name: 'Новый сценарий' })
+        await need(d, 'окно сценария')
+        await pause(600)
+        const levels = d.getByRole('group', { name: 'Уровень риска' })
+        if (await visible(levels, 1500)) await click(levels.getByRole('button', { name: 'Высокий' }))
+        const preview = d.getByTestId('playbook-preview')
+        if (await visible(preview, 4000)) {
+          await pause(800)
+          await spot(preview)
+        }
+        await say('Пока сценарий не включён в боевом режиме, он только симулирует: видно, сколько клиентов попадёт под правило и сколько уйдёт в контрольную группу.')
+        await settle()
+        await say('Контрольная группа нужна, чтобы потом честно измерить эффект: помогли письма или клиенты остались бы и так.')
+        await settle()
+        await unspot()
+        const cancel = d.getByRole('button', { name: 'Отмена' })
+        if (await visible(cancel, 1000)) await click(cancel)
+        else await page.keyboard.press('Escape')
+        await pause(500)
       }
     },
   },
@@ -850,7 +964,7 @@ const scenes: Scene[] = [
     title: 'Уведомления',
     run: async () => {
       await goto('/notifications')
-      await need(page.getByRole('heading', { name: 'Уведомления' }), 'страница «Уведомления»')
+      await need(page.getByRole('heading', { name: 'Уведомления', level: 1 }), 'страница «Уведомления»')
       await pause(800)
       const events = card('О чём сообщать')
       if (await visible(events, 3000)) {
@@ -861,7 +975,7 @@ const scenes: Scene[] = [
       const where = card('Куда присылать')
       if (await visible(where, 2000)) {
         await spot(where)
-        await say('Каналы — панель, почта или Telegram-бот. Есть тихие часы, чтобы не будить ночью, и ежедневная сводка.')
+        await say('Каналы — панель, почта или Telegram-бот. Есть тихие часы и ежедневная сводка.')
         await settle()
       }
       const testBtn = page.getByRole('button', { name: 'Отправить тестовое уведомление' })
@@ -883,12 +997,59 @@ const scenes: Scene[] = [
         await click(bell)
         const inbox = page.getByTestId('alerts-inbox')
         if (await visible(inbox, 5000)) await spot(inbox)
-        await say('Колокольчик в шапке — личная лента событий. Каждая запись ведёт прямо к нужным клиентам.')
+        await say('Колокольчик в шапке — личная лента событий. Тестовое уведомление уже здесь, а каждая запись ведёт к нужным клиентам.')
         await settle()
         await unspot()
         await page.keyboard.press('Escape')
         await pause(500)
       }
+    },
+  },
+  {
+    id: 'data',
+    title: 'Источники данных',
+    run: async () => {
+      await nav('Данные', '/data')
+      const sources = page.getByTestId('sources')
+      await need(sources, 'раздел «Источники»')
+      await pause(1000)
+      await spot(sources)
+      await say('Данные приходят из источников: биллинг забираем по расписанию, а события можно присылать и самим, через API.')
+      await settle()
+      const connector = page.locator('[data-testid^="connector-"]').filter({ has: page.getByTestId('connector-status') }).first()
+      if (await visible(connector, 2000)) {
+        await spot(connector)
+        await say('У каждого коннектора видно статус, сколько записей пришло и историю запусков. Если что-то сломалось, это видно сразу.')
+        await settle()
+      }
+      const metrica = page.getByTestId('metrica-panel')
+      if (await visible(metrica, 1500)) {
+        await spot(metrica)
+        await say('А Яндекс Метрика добавляет поведение: кто смотрел страницу удаления или давно не заходил в панель хостинга.')
+        await settle()
+      }
+    },
+  },
+  {
+    id: 'integrations',
+    title: 'Интеграции и журнал действий',
+    run: async () => {
+      await nav('Интеграции', '/integrations')
+      await need(page.getByRole('heading', { name: 'Интеграции', level: 1 }), 'страница «Интеграции»')
+      await pause(800)
+      const curl = page.getByTestId('curl-example')
+      const main = page.locator('main')
+      await spot((await visible(curl, 1500)) ? curl : main)
+      await say('Для CRM и своих скриптов есть API-токены с ограниченными правами. Токен показывается один раз, а пример запроса — прямо здесь.')
+      await settle()
+      await unspot()
+      await nav('Журнал действий', '/audit')
+      const row = page.getByTestId('audit-row')
+      await need(row, 'журнал действий')
+      await pause(800)
+      await spot(row.first().locator('xpath=ancestor::div[contains(@class,"rounded-xl")][1]'))
+      await say('А журнал действий помнит всё: кто менял модель, кому писали, кто выпускал токены. Его можно искать и выгрузить в CSV.')
+      await settle()
     },
   },
   {
@@ -912,22 +1073,11 @@ const scenes: Scene[] = [
         await type(d.getByLabel('Имя'), 'Марина, маркетолог')
         const role = d.getByLabel('Роль')
         if (await visible(role, 1000)) await spot(role)
-        await say('Ролей две: администратор настраивает модель и данные, аналитик только смотрит. И этот запрет держит сервер, а не интерфейс.')
+        await say('Ролей три: аналитик только смотрит, маркетолог работает с клиентами и письмами, администратор настраивает модель и данные. Запреты держит сервер, а не интерфейс.')
         await settle()
-        const how = d.getByRole('radiogroup', { name: 'Как будет входить' })
-        if (await visible(how, 1000)) {
-          await spot(how)
-          await say('Пароль можно сгенерировать, задать вручную или пускать сотрудника только через SSO.')
-          await settle()
-        }
         await unspot()
         await click(d.getByRole('button', { name: 'Отмена' }))
-        await pause(400)
-      }
-      const journal = page.getByRole('heading', { name: 'Журнал действий' })
-      if (await visible(journal, 2000)) {
-        await spot(journal.locator('xpath=..'))
-        await say('Создание, блокировка, смена роли — всё попадает в журнал действий. Заблокированного выкидывает из панели сразу.')
+        await say('Сейчас никого не создаём, только показываем.')
         await settle()
       }
     },
@@ -936,8 +1086,9 @@ const scenes: Scene[] = [
     id: 'sso',
     title: 'Вход через Authentik (SSO)',
     run: async () => {
-      const providers = await json<{ oidc?: { enabled: boolean } }>(api.get('/api/v1/auth/providers')).catch(() => null)
-      if (!providers?.oidc?.enabled) throw new SkipScene('SSO-провайдеры выключены')
+      const providers = await json<{ oidc?: { enabled: boolean }; saml?: { enabled: boolean } }>(api.get('/api/v1/auth/providers')).catch(() => null)
+      const method = providers?.oidc?.enabled ? 'OIDC' : providers?.saml?.enabled ? 'SAML' : null
+      if (!method) throw new SkipScene('SSO-провайдеры выключены')
       const users = await json<{ items: { id: string; username: string }[] }>(api.get('/api/v1/auth/users', { params: { q: SSO_USER } })).catch(() => ({ items: [] }))
       const existed = users.items.some((u) => u.username === SSO_USER)
       if (!existed) {
@@ -950,63 +1101,39 @@ const scenes: Scene[] = [
       await context.clearCookies()
       try {
         await goto('/login')
-        const oidc = page.getByRole('link', { name: /Authentik \(OIDC\)/ })
-        await need(oidc, 'кнопка входа через OIDC')
+        const link = page.getByRole('link', { name: new RegExp(`Authentik \\(${method}\\)`) })
+        await need(link, `кнопка входа через ${method}`)
         await spot(page.getByRole('link', { name: /Войти через/ }))
-        await say('Вход через корпоративный Authentik — по OIDC или SAML. Роль приходит из группы в каталоге, доступ настраивают в одном месте.')
+        await say('Вход через корпоративный Authentik, по OIDC или SAML. Роль приходит из группы в каталоге, доступ сотрудника настраивают в одном месте.')
         await settle()
         await unspot()
-        await click(oidc)
+        await click(link)
         await page.waitForURL(/\/if\/flow\//, { timeout: 30_000 })
         await restoreOverlay()
-        await say(`Маркетолог входит своей корпоративной учёткой, например ${SSO_USER}.`)
+        await say(`Маркетолог входит своей корпоративной учёткой ${SSO_USER}.`)
         const loginBox = page.getByRole('textbox', { name: /Имя пользователя|Username|Email/i })
         await need(loginBox, 'форма Authentik', 20_000)
         await type(loginBox, SSO_USER)
         await page.keyboard.press('Enter')
         const pass = page.getByRole('textbox', { name: /Пароль|Password/i })
         await need(pass, 'поле пароля Authentik', 20_000)
-        await type(pass, SSO_PASSWORD)
+        await type(pass, SSO_PASSWORD, { secret: true })
         await page.keyboard.press('Enter')
         const consent = page.getByRole('button', { name: /Continue|Продолжить|Согласиться/i })
         if (await visible(consent, 4000)) await click(consent)
         await page.waitForURL((u) => u.href.startsWith(BASE) && !u.pathname.startsWith('/login'), { timeout: 30_000 })
         await restoreOverlay()
-        await pause(1200)
+        await pause(1500)
         const menu = page.getByRole('navigation', { name: 'Разделы' })
         if (await visible(menu, 5000)) await spot(menu)
-        await say('В панели он аналитик: разделов «Модель» и «Пользователи» в меню нет, а менять настройки не даст сервер.')
+        await say('Он в панели с ролью из Authentik: разделов «Модель», «Данные» и «Пользователи» в меню нет, а менять настройки не даст сервер.')
         await settle()
-        const profile = page.locator('header button[aria-label^="Профиль"]')
-        if (await visible(profile, 1500)) {
-          await spot(profile)
-          await pause(2200)
-        }
         await unspot()
       } finally {
         // обратно под администратором, без показа формы
         await context.clearCookies()
-        await loginApi(page.request)
+        await page.request.post(`${BASE}/api/v1/auth/login`, { data: ADMIN, headers: { Origin: ORIGIN } })
         await goto('/')
-      }
-    },
-  },
-  {
-    id: 'data',
-    title: 'Данные и источники',
-    run: async () => {
-      await goto('/data')
-      const upload = card('Загрузка снимка данных')
-      await need(upload, 'страница «Данные»')
-      await pause(600)
-      await spot(upload)
-      await say('Данные приходят двумя путями: снимок в формате кейса или поток изменений. В бою это выгрузка из биллинга по расписанию.')
-      await settle()
-      const live = page.getByRole('region', { name: 'Живой поток изменений' }).or(page.locator('[aria-label="Живой поток изменений"]'))
-      if (await visible(live, 2000)) {
-        await spot(live)
-        await say('Для показа есть симулятор: генерирует тысячи клиентов и живой поток событий, и цифры в панели меняются на глазах.')
-        await settle()
       }
     },
   },
@@ -1014,7 +1141,7 @@ const scenes: Scene[] = [
     id: 'demo-panel',
     title: 'Демо-пульт (Shift+D)',
     run: async () => {
-      await goto('/')
+      if (new URL(page.url()).pathname !== '/') await goto('/')
       await need(page.getByTestId('kpi-high'), 'обзор')
       await page.locator('main').click({ position: { x: 5, y: 5 } })
       await page.keyboard.press('Shift+D')
@@ -1044,7 +1171,7 @@ const scenes: Scene[] = [
     title: 'Grafana: дашборд «Отток»',
     run: async () => {
       const auth = { Authorization: basic(GRAFANA_AUTH) }
-      const health = await api.get(ipv4(`${GRAFANA}/api/health`), { timeout: 5000 }).catch(() => null)
+      const health = await api.get(ipv4(`${GRAFANA}/api/health`), { timeout: 8000 }).catch(() => null)
       if (!health?.ok()) throw new SkipScene(`Grafana недоступна: ${GRAFANA}`)
       const found = await api
         .get(ipv4(`${GRAFANA}/api/search`), { params: { query: 'Отток', type: 'dash-db' }, headers: auth })
@@ -1054,7 +1181,8 @@ const scenes: Scene[] = [
       const uid = dash?.uid ?? 'churn-radar-churn'
       // авторизация в Grafana заголовком, чтобы не показывать её форму входа
       await page.route(`${GRAFANA}/**`, (route) => route.continue({ headers: { ...route.request().headers(), ...auth } }))
-      await goto(`${GRAFANA}/d/${uid}?orgId=1&kiosk&from=now-6h&to=now`)
+      const url = `${GRAFANA}/d/${uid}?orgId=1&kiosk&from=now-6h&to=now`
+      await goto(url)
       if (/\/login/.test(page.url())) {
         await page.getByLabel(/Email or username|username/i).fill(GRAFANA_AUTH.username)
         await page.getByLabel(/Password/i).first().fill(GRAFANA_AUTH.password)
@@ -1062,9 +1190,12 @@ const scenes: Scene[] = [
         await page.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 15_000 })
         const skip = page.getByRole('button', { name: /Skip/i })
         if (await visible(skip, 2000)) await skip.click()
-        await goto(`${GRAFANA}/d/${uid}?orgId=1&kiosk&from=now-6h&to=now`)
+        await goto(url)
       }
-      await pause(3500)
+      // ждём, пока панели дорисуются, а не крутится «Loading»
+      await page.locator('.react-grid-item').first().waitFor({ state: 'visible', timeout: 20_000 }).catch(() => {})
+      await page.waitForLoadState('networkidle', { timeout: 25_000 }).catch(() => {})
+      await pause(2500)
       await cursorTo(700, 330)
       await say('Те же цифры — в Grafana. Дашборд «Отток» строится из /metrics через Prometheus, на нём же настроены алерты.')
       await settle()
@@ -1078,36 +1209,17 @@ const scenes: Scene[] = [
     id: 'metrics',
     title: '/metrics',
     run: async () => {
-      const anon = await request.newContext().then((c) => c.get(ipv4(`${BASE}/metrics`), { headers: { Authorization: 'Bearer wrong' } })).catch(() => null)
       const res = await api.get(ipv4(`${BASE}/metrics`), { headers: { Authorization: `Bearer ${METRICS_TOKEN}` } }).catch(() => null)
-      if (!res) throw new SkipScene('/metrics не отвечает')
-      let lines: string[]
-      if (res.ok()) {
-        const text = await res.text()
-        const pick = [
-          'churn_customers_by_risk_level',
-          'churn_expected_loss_eur',
-          'churn_exposure_eur',
-          'churn_services_at_risk',
-          'churn_mrr_eur',
-          'churn_arpu_eur',
-          'churn_ltv_eur',
-          'churn_customer_churn_rate',
-          'churn_risk_score_avg',
-          'churn_model_version',
-        ]
-        lines = text.split('\n').filter((l) => pick.some((p) => l.startsWith(p)))
-        lines = lines.slice(0, 15)
-      } else {
-        lines = [`# HTTP ${res.status()}: проверьте METRICS_TOKEN`]
-      }
+      if (!res?.ok()) throw new SkipScene(`/metrics с токеном: ${res?.status() ?? 'нет ответа'} (задайте METRICS_TOKEN)`)
+      const anon = await request.newContext().then((c) => c.get(ipv4(`${BASE}/metrics`), { headers: { Authorization: 'Bearer wrong' } })).catch(() => null)
+      const text = await res.text()
+      const pick = ['churn_customers_by_risk_level', 'churn_expected_loss_eur', 'churn_exposure_eur', 'churn_mrr_eur', 'churn_arpu_eur', 'churn_ltv_eur', 'churn_risk_score_avg', 'churn_model_version']
+      const lines = text.split('\n').filter((l) => pick.some((p) => l.startsWith(p))).slice(0, 14)
       lines.push(`# без токена: HTTP ${anon?.status() ?? '—'}`)
       const cmd = `curl -s -H "Authorization: Bearer ••••••" ${BASE}/metrics | grep ^churn_`
       await goto(dataUrl(terminalSlide(cmd, lines, 'Те же числа, что на обзоре и на странице «Маркетинг»: это проверяют e2e-тесты.')))
       await pause(1500)
-      await say('API отдаёт /metrics для Prometheus: клиенты по уровням риска, ожидаемая потеря, MRR, LTV, версия модели — те же числа, что в панели.')
-      await settle()
-      await say('Без токена ответ 401: бизнес-показатели наружу не утекают.')
+      await say('API отдаёт /metrics для Prometheus: клиенты по уровням риска, ожидаемая потеря, MRR, LTV — те же числа, что в панели. Без токена ответ 401.')
       await settle()
     },
   },
@@ -1141,7 +1253,7 @@ async function main() {
     deviceScaleFactor: 1,
     locale: 'ru-RU',
     timezoneId: 'Europe/Moscow',
-    colorScheme: 'light',
+    colorScheme: 'dark',
     ignoreHTTPSErrors: true,
     recordVideo: { dir: resolve(OUT, 'raw'), size: { width: 1440, height: 900 } },
     ...(MAILPIT_AUTH ? { httpCredentials: { ...MAILPIT_AUTH, origin: new URL(MAILPIT).origin } } : {}),
@@ -1185,6 +1297,8 @@ async function main() {
     closeCue()
     const video = page.video()
     await context.close()
+    const raw = resolve(OUT, 'raw.webm')
+    if (video) await video.saveAs(raw).catch((e) => log(`видео не сохранилось: ${e}`))
     await browser.close()
 
     log('возвращаю стенд в исходное состояние')
@@ -1202,8 +1316,6 @@ async function main() {
     writeFileSync(resolve(OUT, 'timeline.json'), JSON.stringify(timeline, null, 2), 'utf-8')
     writeFileSync(resolve(OUT, 'report.json'), JSON.stringify(report, null, 2), 'utf-8')
     if (video) {
-      const raw = resolve(OUT, 'raw.webm')
-      await video.saveAs(raw)
       await video.delete().catch(() => {})
       if (env('SKIP_ENCODE') !== '1') encode(OUT, raw, timeline)
     }

@@ -26,12 +26,13 @@ export function installOverlay(): void {
       box-shadow: 0 6px 24px rgba(0,0,0,.28); opacity: 0; transform: translateY(-8px);
       transition: opacity .5s ease, transform .5s ease; }
     #__demo-chapter.on { opacity: 1; transform: none; }
+    #__demo-chapter.on.under { opacity: 0; }
     #__demo-chapter .n { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 28px;
       padding: 0 8px; border-radius: 999px; background: ${ACCENT}; color: #1b1300; font-size: 15px; font-weight: 700; }
     #__demo-sub { position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 10px);
-      width: min(1180px, calc(100vw - 80px)); padding: 16px 28px 17px; border-radius: 16px;
+      width: min(1180px, calc(100vw - 80px)); padding: 13px 28px 14px; border-radius: 16px;
       background: rgba(10,12,18,.84); backdrop-filter: blur(6px); color: #fff;
-      font-size: 25px; line-height: 1.42; font-weight: 500; text-align: center; text-wrap: balance;
+      font-size: 24px; line-height: 1.4; font-weight: 500; text-align: center; text-wrap: balance;
       box-shadow: 0 10px 40px rgba(0,0,0,.35); opacity: 0;
       transition: opacity .4s ease, transform .4s ease, top .45s ease, bottom .45s ease; }
     #__demo-sub.on { opacity: 1; transform: translate(-50%, 0); }
@@ -111,6 +112,8 @@ export function installOverlay(): void {
   // подсветка следует за элементами каждый кадр: страница скроллится, данные догружаются
   function frame() {
     if (root && !root.isConnected) (document.body ?? document.documentElement).appendChild(root)
+    const vh = window.innerHeight
+    const rects: DOMRect[] = []
     if (targets.length && mask) {
       const NS = 'http://www.w3.org/2000/svg'
       while (mask.firstChild) mask.removeChild(mask.firstChild)
@@ -119,20 +122,19 @@ export function installOverlay(): void {
       base.setAttribute('height', '100%')
       base.setAttribute('fill', 'white')
       mask.appendChild(base)
-      let lowest = 0
-      let highest = Infinity
       targets.forEach((el, i) => {
         const r = el.getBoundingClientRect()
+        rects.push(r)
         const pad = 8
         const x = r.left - pad
         const y = r.top - pad
-        const wdt = r.width + pad * 2
-        const hgt = r.height + pad * 2
+        const wdt = Math.max(0, r.width + pad * 2)
+        const hgt = Math.max(0, r.height + pad * 2)
         const hole = document.createElementNS(NS, 'rect')
         hole.setAttribute('x', String(x))
         hole.setAttribute('y', String(y))
-        hole.setAttribute('width', String(Math.max(0, wdt)))
-        hole.setAttribute('height', String(Math.max(0, hgt)))
+        hole.setAttribute('width', String(wdt))
+        hole.setAttribute('height', String(hgt))
         hole.setAttribute('rx', '12')
         hole.setAttribute('fill', 'black')
         mask.appendChild(hole)
@@ -140,17 +142,28 @@ export function installOverlay(): void {
         if (ring) {
           ring.style.left = `${x}px`
           ring.style.top = `${y}px`
-          ring.style.width = `${Math.max(0, wdt)}px`
-          ring.style.height = `${Math.max(0, hgt)}px`
+          ring.style.width = `${wdt}px`
+          ring.style.height = `${hgt}px`
         }
-        lowest = Math.max(lowest, r.bottom)
-        highest = Math.min(highest, r.top)
       })
-      // субтитры не должны закрывать то, о чём говорим: если цель внизу, плашка уезжает наверх
-      const vh = window.innerHeight
-      if (sub) sub.classList.toggle('top', lowest > vh - 190 && highest > 230)
-    } else if (sub) {
-      sub.classList.remove('top')
+    }
+    const cursorOn = cursor && cursor.classList.contains('on')
+    const hits = (box: DOMRect, r: { left: number; right: number; top: number; bottom: number }) =>
+      r.left < box.right && r.right > box.left && r.top < box.bottom && r.bottom > box.top
+    const cur = cursorOn ? { left: cursorPos.x - 14, right: cursorPos.x + 14, top: cursorPos.y - 14, bottom: cursorPos.y + 14 } : null
+    const near = cursorOn ? { left: cursorPos.x - 60, right: cursorPos.x + 60, top: cursorPos.y - 40, bottom: cursorPos.y + 40 } : null
+    if (sub) {
+      // субтитры не закрывают то, о чём речь: цель или курсор внизу — плашка уезжает наверх
+      const lowest = rects.reduce((m, r) => Math.max(m, r.bottom), 0)
+      const highest = rects.reduce((m, r) => Math.min(m, r.top), Infinity)
+      const targetLow = rects.length > 0 && lowest > vh - 170 && highest > 230
+      const cursorLow = Boolean(cur && cur.bottom > vh - 150 && cur.left > (window.innerWidth - 1180) / 2 - 20 && cur.right < (window.innerWidth + 1180) / 2 + 20)
+      sub.classList.toggle('top', targetLow || cursorLow)
+    }
+    if (chapter) {
+      const box = chapter.getBoundingClientRect()
+      const under = rects.some((r) => hits(box, r) && r.height < vh * 0.5) || Boolean(near && hits(box, near))
+      chapter.classList.toggle('under', under)
     }
     requestAnimationFrame(frame)
   }
